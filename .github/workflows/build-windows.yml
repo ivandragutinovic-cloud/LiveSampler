@@ -1,0 +1,25 @@
+name: Windows build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveSampler-Windows
+          path: |
+            build/LiveSampler_artefacts/Release/Standalone/*.exe
+            build/LiveSampler_artefacts/Release/VST3/
