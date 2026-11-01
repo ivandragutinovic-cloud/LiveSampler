@@ -233,7 +233,58 @@ void LiveSamplerProcessor::rescanLibrary()
     });
 }
 
-void LiveSamplerProcessor::requestInstrument (const juce::String& name, LoadCallback cb)
+InstrumentPtr LiveSamplerProcessor::getLoadedInstrument (const juce::String& name) const
+{
+    auto it = cache.find (name);
+    return it != cache.end() ? it->second : nullptr;
+}
+
+void LiveSamplerProcessor::installInstrument (const juce::String& name, InstrumentPtr inst)
+{
+    if (inst == nullptr)
+        return;
+
+    cache[name] = inst;
+    for (int p = 0; p < numParts; ++p)
+    {
+        if (instrumentNames[p] == name)
+        {
+            ++partRequestId[p];
+            parts[p].setInstrument (inst);
+        }
+    }
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::applyZones (const juce::String& name, std::vector<Zone> zones)
+{
+    if (auto cur = getLoadedInstrument (name))
+        installInstrument (name, cur->withZones (std::move (zones)));
+}
+
+bool LiveSamplerProcessor::saveMap (const juce::String& name)
+{
+    auto cur = getLoadedInstrument (name);
+    if (cur == nullptr || ! cur->saveMap())
+        return false;
+
+    auto saved = cur->withZones (cur->zones);
+    saved->fromMapFile = true;
+    installInstrument (name, saved);
+    return true;
+}
+
+void LiveSamplerProcessor::reloadInstrument (const juce::String& name, bool ignoreMapFile)
+{
+    if (auto it = cache.find (name); it != cache.end())
+    {
+        graveyard.push_back (it->second);
+        cache.erase (it);
+    }
+    requestInstrument (name, [this, name] (InstrumentPtr inst) { installInstrument (name, inst); }, ignoreMapFile);
+}
+
+void LiveSamplerProcessor::requestInstrument (const juce::String& name, LoadCallback cb, bool ignoreMapFile)
 {
     if (auto it = cache.find (name); it != cache.end())
     {
@@ -250,12 +301,12 @@ void LiveSamplerProcessor::requestInstrument (const juce::String& name, LoadCall
     const int epoch = loadEpoch;
     const bool c3 = c3Is60;
     auto aliveFlag = alive;
-    loadPool.addJob ([this, name, epoch, c3, aliveFlag]
+    loadPool.addJob ([this, name, epoch, c3, aliveFlag, ignoreMapFile]
     {
         if (! aliveFlag->load())
             return;
 
-        auto inst = library.loadInstrument (name, c3);
+        auto inst = library.loadInstrument (name, c3, ignoreMapFile);
 
         juce::MessageManager::callAsync ([this, name, inst, epoch, aliveFlag]
         {

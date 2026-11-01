@@ -247,9 +247,10 @@ SamplerPart::Voice* SamplerPart::findFreeVoice()
 void SamplerPart::startVoice (Voice& v, int key, int velocity, double startPitch, double targetPitch)
 {
     const int lookupNote = juce::jlimit (0, 127, (int) std::lround (targetPitch));
-    auto* smp = blockInstrument->findSample (lookupNote, velocity);
-    if (smp == nullptr)
+    auto* zone = blockInstrument->findZone (lookupNote, velocity);
+    if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) blockInstrument->samples.size())
         return;
+    auto* smp = blockInstrument->samples[(size_t) zone->sample].get();
 
     v.active = true;
     v.key = key;
@@ -260,6 +261,15 @@ void SamplerPart::startVoice (Voice& v, int key, int velocity, double startPitch
     v.pos = (double) smp->startOffset;
     v.pitch = startPitch;
     v.pitchTarget = targetPitch;
+    v.rootKey = zone->rootKey;
+    v.zoneTune = zone->tuneCents / 100.0;
+    v.fixedPitch = zone->fixedPitch;
+    v.loop = smp->hasLoop && zone->loop;
+    {
+        const float g = juce::Decibels::decibelsToGain (zone->gainDb);
+        v.zoneGainL = g * juce::jmin (1.0f, 1.0f - zone->pan);
+        v.zoneGainR = g * juce::jmin (1.0f, 1.0f + zone->pan);
+    }
 
     const float vel01 = (float) velocity / 127.0f;
     v.velGain = (1.0f - s.velSens) + s.velSens * std::pow (vel01, 1.6f);
@@ -423,10 +433,12 @@ void SamplerPart::renderVoices (int start, int num)
         const float* L = smp->buffer.getReadPointer (0);
         const float* R = smp->buffer.getReadPointer (1);
         const int len = smp->buffer.getNumSamples();
-        const bool loop = smp->hasLoop;
+        const bool loop = v.loop;
         const int loopStart = smp->loopStart, loopEnd = smp->loopEnd;
         const int loopLen = loopEnd - loopStart;
         const double rateRatio = smp->sampleRate / sampleRate;
+        const double pitchOffset = bendOffset + v.zoneTune - v.rootKey;
+        auto incFor = [&] (double p) { return std::exp2 (((v.fixedPitch ? v.rootKey : p) + pitchOffset) / 12.0) * rateRatio; };
 
         auto fetch = [&] (const float* d, int idx) -> float
         {
@@ -436,7 +448,7 @@ void SamplerPart::renderVoices (int start, int num)
         };
 
         bool gliding = std::abs (v.pitchTarget - v.pitch) > 1.0e-4;
-        double inc = std::exp2 ((v.pitch + bendOffset - smp->rootNote) / 12.0) * rateRatio;
+        double inc = incFor (v.pitch);
 
         for (int i = 0; i < num; ++i)
         {
@@ -448,7 +460,7 @@ void SamplerPart::renderVoices (int start, int num)
                     v.pitch = v.pitchTarget;
                     gliding = false;
                 }
-                inc = std::exp2 ((v.pitch + bendOffset - smp->rootNote) / 12.0) * rateRatio;
+                inc = incFor (v.pitch);
             }
 
             const int ip = (int) v.pos;
@@ -468,8 +480,8 @@ void SamplerPart::renderVoices (int start, int num)
                 g *= v.fadeGain;
             }
 
-            l *= g;
-            r *= g;
+            l *= g * v.zoneGainL;
+            r *= g * v.zoneGainR;
             if (filterOn)
             {
                 l = v.filter.processSample (0, l);

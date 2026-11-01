@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "MappingEditor.h"
 #include "Text.h"
 
 //==============================================================================
@@ -519,6 +520,13 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     panicButton.onClick = [this] { proc.panic(); };
     content.addAndMakeVisible (panicButton);
 
+    mappingButton.setButtonText ("MAPIRANJE");
+    mappingButton.setClickingTogglesState (true);
+    mappingButton.setColour (juce::TextButton::buttonOnColourId, Pal::master);
+    mappingButton.setTooltip (T ("Editor mapiranja: koji sempl svira na kojim tasterima i jačinama"));
+    mappingButton.onClick = [this] { showMapping (mappingButton.getToggleState()); };
+    content.addAndMakeVisible (mappingButton);
+
     for (int i = 0; i < LiveSamplerProcessor::numParts; ++i)
     {
         partPanels[i] = std::make_unique<PartPanel> (proc, i);
@@ -535,6 +543,10 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     keyboard.setWantsKeyboardFocus (false);
     content.addAndMakeVisible (keyboard);
 
+    mappingEditor = std::make_unique<MappingEditor> (proc);
+    mappingEditor->onClose = [this] { showMapping (false); };
+    content.addChildComponent (*mappingEditor);
+
     setResizable (true, true);
     setResizeLimits (640, 640 * designH / designW, 2560, 2560 * designH / designW);
     if (auto* c = getConstrainer())
@@ -549,7 +561,19 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
 LiveSamplerEditor::~LiveSamplerEditor()
 {
     proc.removeChangeListener (this);
+    mappingEditor.reset();
     setLookAndFeel (nullptr);
+}
+
+void LiveSamplerEditor::showMapping (bool show)
+{
+    mappingButton.setToggleState (show, juce::dontSendNotification);
+    mappingEditor->setVisible (show);
+    if (show)
+    {
+        mappingEditor->refresh();
+        mappingEditor->toFront (true);
+    }
 }
 
 void LiveSamplerEditor::paint (juce::Graphics& g)
@@ -568,6 +592,8 @@ void LiveSamplerEditor::resized()
     auto top = r.removeFromTop (44);
     title.setBounds (top.removeFromLeft (200));
     folderButton.setBounds (top.removeFromLeft (210).reduced (0, 2));
+    top.removeFromLeft (10);
+    mappingButton.setBounds (top.removeFromLeft (130).reduced (0, 2));
     top.removeFromLeft (14);
     panicButton.setBounds (top.removeFromRight (100).reduced (0, 2));
     top.removeFromRight (14);
@@ -575,6 +601,7 @@ void LiveSamplerEditor::resized()
     status.setBounds (top);
 
     r.removeFromTop (10);
+    mappingEditor->setBounds (r.getX(), r.getY(), r.getWidth(), 440 + 12 + 138 + 12 + 58);
     auto partsArea = r.removeFromTop (440);
     const int pw = (partsArea.getWidth() - 2 * 12) / 3;
     for (int i = 0; i < LiveSamplerProcessor::numParts; ++i)
@@ -597,6 +624,8 @@ void LiveSamplerEditor::refreshAll()
     for (auto& pnl : partPanels)
         pnl->refresh();
     registerBar.refresh();
+    if (mappingEditor->isVisible())
+        mappingEditor->refresh();
     status.setText (proc.getStatusText(), juce::dontSendNotification);
     if (c3Toggle.getToggleState() != proc.getC3Is60())
         c3Toggle.setToggleState (proc.getC3Is60(), juce::dontSendNotification);

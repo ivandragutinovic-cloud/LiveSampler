@@ -66,13 +66,20 @@ public:
     juce::String getStatusText() const;
     void panic();
 
+    // --- editor mapiranja ---
+    InstrumentPtr getLoadedInstrument (const juce::String& name) const;
+    void applyZones (const juce::String& name, std::vector<Zone> zones);   // odmah se cuje
+    bool saveMap (const juce::String& name);
+    void reloadInstrument (const juce::String& name, bool ignoreMapFile);   // ponisti izmene / vrati automatsko
+
 private:
+    void installInstrument (const juce::String& name, InstrumentPtr inst);
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void handleAsyncUpdate() override;
     void timerCallback() override;
 
     using LoadCallback = std::function<void (InstrumentPtr)>;
-    void requestInstrument (const juce::String& name, LoadCallback cb);
+    void requestInstrument (const juce::String& name, LoadCallback cb, bool ignoreMapFile = false);
     void onInstrumentLoaded (const juce::String& name, InstrumentPtr inst, int epoch);
     void preloadRegisterInstruments();
     void rescanLibrary();

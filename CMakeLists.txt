@@ -39,6 +39,7 @@ juce_generate_juce_header(LiveSampler)
 target_sources(LiveSampler PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
+    Source/MappingEditor.cpp
     Source/SampleLibrary.cpp
     Source/SamplerPart.cpp
     Source/MasterEffects.cpp

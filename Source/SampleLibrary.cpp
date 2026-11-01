@@ -1,20 +1,26 @@
 #include "SampleLibrary.h"
+#include "Text.h"
 #include <regex>
 
 //==============================================================================
-const SampleData* Instrument::findSample (int note, int velocity) const
+//  Instrument
+//==============================================================================
+const Zone* Instrument::findZone (int key, int velocity) const
 {
+    int count = 0;
     for (auto& z : zones)
-    {
-        if (note >= z.lowKey && note <= z.highKey
-            && velocity >= z.lowVel && velocity <= z.highVel
-            && ! z.sampleIndices.empty())
-        {
-            auto n = (unsigned) z.sampleIndices.size();
-            auto idx = n == 1 ? 0u : (roundRobinCounter.fetch_add (1) % n);
-            return samples[(size_t) z.sampleIndices[idx]].get();
-        }
-    }
+        if (z.matches (key, velocity))
+            ++count;
+
+    if (count == 0)
+        return nullptr;
+
+    // vise zona na istom mestu = round robin
+    int pick = count == 1 ? 0 : (int) (roundRobinCounter.fetch_add (1) % (unsigned) count);
+    for (auto& z : zones)
+        if (z.matches (key, velocity) && pick-- == 0)
+            return &z;
+
     return nullptr;
 }
 
@@ -26,16 +32,105 @@ size_t Instrument::memoryBytes() const
     return total;
 }
 
-//==============================================================================
-SampleLibrary::SampleLibrary()
+juce::File Instrument::getMapFile() const
 {
-    formatManager.registerBasicFormats();
+    if (type == SourceType::WavFolder)
+        return source.getChildFile ("LiveSampler-mapa.xml");
+    return source.getSiblingFile (source.getFileName() + ".lsmap.xml");
 }
 
+std::shared_ptr<Instrument> Instrument::withZones (std::vector<Zone> newZones) const
+{
+    auto n = std::make_shared<Instrument>();
+    n->name = name;
+    n->type = type;
+    n->source = source;
+    n->samples = samples;
+    n->warnings = warnings;
+    n->fromMapFile = fromMapFile;
+    n->zones = std::move (newZones);
+    return n;
+}
+
+bool Instrument::saveMap() const
+{
+    juce::XmlElement root ("LiveSamplerMap");
+    root.setAttribute ("version", 1);
+    for (auto& z : zones)
+    {
+        if (z.sample < 0 || z.sample >= (int) samples.size())
+            continue;
+        auto* e = root.createNewChildElement ("Zone");
+        e->setAttribute ("sample", samples[(size_t) z.sample]->id);
+        e->setAttribute ("enabled", z.enabled ? 1 : 0);
+        e->setAttribute ("lowKey", z.lowKey);
+        e->setAttribute ("highKey", z.highKey);
+        e->setAttribute ("lowVel", z.lowVel);
+        e->setAttribute ("highVel", z.highVel);
+        e->setAttribute ("root", z.rootKey);
+        e->setAttribute ("tune", (double) z.tuneCents);
+        e->setAttribute ("gain", (double) z.gainDb);
+        e->setAttribute ("pan", (double) z.pan);
+        e->setAttribute ("loop", z.loop ? 1 : 0);
+        e->setAttribute ("fixedPitch", z.fixedPitch ? 1 : 0);
+    }
+    return root.writeTo (getMapFile());
+}
+
+juce::String sourceTypeName (SourceType t)
+{
+    switch (t)
+    {
+        case SourceType::Korg:    return "Korg KMP";
+        case SourceType::Kontakt:   return "Kontakt NKI";
+        case SourceType::WavFolder: break;
+    }
+    return "WAV folder";
+}
+
+//==============================================================================
+//  Pomocne funkcije
+//==============================================================================
 static bool isAudioFile (const juce::File& f)
 {
     auto ext = f.getFileExtension().toLowerCase();
     return ext == ".wav" || ext == ".aif" || ext == ".aiff" || ext == ".flac";
+}
+
+static void trimLeadingSilence (SampleData& sd)
+{
+    const int len = sd.buffer.getNumSamples();
+    const float thr = 0.0003f;
+    int first = 0;
+    auto* l = sd.buffer.getReadPointer (0);
+    auto* r = sd.buffer.getReadPointer (1);
+    while (first < len && std::abs (l[first]) < thr && std::abs (r[first]) < thr)
+        ++first;
+    first = juce::jmax (0, first - 32);
+    if (sd.hasLoop)
+        first = juce::jmin (first, sd.loopStart);
+    sd.startOffset = first < len - 64 ? first : 0;
+}
+
+// pronalazi fajl bez obzira na velika/mala slova
+static juce::File findChildIgnoringCase (const juce::File& dir, const juce::String& name)
+{
+    auto direct = dir.getChildFile (name);
+    if (direct.existsAsFile())
+        return direct;
+
+    if (dir.isDirectory())
+        for (const auto& e : juce::RangedDirectoryIterator (dir, false, "*", juce::File::findFiles))
+            if (e.getFile().getFileName().equalsIgnoreCase (name))
+                return e.getFile();
+
+    return {};
+}
+
+//==============================================================================
+SampleLibrary::SampleLibrary()
+{
+    formatManager.registerBasicFormats();
 }
 
 void SampleLibrary::scan (const juce::File& rootFolder)
@@ -43,23 +138,61 @@ void SampleLibrary::scan (const juce::File& rootFolder)
     const juce::ScopedLock sl (lock);
     root = rootFolder;
     names.clear();
-    folders.clear();
+    entries.clear();
 
     if (! root.isDirectory())
         return;
 
-    std::set<juce::File> dirs;
-    for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*", juce::File::findFiles))
-        if (isAudioFile (entry.getFile()))
-            dirs.insert (entry.getFile().getParentDirectory());
+    std::set<juce::File> wavDirs;
+    juce::Array<juce::File> kmpFiles, nkiFiles;
 
-    for (auto& d : dirs)
+    for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*", juce::File::findFiles))
     {
-        auto name = d == root ? root.getFileName()
-                              : d.getRelativePathFrom (root).replaceCharacter ('\\', '/');
-        folders[name] = d;
-        names.add (name);
+        const auto& f = entry.getFile();
+        const auto ext = f.getFileExtension().toLowerCase();
+        if (isAudioFile (f))      wavDirs.insert (f.getParentDirectory());
+        else if (ext == ".kmp")   kmpFiles.add (f);
+        else if (ext == ".nki")   nkiFiles.add (f);
     }
+
+    // folderi sa semplovima Kontakt biblioteka ne treba da se vide kao posebni instrumenti
+    juce::Array<juce::File> kontaktRoots;
+    for (auto& nki : nkiFiles)
+    {
+        auto d = nki.getParentDirectory();
+        if (d.getFileName().equalsIgnoreCase ("Instruments"))
+            d = d.getParentDirectory();
+        if (d != root)
+            kontaktRoots.addIfNotAlreadyThere (d);
+    }
+
+    auto rel = [this] (const juce::File& f)
+    {
+        return f == root ? root.getFileName() : f.getRelativePathFrom (root).replaceCharacter ('\\', '/');
+    };
+
+    auto add = [this] (juce::String name, SourceType type, const juce::File& f, const juce::String& suffix)
+    {
+        if (entries.count (name) > 0)
+            name << " (" << suffix << ")";
+        entries[name] = { type, f };
+        names.add (name);
+    };
+
+    for (auto& d : wavDirs)
+    {
+        bool insideKontakt = false;
+        for (auto& k : kontaktRoots)
+            if (d == k || d.isAChildOf (k))
+                insideKontakt = true;
+        if (! insideKontakt)
+            add (rel (d), SourceType::WavFolder, d, "WAV");
+    }
+
+    for (auto& f : kmpFiles)
+        add (rel (f.withFileExtension ({})), SourceType::Korg, f, "KMP");
+    for (auto& f : nkiFiles)
+        add (rel (f.withFileExtension ({})), SourceType::Kontakt, f, "NKI");
 
     names.sortNatural();
 }
@@ -138,104 +271,88 @@ bool SampleLibrary::parseFileName (const juce::String& fileNameWithoutExt, bool 
 }
 
 //==============================================================================
-InstrumentPtr SampleLibrary::loadInstrument (const juce::String& name, bool c3Is60)
+//  WAV / AIFF / FLAC
+//==============================================================================
+SamplePtr SampleLibrary::loadAudioFile (const juce::File& f, const juce::String& id, juce::StringArray& warnings)
 {
-    juce::File dir;
+    std::unique_ptr<juce::AudioFormatReader> reader;
     {
         const juce::ScopedLock sl (lock);
-        auto it = folders.find (name);
-        if (it == folders.end())
-            return nullptr;
-        dir = it->second;
+        reader.reset (formatManager.createReaderFor (f));
+    }
+    if (reader == nullptr || reader->lengthInSamples <= 0)
+    {
+        warnings.add (T ("Ne mogu da pročitam: ") + f.getFileName());
+        return nullptr;
     }
 
-    auto inst = std::make_shared<Instrument>();
-    inst->name = name;
+    auto sd = std::make_shared<SampleData>();
+    sd->id = id;
+    sd->displayName = f.getFileNameWithoutExtension();
+    sd->sampleRate = reader->sampleRate;
 
-    juce::Array<juce::File> files;
-    for (const auto& entry : juce::RangedDirectoryIterator (dir, false, "*", juce::File::findFiles))
-        if (isAudioFile (entry.getFile()))
-            files.add (entry.getFile());
+    const int len = (int) juce::jmin ((juce::int64) std::numeric_limits<int>::max() / 2, reader->lengthInSamples);
+    sd->buffer.setSize (2, len);
+    reader->read (&sd->buffer, 0, len, 0, true, reader->numChannels > 1);
+    if (reader->numChannels == 1)
+        sd->buffer.copyFrom (1, 0, sd->buffer, 0, 0, len);
 
-    struct Parsed { int sampleIndex; int note; int layer; };
+    // loop tacke i root nota iz WAV "smpl" bloka
+    auto& meta = reader->metadataValues;
+    if (meta.getValue ("NumSampleLoops", "0").getIntValue() > 0)
+    {
+        int ls = meta.getValue ("Loop0Start", "0").getIntValue();
+        int le = meta.getValue ("Loop0End", "0").getIntValue() + 1;
+        if (ls >= 0 && le > ls + 16 && le <= len)
+        {
+            sd->hasLoop = true;
+            sd->loopStart = ls;
+            sd->loopEnd = le;
+        }
+    }
+    if (meta.containsKey ("MidiUnityNote"))
+    {
+        int r = meta.getValue ("MidiUnityNote", "-1").getIntValue();
+        if (r >= 0 && r <= 127)
+            sd->fileRootKey = r;
+    }
+
+    trimLeadingSilence (*sd);
+    return sd;
+}
+
+void SampleLibrary::autoMapByName (Instrument& inst, const std::vector<int>& sampleIndices, bool c3Is60)
+{
+    struct Parsed { int sample; int note; int layer; };
     std::vector<Parsed> parsed;
 
-    for (auto& f : files)
+    for (int idx : sampleIndices)
     {
-        std::unique_ptr<juce::AudioFormatReader> reader;
-        {
-            const juce::ScopedLock sl (lock);
-            reader.reset (formatManager.createReaderFor (f));
-        }
-        if (reader == nullptr || reader->lengthInSamples <= 0)
-        {
-            inst->warnings.add ("Ne mogu da procitam: " + f.getFileName());
-            continue;
-        }
-
-        auto sd = std::make_unique<SampleData>();
-        sd->fileName = f.getFileName();
-        sd->sampleRate = reader->sampleRate;
-
-        const int len = (int) reader->lengthInSamples;
-        sd->buffer.setSize (2, len);
-        reader->read (&sd->buffer, 0, len, 0, true, reader->numChannels > 1);
-        if (reader->numChannels == 1)
-            sd->buffer.copyFrom (1, 0, sd->buffer, 0, 0, len);
-
-        // loop tacke i root nota iz WAV "smpl" bloka
-        auto& meta = reader->metadataValues;
-        if (meta.getValue ("NumSampleLoops", "0").getIntValue() > 0)
-        {
-            int ls = meta.getValue ("Loop0Start", "0").getIntValue();
-            int le = meta.getValue ("Loop0End", "0").getIntValue() + 1;
-            if (ls >= 0 && le > ls + 16 && le <= len)
-            {
-                sd->hasLoop = true;
-                sd->loopStart = ls;
-                sd->loopEnd = le;
-            }
-        }
-        int smplRoot = meta.containsKey ("MidiUnityNote") ? meta.getValue ("MidiUnityNote", "-1").getIntValue() : -1;
-
-        // preskoci tisinu na pocetku (ispod oko -70 dB)
-        {
-            const float thr = 0.0003f;
-            int first = 0;
-            auto* l = sd->buffer.getReadPointer (0);
-            auto* r = sd->buffer.getReadPointer (1);
-            while (first < len && std::abs (l[first]) < thr && std::abs (r[first]) < thr)
-                ++first;
-            first = juce::jmax (0, first - 32);
-            if (sd->hasLoop)
-                first = juce::jmin (first, sd->loopStart);
-            sd->startOffset = first < len - 64 ? first : 0;
-        }
-
+        auto& s = inst.samples[(size_t) idx];
         int note = -1, layer = 0;
-        if (! parseFileName (f.getFileNameWithoutExtension(), c3Is60, note, layer))
-            note = (smplRoot >= 0 && smplRoot <= 127) ? smplRoot : -1;
+        if (! parseFileName (s->displayName, c3Is60, note, layer))
+            note = s->fileRootKey;
 
         if (note < 0)
         {
-            if (files.size() == 1)
+            if (sampleIndices.size() == 1)
                 note = 60; // jedan fajl bez note: svira na celoj klavijaturi
             else
             {
-                inst->warnings.add ("Nema note u nazivu: " + f.getFileName());
+                inst.warnings.add ("Nema note u nazivu: " + s->displayName);
+                Zone z;
+                z.sample = idx;
+                z.enabled = false;  // vidi se u editoru, moze rucno da se mapira
+                inst.zones.push_back (z);
                 continue;
             }
         }
-
-        sd->rootNote = note;
-        parsed.push_back ({ (int) inst->samples.size(), note, layer });
-        inst->samples.push_back (std::move (sd));
+        parsed.push_back ({ idx, note, layer });
     }
 
     if (parsed.empty())
-        return inst;
+        return;
 
-    // velocity slojevi
     std::vector<int> layers;
     for (auto& p : parsed)
         if (std::find (layers.begin(), layers.end(), p.layer) == layers.end())
@@ -260,11 +377,10 @@ InstrumentPtr SampleLibrary::loadInstrument (const juce::String& name, bool c3Is
             highVel = li == numLayers - 1 ? 127 : ((li + 1) * 128) / numLayers - 1;
         }
 
-        // root note u ovom sloju -> lista semplova (vise = round robin)
         std::map<int, std::vector<int>> byRoot;
         for (auto& p : parsed)
             if (p.layer == layers[(size_t) li])
-                byRoot[p.note].push_back (p.sampleIndex);
+                byRoot[p.note].push_back (p.sample);
 
         std::vector<int> roots;
         for (auto& kv : byRoot)
@@ -272,15 +388,716 @@ InstrumentPtr SampleLibrary::loadInstrument (const juce::String& name, bool c3Is
 
         for (size_t i = 0; i < roots.size(); ++i)
         {
-            Zone z;
-            z.lowKey  = i == 0 ? 0 : (roots[i - 1] + roots[i]) / 2 + 1;
-            z.highKey = i == roots.size() - 1 ? 127 : (roots[i] + roots[i + 1]) / 2;
-            z.lowVel = lowVel;
-            z.highVel = highVel;
-            z.sampleIndices = byRoot[roots[i]];
-            inst->zones.push_back (z);
+            for (int sampleIdx : byRoot[roots[i]])   // vise semplova = round robin
+            {
+                Zone z;
+                z.sample = sampleIdx;
+                z.rootKey = roots[i];
+                z.lowKey  = i == 0 ? 0 : (roots[i - 1] + roots[i]) / 2 + 1;
+                z.highKey = i == roots.size() - 1 ? 127 : (roots[i] + roots[i + 1]) / 2;
+                z.lowVel = lowVel;
+                z.highVel = highVel;
+                inst.zones.push_back (z);
+            }
         }
     }
+}
+
+void SampleLibrary::loadWavFolder (Instrument& inst, bool c3Is60)
+{
+    juce::Array<juce::File> files;
+    for (const auto& e : juce::RangedDirectoryIterator (inst.source, false, "*", juce::File::findFiles))
+        if (isAudioFile (e.getFile()))
+            files.add (e.getFile());
+    files.sort();
+
+    std::vector<int> indices;
+    for (auto& f : files)
+        if (auto s = loadAudioFile (f, f.getFileName(), inst.warnings))
+        {
+            indices.push_back ((int) inst.samples.size());
+            inst.samples.push_back (s);
+        }
+
+    autoMapByName (inst, indices, c3Is60);
+}
+
+//==============================================================================
+//  Korg KMP / KSF  (Triton, Trinity, Karma, Kronos, M3, Oasys, Pa serija)
+//==============================================================================
+namespace
+{
+    struct Chunk { juce::String id; size_t offset = 0; size_t size = 0; };
+
+    struct ChunkReader
+    {
+        const juce::uint8* d = nullptr;
+        size_t len = 0;
+        bool bigEndian = true;
+
+        juce::uint32 u32 (size_t pos) const
+        {
+            if (pos + 4 > len) return 0;
+            return bigEndian ? (juce::uint32) juce::ByteOrder::bigEndianInt (d + pos)
+                             : (juce::uint32) juce::ByteOrder::littleEndianInt (d + pos);
+        }
+
+        std::vector<Chunk> readChunks()
+        {
+            std::vector<Chunk> out;
+            size_t pos = 0;
+            bool decided = false;
+            while (pos + 8 <= len)
+            {
+                Chunk c;
+                c.id = juce::String (juce::CharPointer_ASCII ((const char*) d + pos), 4);
+                const size_t be = juce::ByteOrder::bigEndianInt (d + pos + 4);
+                const size_t le = juce::ByteOrder::littleEndianInt (d + pos + 4);
+                const size_t avail = len - pos - 8;
+
+                size_t size;
+                if (decided)                         size = bigEndian ? be : le;
+                else if (be <= avail)              { size = be; bigEndian = true;  decided = true; }
+                else if (le <= avail)              { size = le; bigEndian = false; decided = true; }
+                else                                 size = avail;
+
+                size = juce::jmin (size, avail);
+                c.offset = pos + 8;
+                c.size = size;
+                out.push_back (c);
+                pos += 8 + size;
+            }
+            return out;
+        }
+
+        static const Chunk* find (const std::vector<Chunk>& chunks, const char* id)
+        {
+            for (auto& c : chunks)
+                if (c.id == id)
+                    return &c;
+            return nullptr;
+        }
+
+        juce::String text (size_t pos, size_t n) const
+        {
+            if (pos + n > len) return {};
+            size_t end = 0;
+            while (end < n && d[pos + end] != 0)
+                ++end;
+            juce::String s;
+            for (size_t i = 0; i < end; ++i)
+                s += (juce::juce_wchar) (d[pos + i] < 128 ? d[pos + i] : '?');
+            return s.trim();
+        }
+    };
+}
+
+SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, juce::StringArray& warnings)
+{
+    juce::MemoryBlock mb;
+    if (! f.loadFileAsData (mb))
+    {
+        warnings.add (T ("Ne mogu da pročitam: ") + f.getFileName());
+        return nullptr;
+    }
+
+    ChunkReader r { (const juce::uint8*) mb.getData(), mb.getSize() };
+    auto chunks = r.readChunks();
+    auto* smp = ChunkReader::find (chunks, "SMP1");
+    auto* smd = ChunkReader::find (chunks, "SMD1");
+
+    if (smd == nullptr)
+    {
+        if (ChunkReader::find (chunks, "SMF1") != nullptr)
+            warnings.add (f.getFileName() + T (": KSF upućuje na drugi fajl (SMF1), nije podržano"));
+        else
+            warnings.add (f.getFileName() + T (": nije Korg KSF sempl"));
+        return nullptr;
+    }
+    if (smd->size < 12)
+    {
+        warnings.add (f.getFileName() + T (": oštećen KSF"));
+        return nullptr;
+    }
+
+    double rate = r.u32 (smd->offset);
+    const juce::uint8 attributes = r.d[smd->offset + 4];
+    const int channels = juce::jmax (1, (int) r.d[smd->offset + 6]);
+    const int bits = (int) r.d[smd->offset + 7];
+    const juce::uint32 points = r.u32 (smd->offset + 8);
+
+    if (attributes & 0x10)
+    {
+        warnings.add (f.getFileName() + T (": kompresovan KSF, nije podržano"));
+        return nullptr;
+    }
+    if (bits != 8 && bits != 16 && bits != 24)
+    {
+        warnings.add (f.getFileName() + ": " + juce::String (bits) + T ("-bitni KSF nije podržan"));
+        return nullptr;
+    }
+    if (rate < 4000.0 || rate > 200000.0)
+        rate = 48000.0;
+
+    const int bytesPerSample = bits / 8;
+    const size_t frameBytes = (size_t) (bytesPerSample * channels);
+    const size_t dataOffset = smd->offset + 12;
+    const int frames = (int) juce::jmin ((size_t) points, (smd->size - 12) / frameBytes);
+    if (frames <= 0)
+    {
+        warnings.add (f.getFileName() + T (": prazan sempl"));
+        return nullptr;
+    }
+
+    auto sd = std::make_shared<SampleData>();
+    sd->id = id;
+    sd->displayName = f.getFileNameWithoutExtension();
+    if (smp != nullptr && smp->size >= 16)
+    {
+        auto n = r.text (smp->offset, 16);
+        if (n.isNotEmpty()) sd->displayName = n;
+    }
+    sd->sampleRate = rate;
+    sd->buffer.setSize (2, frames);
+
+    const bool be = r.bigEndian;
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const int srcCh = juce::jmin (ch, channels - 1);
+        auto* out = sd->buffer.getWritePointer (ch);
+        const juce::uint8* p = r.d + dataOffset + (size_t) (srcCh * bytesPerSample);
+        for (int i = 0; i < frames; ++i, p += frameBytes)
+        {
+            float v;
+            if (bits == 16)
+            {
+                auto x = (juce::int16) (be ? ((p[0] << 8) | p[1]) : ((p[1] << 8) | p[0]));
+                v = (float) x / 32768.0f;
+            }
+            else if (bits == 24)
+            {
+                int x = be ? ((p[0] << 24) | (p[1] << 16) | (p[2] << 8)) : ((p[2] << 24) | (p[1] << 16) | (p[0] << 8));
+                v = (float) x / 2147483648.0f;
+            }
+            else
+            {
+                v = (float) (juce::int8) p[0] / 128.0f;
+            }
+            out[i] = v;
+        }
+    }
+
+    // Korg loop: od LoopStart do kraja (LoopEnd)
+    if (smp != nullptr && smp->size >= 32)
+    {
+        const int ls = (int) r.u32 (smp->offset + 24);
+        int le = (int) r.u32 (smp->offset + 28) + 1;
+        le = juce::jmin (le, frames);
+        if (ls >= 0 && le - ls >= 16)
+        {
+            sd->hasLoop = true;
+            sd->loopStart = ls;
+            sd->loopEnd = le;
+        }
+    }
+
+    trimLeadingSilence (*sd);
+    return sd;
+}
+
+void SampleLibrary::loadKorg (Instrument& inst)
+{
+    juce::MemoryBlock mb;
+    if (! inst.source.loadFileAsData (mb))
+    {
+        inst.warnings.add (T ("Ne mogu da pročitam KMP"));
+        return;
+    }
+
+    ChunkReader r { (const juce::uint8*) mb.getData(), mb.getSize() };
+    auto chunks = r.readChunks();
+    auto* msp = ChunkReader::find (chunks, "MSP1");
+    auto* rlp = ChunkReader::find (chunks, "RLP1");
+    if (msp == nullptr || rlp == nullptr || msp->size < 18)
+    {
+        inst.warnings.add (T ("Nije Korg KMP fajl"));
+        return;
+    }
+
+    const int numRegions = juce::jmin ((int) r.d[msp->offset + 16], (int) (rlp->size / 18));
+
+    // KSF fajlovi su obicno u folderu istog imena kao KMP, ili pored njega
+    const auto kmpDir = inst.source.getParentDirectory();
+    const juce::File dirs[] = { kmpDir.getChildFile (inst.source.getFileNameWithoutExtension()), kmpDir };
+
+    std::map<juce::String, int> loaded;   // ksf ime -> indeks sempla
+    int prevTop = -1;
+
+    for (int i = 0; i < numRegions; ++i)
+    {
+        const size_t p = rlp->offset + (size_t) i * 18;
+        const juce::uint8 origKey = r.d[p];
+        const int topKey = r.d[p + 1] & 0x7f;
+        const int tune = (juce::int8) r.d[p + 2];
+        const int level = (juce::int8) r.d[p + 3];
+        const int pan = r.d[p + 4] & 0x7f;
+        const auto fileName = r.text (p + 6, 12);
+
+        const int lowKey = prevTop + 1;
+        prevTop = juce::jmax (prevTop, topKey);
+
+        if (fileName.isEmpty() || fileName.equalsIgnoreCase ("SKIPPEDSAMPL"))
+            continue;
+        if (fileName.startsWithIgnoreCase ("INTERNAL"))
+        {
+            inst.warnings.add (T ("Region ") + juce::String (i + 1) + T (" koristi interni ROM sempl klavijature"));
+            continue;
+        }
+
+        int sampleIdx = -1;
+        if (auto it = loaded.find (fileName.toLowerCase()); it != loaded.end())
+        {
+            sampleIdx = it->second;
+        }
+        else
+        {
+            juce::File ksf;
+            for (auto& d : dirs)
+                if (! ksf.existsAsFile())
+                    ksf = findChildIgnoringCase (d, fileName);
+
+            if (! ksf.existsAsFile())
+            {
+                inst.warnings.add (T ("Nema KSF fajla: ") + fileName);
+                continue;
+            }
+
+            if (auto s = loadKsf (ksf, ksf.getRelativePathFrom (kmpDir).replaceCharacter ('\\', '/'), inst.warnings))
+            {
+                sampleIdx = (int) inst.samples.size();
+                inst.samples.push_back (s);
+            }
+            loaded[fileName.toLowerCase()] = sampleIdx;
+        }
+
+        if (sampleIdx < 0)
+            continue;
+
+        Zone z;
+        z.sample = sampleIdx;
+        z.lowKey = juce::jlimit (0, 127, lowKey);
+        z.highKey = juce::jlimit (z.lowKey, 127, topKey);
+        z.rootKey = origKey & 0x7f;
+        z.fixedPitch = (origKey & 0x80) != 0;
+        z.tuneCents = (float) tune;
+        z.gainDb = (float) level * 0.12f;
+        z.pan = juce::jlimit (-1.0f, 1.0f, (float) (pan - 64) / 63.0f);
+        inst.zones.push_back (z);
+    }
+}
+
+//==============================================================================
+//  Kontakt NKI
+//==============================================================================
+namespace
+{
+    // Kontakt 1/2 NKI: zlib-kompresovan XML. Trazi zlib tok u prvih nekoliko KB.
+    juce::String extractNkiXml (const juce::MemoryBlock& mb)
+    {
+        auto* d = (const juce::uint8*) mb.getData();
+        const size_t len = mb.getSize();
+
+        juce::String raw (juce::CharPointer_UTF8 ((const char*) d), juce::jmin (len, (size_t) 4096));
+        if (raw.containsIgnoreCase ("<?xml") || raw.containsIgnoreCase ("<K2_"))
+            return juce::String::createStringFromData (d, (int) len);
+
+        const size_t searchEnd = juce::jmin (len > 2 ? len - 2 : 0, (size_t) 65536);
+        for (size_t i = 0; i < searchEnd; ++i)
+        {
+            if (d[i] != 0x78 || ! (d[i + 1] == 0x01 || d[i + 1] == 0x5e || d[i + 1] == 0x9c || d[i + 1] == 0xda))
+                continue;
+
+            juce::MemoryInputStream in (d + i, len - i, false);
+            juce::GZIPDecompressorInputStream gz (&in, false, juce::GZIPDecompressorInputStream::zlibFormat);
+            juce::MemoryBlock out;
+            char buf[16384];
+            while (out.getSize() < 64 * 1024 * 1024)
+            {
+                const int n = gz.read (buf, sizeof (buf));
+                if (n <= 0) break;
+                out.append (buf, (size_t) n);
+            }
+            if (out.getSize() < 32)
+                continue;
+
+            auto text = juce::String::createStringFromData (out.getData(), (int) out.getSize());
+            if (text.contains ("<") && text.containsIgnoreCase ("zone"))
+                return text;
+        }
+        return {};
+    }
+
+    struct NkiZone
+    {
+        juce::String file;
+        int lowKey = 0, highKey = 127, lowVel = 1, highVel = 127, root = -1;
+        float tune = 0.0f, gainDb = 0.0f, pan = 0.0f;
+    };
+
+    void collectValues (const juce::XmlElement& e, std::map<juce::String, juce::String>& values, bool isRoot)
+    {
+        if (! isRoot && e.getTagName().equalsIgnoreCase ("Zone"))
+            return;   // ugnjezdena zona
+
+        for (int i = 0; i < e.getNumAttributes(); ++i)
+            values.emplace (e.getAttributeName (i).toLowerCase(), e.getAttributeValue (i));
+
+        if (e.hasAttribute ("name") && e.hasAttribute ("value"))
+            values.emplace (e.getStringAttribute ("name").toLowerCase(), e.getStringAttribute ("value"));
+
+        for (auto* c : e.getChildIterator())
+            collectValues (*c, values, false);
+    }
+
+    bool isAudioName (const juce::String& s)
+    {
+        auto l = s.toLowerCase().trim();
+        return l.endsWith (".wav") || l.endsWith (".aif") || l.endsWith (".aiff") || l.endsWith (".flac") || l.endsWith (".ncw");
+    }
+
+    void findXmlZones (const juce::XmlElement& e, std::vector<NkiZone>& zones)
+    {
+        if (e.getTagName().equalsIgnoreCase ("Zone"))
+        {
+            std::map<juce::String, juce::String> v;
+            collectValues (e, v, true);
+
+            auto getInt = [&v] (std::initializer_list<const char*> keys, int def)
+            {
+                for (auto* k : keys)
+                    if (auto it = v.find (k); it != v.end() && it->second.trim().containsOnly ("-0123456789"))
+                        return it->second.getIntValue();
+                return def;
+            };
+            auto getFloat = [&v] (std::initializer_list<const char*> keys, float def)
+            {
+                for (auto* k : keys)
+                    if (auto it = v.find (k); it != v.end())
+                        return it->second.getFloatValue();
+                return def;
+            };
+
+            NkiZone z;
+            z.lowKey = getInt ({ "lowkey", "keylow", "lokey" }, 0);
+            z.highKey = getInt ({ "highkey", "keyhigh", "hikey" }, 127);
+            z.lowVel = getInt ({ "lowvelocity", "lowvel", "vellow", "lovel" }, 1);
+            z.highVel = getInt ({ "highvelocity", "highvel", "velhigh", "hivel" }, 127);
+            z.root = getInt ({ "rootkey", "root", "rootnote", "basenote" }, -1);
+            z.tune = getFloat ({ "tune", "zonetune" }, 0.0f);
+            z.gainDb = getFloat ({ "volume", "zonevolume" }, 0.0f);
+            z.pan = getFloat ({ "pan", "zonepan" }, 0.0f);
+
+            // Kontakt cuva stimovanje kao polutonove, a jacinu ponekad kao linearni faktor
+            if (std::abs (z.tune) < 49.0f) z.tune *= 100.0f;
+            if (z.gainDb > 0.0f && z.gainDb <= 4.0f) z.gainDb = juce::Decibels::gainToDecibels (z.gainDb);
+            if (std::abs (z.pan) > 1.0f) z.pan = juce::jlimit (-1.0f, 1.0f, z.pan / 100.0f);
+
+            for (auto& kv : v)
+                if (isAudioName (kv.second))
+                    z.file = kv.second;
+
+            if (z.file.isNotEmpty())
+                zones.push_back (z);
+            return;
+        }
+
+        for (auto* c : e.getChildIterator())
+            findXmlZones (*c, zones);
+    }
+
+    // Novi NKI formati su binarni: izvuci nazive audio fajlova (ASCII i UTF-16)
+    juce::StringArray findFileNamesInBinary (const juce::MemoryBlock& mb)
+    {
+        juce::StringArray found;
+        auto* d = (const juce::uint8*) mb.getData();
+        const size_t len = mb.getSize();
+
+        auto consider = [&found] (const juce::String& s)
+        {
+            auto l = s.toLowerCase();
+            for (auto* ext : { ".wav", ".aiff", ".aif", ".flac", ".ncw" })
+            {
+                const int idx = l.indexOf (ext);
+                if (idx > 0)
+                    found.addIfNotAlreadyThere (s.substring (0, idx + (int) strlen (ext)));
+            }
+        };
+
+        // ASCII
+        juce::String cur;
+        for (size_t i = 0; i < len; ++i)
+        {
+            const auto c = d[i];
+            if (c >= 32 && c < 127) cur += (juce::juce_wchar) c;
+            else { if (cur.length() >= 5) consider (cur); cur.clear(); }
+        }
+        if (cur.length() >= 5) consider (cur);
+
+        // UTF-16LE
+        for (size_t start = 0; start < 2; ++start)
+        {
+            cur.clear();
+            for (size_t i = start; i + 1 < len; i += 2)
+            {
+                const auto c = d[i];
+                if (d[i + 1] == 0 && c >= 32 && c < 127) cur += (juce::juce_wchar) c;
+                else { if (cur.length() >= 5) consider (cur); cur.clear(); }
+            }
+            if (cur.length() >= 5) consider (cur);
+        }
+        return found;
+    }
+
+    juce::String lastPathPart (const juce::String& s)
+    {
+        return s.fromLastOccurrenceOf ("/", false, false).fromLastOccurrenceOf ("\\", false, false).trim();
+    }
+}
+
+void SampleLibrary::loadKontakt (Instrument& inst, bool c3Is60)
+{
+    juce::MemoryBlock mb;
+    if (! inst.source.loadFileAsData (mb))
+    {
+        inst.warnings.add (T ("Ne mogu da pročitam NKI"));
+        return;
+    }
+
+    // indeks audio fajlova oko NKI-ja
+    const auto nkiDir = inst.source.getParentDirectory();
+    juce::Array<juce::File> searchDirs { nkiDir };
+    for (auto d : { nkiDir.getParentDirectory().getChildFile ("Samples"),
+                    nkiDir.getParentDirectory().getParentDirectory().getChildFile ("Samples") })
+        if (d.isDirectory() && ! searchDirs.contains (d))
+            searchDirs.add (d);
+
+    std::map<juce::String, juce::File> index;   // ime malim slovima -> fajl
+    int indexed = 0;
+    for (auto& dir : searchDirs)
+        for (const auto& e : juce::RangedDirectoryIterator (dir, true, "*", juce::File::findFiles))
+            if (isAudioFile (e.getFile()) && ++indexed < 50000)
+                index.emplace (e.getFile().getFileName().toLowerCase(), e.getFile());
+
+    auto lookup = [&index] (const juce::String& ref) -> juce::File
+    {
+        auto name = lastPathPart (ref).toLowerCase();
+        // Kontakt ponekad kodira putanje ("F0CPiano_C3.wav"): probaj bez prvih par znakova
+        for (int skip = 0; skip <= name.length() - 5; ++skip)
+        {
+            auto n = name.substring (skip);
+            if (auto it = index.find (n); it != index.end())
+                return it->second;
+            if (n.endsWith (".ncw"))
+                if (auto it2 = index.find (n.dropLastCharacters (4) + ".wav"); it2 != index.end())
+                    return it2->second;
+        }
+        return {};
+    };
+
+    std::map<juce::String, int> loaded;  // putanja -> indeks sempla
+    auto loadRef = [&] (const juce::File& f) -> int
+    {
+        auto key = f.getFullPathName();
+        if (auto it = loaded.find (key); it != loaded.end())
+            return it->second;
+        int idx = -1;
+        if (auto s = loadAudioFile (f, f.getRelativePathFrom (nkiDir).replaceCharacter ('\\', '/'), inst.warnings))
+        {
+            idx = (int) inst.samples.size();
+            inst.samples.push_back (s);
+        }
+        loaded[key] = idx;
+        return idx;
+    };
+
+    int missing = 0, ncw = 0;
+
+    // 1) Kontakt 1/2: pravi XML sa zonama
+    std::vector<NkiZone> xmlZones;
+    auto xmlText = extractNkiXml (mb);
+    if (xmlText.isNotEmpty())
+    {
+        auto start = xmlText.indexOfChar ('<');
+        if (auto xml = juce::XmlDocument::parse (xmlText.substring (juce::jmax (0, start))))
+            findXmlZones (*xml, xmlZones);
+    }
+
+    if (! xmlZones.empty())
+    {
+        for (auto& nz : xmlZones)
+        {
+            auto f = lookup (nz.file);
+            if (! f.existsAsFile())
+            {
+                ++missing;
+                if (nz.file.endsWithIgnoreCase (".ncw")) ++ncw;
+                continue;
+            }
+            const int idx = loadRef (f);
+            if (idx < 0) continue;
+
+            Zone z;
+            z.sample = idx;
+            z.lowKey = juce::jlimit (0, 127, nz.lowKey);
+            z.highKey = juce::jlimit (z.lowKey, 127, nz.highKey);
+            z.lowVel = juce::jlimit (1, 127, nz.lowVel);
+            z.highVel = juce::jlimit (z.lowVel, 127, nz.highVel);
+            int rootKey = nz.root;
+            if (rootKey < 0)
+            {
+                int n, layer;
+                rootKey = parseFileName (inst.samples[(size_t) idx]->displayName, c3Is60, n, layer) ? n
+                        : (inst.samples[(size_t) idx]->fileRootKey >= 0 ? inst.samples[(size_t) idx]->fileRootKey : 60);
+            }
+            z.rootKey = juce::jlimit (0, 127, rootKey);
+            z.tuneCents = nz.tune;
+            z.gainDb = nz.gainDb;
+            z.pan = nz.pan;
+            inst.zones.push_back (z);
+        }
+    }
+    else
+    {
+        // 2) noviji NKI: nadji koje fajlove koristi, mapiraj po nazivima
+        auto refs = findFileNamesInBinary (mb);
+        std::vector<int> indices;
+        for (auto& ref : refs)
+        {
+            auto f = lookup (ref);
+            if (! f.existsAsFile())
+            {
+                ++missing;
+                if (ref.endsWithIgnoreCase (".ncw")) ++ncw;
+                continue;
+            }
+            const int idx = loadRef (f);
+            if (idx >= 0 && std::find (indices.begin(), indices.end(), idx) == indices.end())
+                indices.push_back (idx);
+        }
+
+        if (indices.empty() && refs.isEmpty())
+        {
+            // ne vidimo nazive: uzmi audio fajlove iz istog foldera
+            juce::Array<juce::File> files;
+            for (const auto& e : juce::RangedDirectoryIterator (nkiDir, false, "*", juce::File::findFiles))
+                if (isAudioFile (e.getFile()) && files.size() < 2000)
+                    files.add (e.getFile());
+            files.sort();
+            for (auto& f : files)
+            {
+                const int idx = loadRef (f);
+                if (idx >= 0) indices.push_back (idx);
+            }
+        }
+
+        if (! indices.empty())
+            inst.warnings.add (T ("NKI je novog formata, mapiranje je napravljeno iz naziva fajlova. Proveri ga u editoru."));
+        else
+            inst.warnings.add (T ("NKI je novog (zaključanog) Kontakt formata, ne mogu da nađem semplove."));
+
+        autoMapByName (inst, indices, c3Is60);
+    }
+
+    if (ncw > 0)
+        inst.warnings.add (juce::String (ncw) + T (" semplova je u Kontakt NCW formatu (kompresovano), nije podržano"));
+    else if (missing > 0)
+        inst.warnings.add (juce::String (missing) + T (" semplova nije pronađeno"));
+}
+
+//==============================================================================
+//  Sacuvana mapa
+//==============================================================================
+bool SampleLibrary::applyMapFile (Instrument& inst)
+{
+    auto file = inst.getMapFile();
+    if (! file.existsAsFile())
+        return false;
+
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName ("LiveSamplerMap"))
+        return false;
+
+    std::map<juce::String, int> byId;
+    for (size_t i = 0; i < inst.samples.size(); ++i)
+        byId[inst.samples[i]->id.toLowerCase()] = (int) i;
+
+    std::vector<Zone> zones;
+    std::set<int> used;
+    for (auto* e : xml->getChildWithTagNameIterator ("Zone"))
+    {
+        auto it = byId.find (e->getStringAttribute ("sample").toLowerCase());
+        if (it == byId.end())
+            continue;
+
+        Zone z;
+        z.sample = it->second;
+        z.enabled = e->getBoolAttribute ("enabled", true);
+        z.lowKey = juce::jlimit (0, 127, e->getIntAttribute ("lowKey", 0));
+        z.highKey = juce::jlimit (z.lowKey, 127, e->getIntAttribute ("highKey", 127));
+        z.lowVel = juce::jlimit (1, 127, e->getIntAttribute ("lowVel", 1));
+        z.highVel = juce::jlimit (z.lowVel, 127, e->getIntAttribute ("highVel", 127));
+        z.rootKey = juce::jlimit (0, 127, e->getIntAttribute ("root", 60));
+        z.tuneCents = (float) e->getDoubleAttribute ("tune", 0.0);
+        z.gainDb = (float) e->getDoubleAttribute ("gain", 0.0);
+        z.pan = (float) e->getDoubleAttribute ("pan", 0.0);
+        z.loop = e->getBoolAttribute ("loop", true);
+        z.fixedPitch = e->getBoolAttribute ("fixedPitch", false);
+        zones.push_back (z);
+        used.insert (z.sample);
+    }
+
+    // semplovi koji nisu u mapi ostaju vidljivi u editoru kao iskljucene zone
+    for (int i = 0; i < (int) inst.samples.size(); ++i)
+        if (used.count (i) == 0)
+        {
+            Zone z;
+            z.sample = i;
+            z.enabled = false;
+            z.rootKey = inst.samples[(size_t) i]->fileRootKey >= 0 ? inst.samples[(size_t) i]->fileRootKey : 60;
+            zones.push_back (z);
+        }
+
+    inst.zones = std::move (zones);
+    inst.fromMapFile = true;
+    return true;
+}
+
+//==============================================================================
+InstrumentPtr SampleLibrary::loadInstrument (const juce::String& name, bool c3Is60, bool ignoreMapFile)
+{
+    Entry entry;
+    {
+        const juce::ScopedLock sl (lock);
+        auto it = entries.find (name);
+        if (it == entries.end())
+            return nullptr;
+        entry = it->second;
+    }
+
+    auto inst = std::make_shared<Instrument>();
+    inst->name = name;
+    inst->type = entry.type;
+    inst->source = entry.file;
+
+    switch (entry.type)
+    {
+        case SourceType::WavFolder: loadWavFolder (*inst, c3Is60); break;
+        case SourceType::Korg:      loadKorg (*inst); break;
+        case SourceType::Kontakt:   loadKontakt (*inst, c3Is60); break;
+    }
+
+    if (! ignoreMapFile)
+        applyMapFile (*inst);
 
     return inst;
 }

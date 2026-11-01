@@ -33,6 +33,8 @@ Gotov program je ovde:
 
 ## 2. Kako da organizuješ semplove
 
+### WAV folderi
+
 Izabereš jedan glavni folder. **Svaki podfolder sa WAV fajlovima je jedan instrument.**
 Podfolderi mogu da se grupišu, pa se u meniju vide kao podmeniji:
 
@@ -67,7 +69,36 @@ Ako ti sve svira oktavu više ili niže, promeni je.
 
 Tišina na početku fajla se automatski preskače.
 
-## 3. Sviranje
+### Korg KMP/KSF
+Svaki `.kmp` fajl je jedan instrument. KSF semplovi treba da budu u folderu istog imena
+kao KMP (npr. `STRINGS.KMP` + folder `STRINGS`) ili pored KMP-a. Mapiranje (rasponi,
+root note, štim, jačina, pan) čita se iz KMP-a, a loop iz KSF-a.
+Nije podržano: kompresovani KSF i semplovi iz ROM-a klavijature ("INTERNAL").
+
+### Kontakt NKI
+Svaki `.nki` fajl je jedan instrument. Semplovi (WAV/AIFF) se traže u folderu NKI-ja,
+njegovim podfolderima i u folderu `Samples` pored njega.
+- Stari Kontakt (1/2) NKI: mapiranje se čita tačno iz fajla.
+- Noviji NKI (Kontakt 4 i dalje) su zaključan format: program nađe koje semplove koristi
+  i mapira ih iz naziva fajlova. **Proveri mapu u editoru.**
+- NCW semplovi (Kontakt kompresija) nisu podržani. Treba ih pretvoriti u WAV.
+
+## 3. Editor mapiranja
+
+Dugme **MAPIRANJE** gore otvara editor za instrument izabranog dela (Gornji 1/2, Donji).
+- Grafik: tasteri levo-desno, velocity dole-gore. Klik bira zonu, prevlačenje je pomera,
+  vučenje ivica menja raspon tastera ili jačine. Trouglić je root nota.
+- Desno se ručno podešavaju root, raspon, velocity, štim, jačina, pan, loop i "ista visina"
+  (za bubnjeve). Zona može da se isključi, duplira (za round robin ili lejer) ili obriše.
+- **Sve − / + oktava**: kad ceo instrument svira oktavu pogrešno.
+- **Rasponi po root**: ponovo deli tastere između zona prema root notama.
+- Sve promene se čuju odmah dok sviraš. **Poništi** (Ctrl+Z) vraća korak nazad.
+- **Sačuvaj** upisuje mapu pored instrumenta (`LiveSampler-mapa.xml` u WAV folderu,
+  ili `IME.kmp.lsmap.xml` / `IME.nki.lsmap.xml`). Originalni fajlovi se ne menjaju.
+- **Odbaci izmene** vraća poslednju sačuvanu mapu, **Automatsko** briše sačuvanu mapu i
+  pravi je ponovo iz fajla.
+
+## 4. Sviranje
 
 - **Gornji 1 / Gornji 2**: sviraju zajedno (lejer). Drugi se uključuje dugmetom sa imenom.
 - **SPLIT**: levo od "Tačke" svira Donji, desno Gornji. "Donji kanal" može da pošalje Donji
@@ -87,7 +118,7 @@ Tišina na početku fajla se automatski preskače.
 - **Sustain pedala** (CC64) i **pitch bend** rade na svim delovima.
 - **PANIK** odmah utišava sve.
 
-## 4. Podešavanje zvuka (bitno za svirku uživo)
+## 5. Podešavanje zvuka (bitno za svirku uživo)
 
 U samostalnom programu klikni **Options → Audio/MIDI Settings** (gore levo):
 - **Audio device type: ASIO** ako tvoja zvučna kartica ima ASIO drajver.
@@ -98,9 +129,10 @@ U samostalnom programu klikni **Options → Audio/MIDI Settings** (gore levo):
 
 Semplovi se drže u RAM memoriji. Status gore pokazuje koliko memorije zauzimaju.
 
-## 5. Struktura koda
+## 6. Struktura koda
 
-- `Source/SampleLibrary.*`: pretraga foldera, prepoznavanje naziva, učitavanje i mapiranje
+- `Source/SampleLibrary.*`: pretraga foldera, WAV/KMP/KSF/NKI učitavanje, automatsko mapiranje, fajl mape
+- `Source/MappingEditor.*`: editor mapiranja
 - `Source/SamplerPart.*`: glasovi, mono/portamento, velocity, filter, ADSR, insert efekti
 - `Source/MasterEffects.*`: reverb, delay, EQ, kompresor, limiter
 - `Source/Registers.*`: registri (čuvaju se u `%APPDATA%\LiveSampler\registers.xml`)

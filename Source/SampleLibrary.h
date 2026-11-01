@@ -1,36 +1,64 @@
 #pragma once
 #include <JuceHeader.h>
 
-// Jedan WAV fajl ucitan u memoriju
+// Jedan sempl ucitan u memoriju (deli se izmedju verzija instrumenta)
 struct SampleData
 {
     juce::AudioBuffer<float> buffer;   // uvek 2 kanala
     double sampleRate = 44100.0;
-    int rootNote = 60;
     int startOffset = 0;               // preskace tisinu na pocetku
     bool hasLoop = false;
     int loopStart = 0, loopEnd = 0;    // loopEnd je ekskluzivan
-    juce::String fileName;
+    int fileRootKey = -1;              // root iz WAV smpl bloka, ako postoji
+    juce::String id;                   // relativna putanja, koristi se u fajlu mape
+    juce::String displayName;
+
+    double lengthSeconds() const { return buffer.getNumSamples() / sampleRate; }
 };
 
-// Oblast na klavijaturi + jacina udarca koja svira odredjene semplove
+using SamplePtr = std::shared_ptr<const SampleData>;
+
+// Zona: koji sempl svira na kojim tasterima i jacinama
 struct Zone
 {
+    int sample = -1;
+    bool enabled = true;
     int lowKey = 0, highKey = 127;
     int lowVel = 1, highVel = 127;
-    std::vector<int> sampleIndices;    // vise od jednog = round robin
+    int rootKey = 60;
+    float tuneCents = 0.0f;
+    float gainDb = 0.0f;
+    float pan = 0.0f;                  // -1 .. 1
+    bool loop = true;                  // koristi loop iz sempla (ako ga ima)
+    bool fixedPitch = false;           // ista visina na svim tasterima (bubnjevi)
+
+    bool matches (int key, int vel) const noexcept
+    {
+        return enabled && key >= lowKey && key <= highKey && vel >= lowVel && vel <= highVel;
+    }
 };
+
+enum class SourceType { WavFolder, Korg, Kontakt };
 
 class Instrument
 {
 public:
     juce::String name;
-    std::vector<std::unique_ptr<SampleData>> samples;
+    SourceType type = SourceType::WavFolder;
+    juce::File source;                 // folder (WAV) ili .kmp / .nki fajl
+    std::vector<SamplePtr> samples;
     std::vector<Zone> zones;
     juce::StringArray warnings;
+    bool fromMapFile = false;
 
-    const SampleData* findSample (int note, int velocity) const;
+    const Zone* findZone (int key, int velocity) const;
     size_t memoryBytes() const;
+    juce::File getMapFile() const;
+
+    // nova verzija sa drugim zonama (semplovi se dele)
+    std::shared_ptr<Instrument> withZones (std::vector<Zone> newZones) const;
+
+    bool saveMap() const;
 
 private:
     mutable std::atomic<unsigned> roundRobinCounter { 0 };
@@ -38,28 +66,44 @@ private:
 
 using InstrumentPtr = std::shared_ptr<Instrument>;
 
+juce::String sourceTypeName (SourceType t);
+
 class SampleLibrary
 {
 public:
     SampleLibrary();
 
-    // Pretrazuje folder: svaki podfolder sa audio fajlovima postaje instrument
+    // Pretrazuje folder: WAV folderi, Korg .kmp i Kontakt .nki postaju instrumenti
     void scan (const juce::File& rootFolder);
 
     const juce::StringArray& getInstrumentNames() const { return names; }
     juce::File getRootFolder() const { return root; }
 
-    // Ucitava instrument (poziva se iz pozadinske niti, moze da traje)
-    InstrumentPtr loadInstrument (const juce::String& name, bool c3Is60);
+    // Ucitava instrument (poziva se iz pozadinske niti, moze da traje).
+    // ignoreMapFile: ne koristi sacuvanu mapu (za "vrati automatsko")
+    InstrumentPtr loadInstrument (const juce::String& name, bool c3Is60, bool ignoreMapFile = false);
 
     // Iz naziva fajla vadi notu i velocity sloj. Vraca false ako note nema.
     static bool parseFileName (const juce::String& fileNameWithoutExt, bool c3Is60,
                                int& note, int& velocityLayer);
 
+    // Korg i Kontakt citaci (javni zbog testova)
+    void loadKorg (Instrument& inst);
+    void loadKontakt (Instrument& inst, bool c3Is60);
+    SamplePtr loadKsf (const juce::File& f, const juce::String& id, juce::StringArray& warnings);
+    SamplePtr loadAudioFile (const juce::File& f, const juce::String& id, juce::StringArray& warnings);
+
+    static void autoMapByName (Instrument& inst, const std::vector<int>& sampleIndices, bool c3Is60);
+    static bool applyMapFile (Instrument& inst);
+
 private:
+    struct Entry { SourceType type; juce::File file; };
+
+    void loadWavFolder (Instrument& inst, bool c3Is60);
+
     juce::File root;
     juce::StringArray names;
-    std::map<juce::String, juce::File> folders;
+    std::map<juce::String, Entry> entries;
     juce::AudioFormatManager formatManager;
     juce::CriticalSection lock;
 };

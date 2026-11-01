@@ -2,6 +2,8 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
+class MappingEditor;
+
 namespace Pal
 {
     const juce::Colour bg       { 0xff121419 };
@@ -114,6 +116,7 @@ public:
     void resized() override;
 
     static constexpr int designW = 1280, designH = 860;
+    void showMapping (bool show);
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -129,12 +132,13 @@ private:
     } content;
 
     juce::Label title, status;
-    juce::TextButton folderButton, panicButton;
+    juce::TextButton folderButton, panicButton, mappingButton;
     juce::ToggleButton c3Toggle;
     std::unique_ptr<PartPanel> partPanels[LiveSamplerProcessor::numParts];
     MasterPanel masterPanel;
     RegisterBar registerBar;
     juce::MidiKeyboardComponent keyboard;
+    std::unique_ptr<MappingEditor> mappingEditor;
     std::unique_ptr<juce::FileChooser> chooser;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LiveSamplerEditor)

@@ -83,7 +83,9 @@ private:
         const SampleData* sample = nullptr;
         double pos = 0.0;
         double pitch = 60.0, pitchTarget = 60.0;
-        float velGain = 1.0f;
+        double rootKey = 60.0, zoneTune = 0.0;   // u polutonovima
+        bool fixedPitch = false, loop = false;
+        float velGain = 1.0f, zoneGainL = 1.0f, zoneGainR = 1.0f;
         bool fadingOut = false;
         float fadeGain = 1.0f;
         juce::uint64 age = 0;
