@@ -2,183 +2,32 @@
 #include "PluginEditor.h"
 #include "Text.h"
 
-using APF = juce::AudioParameterFloat;
-using APB = juce::AudioParameterBool;
-using API = juce::AudioParameterInt;
-using APC = juce::AudioParameterChoice;
-
-static juce::NormalisableRange<float> skewed (float lo, float hi, float centre)
+juce::Colour LiveSamplerProcessor::partColour (int i)
 {
-    juce::NormalisableRange<float> r (lo, hi);
-    r.setSkewForCentre (centre);
-    return r;
-}
-
-static juce::AudioParameterFloatAttributes unit (const char* label, int decimals = 1)
-{
-    return juce::AudioParameterFloatAttributes()
-        .withLabel (label)
-        .withStringFromValueFunction ([decimals] (float v, int) { return juce::String (v, decimals); });
-}
-
-static juce::AudioParameterFloatAttributes percent()
-{
-    return juce::AudioParameterFloatAttributes()
-        .withLabel ("%")
-        .withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)); });
-}
-
-static juce::AudioParameterFloatAttributes seconds()
-{
-    return juce::AudioParameterFloatAttributes()
-        .withStringFromValueFunction ([] (float v, int)
-        {
-            return v < 1.0f ? juce::String (juce::roundToInt (v * 1000.0f)) + " ms"
-                            : juce::String (v, 2) + " s";
-        });
-}
-
-static juce::AudioParameterFloatAttributes hertz()
-{
-    return juce::AudioParameterFloatAttributes()
-        .withStringFromValueFunction ([] (float v, int)
-        {
-            return v < 1000.0f ? juce::String (juce::roundToInt (v)) + " Hz"
-                               : juce::String (v / 1000.0f, 1) + " kHz";
-        });
-}
-
-juce::AudioProcessorValueTreeState::ParameterLayout LiveSamplerProcessor::createLayout()
-{
-    juce::AudioProcessorValueTreeState::ParameterLayout layout;
-
-    for (int p = 0; p < numParts; ++p)
-    {
-        auto g = std::make_unique<juce::AudioProcessorParameterGroup> ("part" + juce::String (p), partName (p), "|");
-        auto id = [p] (const char* n) { return juce::ParameterID { pid (p, n), 1 }; };
-        auto nm = [p] (const char* n) { return partName (p) + " " + T (n); };
-
-        g->addChild (std::make_unique<APB> (id ("on"), nm ("Uključen"), p != 1));
-        g->addChild (std::make_unique<APF> (id ("vol"), nm ("Jačina"), skewed (-60.0f, 6.0f, -12.0f), p == 1 ? -6.0f : 0.0f, unit ("dB")));
-        g->addChild (std::make_unique<APF> (id ("pan"), nm ("Pan"), juce::NormalisableRange<float> (-1.0f, 1.0f), 0.0f,
-                                            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
-                                            {
-                                                const int x = juce::roundToInt (v * 50.0f);
-                                                return x == 0 ? juce::String ("C") : (x < 0 ? "L" + juce::String (-x) : "R" + juce::String (x));
-                                            })));
-        g->addChild (std::make_unique<API> (id ("oct"), nm ("Oktava"), -3, 3, 0));
-        g->addChild (std::make_unique<API> (id ("trans"), nm ("Transpozicija"), -12, 12, 0));
-        g->addChild (std::make_unique<APF> (id ("fine"), nm ("Fino štimovanje"), juce::NormalisableRange<float> (-100.0f, 100.0f), 0.0f, unit ("c", 0)));
-        g->addChild (std::make_unique<APF> (id ("velsens"), nm ("Velocity"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.8f, percent()));
-        g->addChild (std::make_unique<APB> (id ("mono"), nm ("Mono"), false));
-        g->addChild (std::make_unique<APF> (id ("porta"), nm ("Portamento"), skewed (0.0f, 2.0f, 0.25f), 0.0f, seconds()));
-        g->addChild (std::make_unique<APF> (id ("att"), nm ("Attack"), skewed (0.001f, 5.0f, 0.3f), 0.001f, seconds()));
-        g->addChild (std::make_unique<APF> (id ("dec"), nm ("Decay"), skewed (0.01f, 5.0f, 0.5f), 0.5f, seconds()));
-        g->addChild (std::make_unique<APF> (id ("sus"), nm ("Sustain"), juce::NormalisableRange<float> (0.0f, 1.0f), 1.0f, percent()));
-        g->addChild (std::make_unique<APF> (id ("rel"), nm ("Release"), skewed (0.01f, 8.0f, 0.6f), 0.3f, seconds()));
-        g->addChild (std::make_unique<APF> (id ("cutoff"), nm ("Cutoff"), skewed (40.0f, 20000.0f, 1500.0f), 20000.0f, hertz()));
-        g->addChild (std::make_unique<APF> (id ("reso"), nm ("Rezonanca"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f, percent()));
-        g->addChild (std::make_unique<APC> (id ("fxtype"), nm ("Insert efekat"), InsertFx::getTypeNames(), 0));
-        g->addChild (std::make_unique<APF> (id ("fxrate"), nm ("FX brzina"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.3f, percent()));
-        g->addChild (std::make_unique<APF> (id ("fxdepth"), nm ("FX dubina"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f, percent()));
-        g->addChild (std::make_unique<APF> (id ("fxmix"), nm ("FX mix"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f, percent()));
-        g->addChild (std::make_unique<APF> (id ("rev"), nm ("Reverb send"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.2f, percent()));
-        g->addChild (std::make_unique<APF> (id ("dly"), nm ("Delay send"), juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f, percent()));
-        g->addChild (std::make_unique<API> (id ("bend"), nm ("Pitch bend opseg"), 0, 12, 2));
-
-        layout.add (std::move (g));
-    }
-
-    auto gid = [] (const char* n) { return juce::ParameterID { n, 1 }; };
-
-    layout.add (std::make_unique<APB> (gid ("split_on"), "Split", false));
-    layout.add (std::make_unique<API> (gid ("split_pt"), "Split tacka", 24, 96, 54,
-        juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int)
-        {
-            return juce::MidiMessage::getMidiNoteName (v, true, true, 3);
-        })));
-    layout.add (std::make_unique<API> (gid ("lower_ch"), "Donji MIDI kanal", 0, 16, 0,
-        juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int)
-        {
-            return v == 0 ? T ("Split") : "Kanal " + juce::String (v);
-        })));
-
-    layout.add (std::make_unique<APF> (gid ("rev_size"), "Reverb velicina", juce::NormalisableRange<float> (0.0f, 1.0f), 0.55f, percent()));
-    layout.add (std::make_unique<APF> (gid ("rev_damp"), "Reverb prigusenje", juce::NormalisableRange<float> (0.0f, 1.0f), 0.5f, percent()));
-    layout.add (std::make_unique<APF> (gid ("rev_level"), "Reverb nivo", juce::NormalisableRange<float> (0.0f, 1.0f), 0.7f, percent()));
-    layout.add (std::make_unique<APF> (gid ("dly_time"), "Delay vreme", skewed (20.0f, 1500.0f, 350.0f), 350.0f, unit ("ms", 0)));
-    layout.add (std::make_unique<APF> (gid ("dly_fb"), "Delay ponavljanje", juce::NormalisableRange<float> (0.0f, 0.95f), 0.35f, percent()));
-    layout.add (std::make_unique<APF> (gid ("dly_level"), "Delay nivo", juce::NormalisableRange<float> (0.0f, 1.0f), 0.6f, percent()));
-    layout.add (std::make_unique<APF> (gid ("eq_low"), "EQ bas", juce::NormalisableRange<float> (-12.0f, 12.0f), 0.0f, unit ("dB")));
-    layout.add (std::make_unique<APF> (gid ("eq_mid"), "EQ sredina", juce::NormalisableRange<float> (-12.0f, 12.0f), 0.0f, unit ("dB")));
-    layout.add (std::make_unique<APF> (gid ("eq_high"), "EQ visoki", juce::NormalisableRange<float> (-12.0f, 12.0f), 0.0f, unit ("dB")));
-    layout.add (std::make_unique<APF> (gid ("comp_thr"), "Kompresor prag", juce::NormalisableRange<float> (-40.0f, 0.0f), -12.0f, unit ("dB")));
-    layout.add (std::make_unique<APF> (gid ("comp_ratio"), "Kompresor odnos", skewed (1.0f, 10.0f, 3.0f), 1.0f, unit (":1")));
-    layout.add (std::make_unique<APF> (gid ("master_vol"), "Master", skewed (-60.0f, 6.0f, -12.0f), 0.0f, unit ("dB")));
-
-    return layout;
+    static const juce::uint32 c[] = { 0xffff8a3d, 0xff3dc5ff, 0xff7ddf64, 0xffff5c8a,
+                                      0xffc58aff, 0xffffd23d, 0xff3dffd0, 0xffff9be0 };
+    return juce::Colour (c[(size_t) ((i % 8) + 8) % 8]);
 }
 
 //==============================================================================
 LiveSamplerProcessor::LiveSamplerProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "LiveSampler", createLayout())
+    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
-    for (int p = 0; p < numParts; ++p)
-    {
-        auto get = [this, p] (const char* n) { return apvts.getRawParameterValue (pid (p, n)); };
-        auto& x = pp[p];
-        x.on = get ("on"); x.vol = get ("vol"); x.pan = get ("pan"); x.oct = get ("oct");
-        x.trans = get ("trans"); x.fine = get ("fine"); x.velsens = get ("velsens");
-        x.mono = get ("mono"); x.porta = get ("porta"); x.att = get ("att"); x.dec = get ("dec");
-        x.sus = get ("sus"); x.rel = get ("rel"); x.cutoff = get ("cutoff"); x.reso = get ("reso");
-        x.fxtype = get ("fxtype"); x.fxrate = get ("fxrate"); x.fxdepth = get ("fxdepth");
-        x.fxmix = get ("fxmix"); x.rev = get ("rev"); x.dly = get ("dly"); x.bend = get ("bend");
-    }
-    splitOn = apvts.getRawParameterValue ("split_on");
-    splitPoint = apvts.getRawParameterValue ("split_pt");
-    lowerCh = apvts.getRawParameterValue ("lower_ch");
-    revSize = apvts.getRawParameterValue ("rev_size");
-    revDamp = apvts.getRawParameterValue ("rev_damp");
-    revLevel = apvts.getRawParameterValue ("rev_level");
-    dlyTime = apvts.getRawParameterValue ("dly_time");
-    dlyFb = apvts.getRawParameterValue ("dly_fb");
-    dlyLevel = apvts.getRawParameterValue ("dly_level");
-    eqLow = apvts.getRawParameterValue ("eq_low");
-    eqMid = apvts.getRawParameterValue ("eq_mid");
-    eqHigh = apvts.getRawParameterValue ("eq_high");
-    compThr = apvts.getRawParameterValue ("comp_thr");
-    compRatio = apvts.getRawParameterValue ("comp_ratio");
-    masterVol = apvts.getRawParameterValue ("master_vol");
-
-    juce::PropertiesFile::Options opts;
-    opts.applicationName = "LiveSampler";
-    opts.filenameSuffix = "settings";
-    opts.folderName = "LiveSampler";
-    opts.osxLibrarySubFolder = "Application Support";
-    appProps.setStorageParameters (opts);
-
-    auto* settings = appProps.getUserSettings();
-    c3Is60 = settings->getBoolValue ("c3Is60", true);
-    registers.loadFrom (getRegistersFile());
-
-    juce::File folder (settings->getValue ("libraryFolder"));
-    if (folder.isDirectory())
-        setLibraryFolder (folder);
-
-    startTimer (4000);
+    terca = TercaSettings::makeDefault();
+    loadData();
+    rebuildConfig();
+    if (! libraryFolders.isEmpty())
+        rescanLibrary();
+    startTimer (500);
 }
 
 LiveSamplerProcessor::~LiveSamplerProcessor()
 {
     alive->store (false);
     stopTimer();
+    if (saveNeeded)
+        saveNow();
     loadPool.removeAllJobs (true, 10000);
-}
-
-juce::File LiveSamplerProcessor::getRegistersFile()
-{
-    return appProps.getUserSettings()->getFile().getSiblingFile ("registers.xml");
 }
 
 bool LiveSamplerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -188,13 +37,131 @@ bool LiveSamplerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 }
 
 //==============================================================================
-//  Biblioteka i ucitavanje instrumenata (message nit)
+//  Cuvanje podataka
 //==============================================================================
-void LiveSamplerProcessor::setLibraryFolder (const juce::File& folder)
+juce::File LiveSamplerProcessor::getDataFile() const
 {
-    libraryFolder = folder;
-    appProps.getUserSettings()->setValue ("libraryFolder", folder.getFullPathName());
-    appProps.saveIfNeeded();
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+               .getChildFile ("LiveSampler").getChildFile ("LiveSampler-podaci.xml");
+}
+
+void LiveSamplerProcessor::saveNow()
+{
+    juce::XmlElement root ("LiveSamplerData");
+    root.setAttribute ("version", 2);
+    root.setAttribute ("c3Is60", c3Is60);
+    root.setAttribute ("globalDb", (double) globalDb);
+    root.setAttribute ("currentSlot", currentSlot);
+    root.setAttribute ("currentBank", currentBank);
+
+    auto* folders = root.createNewChildElement ("Folders");
+    for (auto& f : libraryFolders)
+        folders->createNewChildElement ("Folder")->setAttribute ("path", f.getFullPathName());
+
+    auto* us = root.createNewChildElement ("Users");
+    for (auto& u : users)
+        us->addChildElement (u.toXml().release());
+
+    auto* ps = root.createNewChildElement ("Slots");
+    for (int i = 0; i < kNumPerfSlots; ++i)
+    {
+        if (! slots[(size_t) i].used) continue;
+        auto x = slots[(size_t) i].toXml();
+        x->setAttribute ("slot", i);
+        ps->addChildElement (x.release());
+    }
+
+    auto cur = perf.toXml();
+    cur->setTagName ("Current");
+    root.addChildElement (cur.release());
+    root.addChildElement (terca.toXml().release());
+
+    auto file = getDataFile();
+    file.getParentDirectory().createDirectory();
+    root.writeTo (file);
+    saveNeeded = false;
+}
+
+void LiveSamplerProcessor::loadData()
+{
+    auto xml = juce::XmlDocument::parse (getDataFile());
+    if (xml == nullptr || ! xml->hasTagName ("LiveSamplerData"))
+    {
+        // prethodna verzija je pamtila jedan folder u LiveSampler.settings
+        auto old = juce::XmlDocument::parse (getDataFile().getSiblingFile ("LiveSampler.settings"));
+        if (old != nullptr)
+            for (auto* v : old->getChildIterator())
+            {
+                if (v->getStringAttribute ("name") == "libraryFolder")
+                {
+                    juce::File f (v->getStringAttribute ("val"));
+                    if (f.isDirectory()) libraryFolders.add (f);
+                }
+                if (v->getStringAttribute ("name") == "c3Is60")
+                    c3Is60 = v->getStringAttribute ("val") != "0";
+            }
+        return;
+    }
+
+    c3Is60 = xml->getBoolAttribute ("c3Is60", true);
+    globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
+    currentSlot = xml->getIntAttribute ("currentSlot", -1);
+    currentBank = juce::jlimit (0, kNumPerfBanks - 1, xml->getIntAttribute ("currentBank", 0));
+
+    if (auto* folders = xml->getChildByName ("Folders"))
+        for (auto* f : folders->getChildWithTagNameIterator ("Folder"))
+            libraryFolders.add (juce::File (f->getStringAttribute ("path")));
+
+    if (auto* us = xml->getChildByName ("Users"))
+        for (auto* u : us->getChildWithTagNameIterator ("User"))
+            users.push_back (UserProgram::fromXml (*u));
+
+    if (auto* ps = xml->getChildByName ("Slots"))
+        for (auto* p : ps->getChildWithTagNameIterator ("Performance"))
+        {
+            const int i = p->getIntAttribute ("slot", -1);
+            if (i >= 0 && i < kNumPerfSlots)
+                slots[(size_t) i] = Performance::fromXml (*p);
+        }
+
+    if (auto* cur = xml->getChildByName ("Current"))
+        perf = Performance::fromXml (*cur);
+    if (auto* t = xml->getChildByName ("Terce"))
+        terca = TercaSettings::fromXml (*t);
+}
+
+void LiveSamplerProcessor::bootstrapIfEmpty()
+{
+    // prvi put: napravi usera od prvog instrumenta i performans sa njim
+    if (users.empty() && ! instrumentList.isEmpty())
+    {
+        const int u = createUserFromInstrument (instrumentList[0]);
+        if (u >= 0 && ! perf.parts[0].on)
+        {
+            perf = Performance::makeDefault (users[(size_t) u].name);
+            perfDirty = true;
+        }
+    }
+}
+
+//==============================================================================
+//  Biblioteka
+//==============================================================================
+void LiveSamplerProcessor::addLibraryFolder (const juce::File& folder)
+{
+    if (! folder.isDirectory() || libraryFolders.contains (folder))
+        return;
+    libraryFolders.add (folder);
+    markSave();
+    rescanLibrary();
+}
+
+void LiveSamplerProcessor::removeLibraryFolder (int index)
+{
+    if (index < 0 || index >= libraryFolders.size())
+        return;
+    libraryFolders.remove (index);
+    markSave();
     rescanLibrary();
 }
 
@@ -203,14 +170,14 @@ void LiveSamplerProcessor::rescanLibrary()
     scanning = true;
     sendChangeMessage();
 
-    auto folder = libraryFolder;
+    auto folders = libraryFolders;
     auto aliveFlag = alive;
     const int scanId = ++scanCounter;
-    loadPool.addJob ([this, folder, aliveFlag, scanId]
+    loadPool.addJob ([this, folders, aliveFlag, scanId]
     {
         if (scanId != scanCounter.load())
-            return;   // u medjuvremenu je izabran drugi folder
-        library.scan (folder);
+            return;
+        library.scan (folders);
         auto names = library.getInstrumentNames();
 
         juce::MessageManager::callAsync ([this, names, aliveFlag, scanId]
@@ -221,19 +188,70 @@ void LiveSamplerProcessor::rescanLibrary()
             scanning = false;
             instrumentList = names;
 
-            for (int p = 0; p < numParts; ++p)
+            // izbaci iz memorije instrumente kojih vise nema (npr. izvadjen USB)
+            for (auto it = cache.begin(); it != cache.end();)
             {
-                auto n = instrumentNames[p];
-                if (n.isEmpty() && p == 0 && ! names.isEmpty())
-                    n = names[0];
-                if (n.isNotEmpty())
-                    selectInstrument (p, n);
+                if (! names.contains (it->first)) { graveyard.push_back (it->second); it = cache.erase (it); }
+                else ++it;
             }
 
-            preloadRegisterInstruments();
+            bootstrapIfEmpty();
+            rebuildConfig();
+            loadNeededInstruments();
             sendChangeMessage();
         });
     });
+}
+
+void LiveSamplerProcessor::setC3Is60 (bool shouldBe)
+{
+    if (c3Is60 == shouldBe)
+        return;
+
+    c3Is60 = shouldBe;
+    markSave();
+
+    ++loadEpoch;
+    for (auto& kv : cache)
+        graveyard.push_back (kv.second);
+    cache.clear();
+    pendingLoads.clear();
+    rebuildConfig();
+    loadNeededInstruments();
+}
+
+//==============================================================================
+//  Ucitavanje instrumenata
+//==============================================================================
+juce::StringArray LiveSamplerProcessor::neededInstruments (bool includeBank) const
+{
+    juce::StringArray names;
+    auto addPerf = [this, &names] (const Performance& p)
+    {
+        for (auto& part : p.parts)
+            if (part.on)
+                if (const int u = findUser (part.user); u >= 0)
+                    for (auto& n : users[(size_t) u].usedInstruments())
+                        names.addIfNotAlreadyThere (n);
+    };
+
+    addPerf (perf);
+    if (includeBank)
+        for (int i = 0; i < kPerfPerBank; ++i)
+            if (const auto& s = slots[(size_t) (currentBank * kPerfPerBank + i)]; s.used)
+                addPerf (s);
+    return names;
+}
+
+void LiveSamplerProcessor::loadNeededInstruments()
+{
+    // prvo trenutni performans, pa ostatak banke (da prebacivanje bude trenutno)
+    for (auto& n : neededInstruments (false))
+        if (instrumentList.contains (n) && cache.count (n) == 0)
+            requestInstrument (n, nullptr);
+    for (auto& n : neededInstruments (true))
+        if (instrumentList.contains (n) && cache.count (n) == 0)
+            requestInstrument (n, nullptr);
 }
 
 InstrumentPtr LiveSamplerProcessor::getLoadedInstrument (const juce::String& name) const
@@ -246,16 +264,8 @@ void LiveSamplerProcessor::installInstrument (const juce::String& name, Instrume
 {
     if (inst == nullptr)
         return;
-
     cache[name] = inst;
-    for (int p = 0; p < numParts; ++p)
-    {
-        if (instrumentNames[p] == name)
-        {
-            ++partRequestId[p];
-            parts[p].setInstrument (inst);
-        }
-    }
+    rebuildConfig();
     sendChangeMessage();
 }
 
@@ -284,6 +294,7 @@ void LiveSamplerProcessor::reloadInstrument (const juce::String& name, bool igno
         graveyard.push_back (it->second);
         cache.erase (it);
     }
+    rebuildConfig();
     requestInstrument (name, [this, name] (InstrumentPtr inst) { installInstrument (name, inst); }, ignoreMapFile);
 }
 
@@ -334,77 +345,61 @@ void LiveSamplerProcessor::onInstrumentLoaded (const juce::String& name, Instrum
     if (inst != nullptr)
     {
         if (! inst->warnings.isEmpty())
-            lastWarning = name + ": " + inst->warnings[0]
-                        + (inst->warnings.size() > 1 ? " (+" + juce::String (inst->warnings.size() - 1) + ")" : juce::String());
+            lastWarning = name.fromLastOccurrenceOf ("/", false, false) + ": " + inst->warnings[0];
         if (inst->zones.empty())
             lastWarning = name + T (": nema upotrebljivih semplova");
-
         cache[name] = inst;
     }
 
     for (auto& cb : callbacks)
         if (cb) cb (inst);
 
+    rebuildConfig();
     sendChangeMessage();
 }
 
-void LiveSamplerProcessor::selectInstrument (int part, const juce::String& name)
+//==============================================================================
+//  Konfiguracija za audio nit
+//==============================================================================
+void LiveSamplerProcessor::rebuildConfig()
 {
-    if (part < 0 || part >= numParts)
-        return;
-
-    instrumentNames[part] = name;
-    const int requestId = ++partRequestId[part];
-    sendChangeMessage();
-
-    if (name.isEmpty())
+    auto cfg = std::make_shared<EngineConfig>();
+    for (int i = 0; i < kNumParts; ++i)
     {
-        parts[part].setInstrument (nullptr);
-        return;
+        auto& pr = cfg->parts[(size_t) i];
+        pr.part = perf.parts[(size_t) i];
+        const int u = findUser (pr.part.user);
+        if (u >= 0)
+        {
+            pr.user = users[(size_t) u];
+            for (int o = 0; o < kNumOsc; ++o)
+                if (pr.user.osc[(size_t) o].on)
+                    pr.inst[(size_t) o] = getLoadedInstrument (pr.user.osc[(size_t) o].instrument);
+        }
+        pr.active = pr.part.on && u >= 0;
     }
+    cfg->master = perf.master;
+    cfg->globalDb = globalDb;
+    cfg->terca = terca;
 
-    requestInstrument (name, [this, part, requestId] (InstrumentPtr inst)
+    ConfigPtr old;
     {
-        if (partRequestId[part] == requestId)
-            parts[part].setInstrument (inst);
-    });
-}
-
-void LiveSamplerProcessor::preloadRegisterInstruments()
-{
-    for (auto& n : registers.getAllInstrumentNames())
-        if (instrumentList.contains (n))
-            requestInstrument (n, nullptr);
-}
-
-void LiveSamplerProcessor::setC3Is60 (bool shouldBe)
-{
-    if (c3Is60 == shouldBe)
-        return;
-
-    c3Is60 = shouldBe;
-    appProps.getUserSettings()->setValue ("c3Is60", shouldBe);
-    appProps.saveIfNeeded();
-
-    // ponovo ucitaj sve sa novim mapiranjem oktava
-    ++loadEpoch;
-    for (auto& kv : cache)
-        graveyard.push_back (kv.second);
-    cache.clear();
-    pendingLoads.clear();
-
-    for (int p = 0; p < numParts; ++p)
-        selectInstrument (p, instrumentNames[p]);
-    preloadRegisterInstruments();
+        const juce::SpinLock::ScopedLockType sl (configLock);
+        old = pendingConfig;
+        pendingConfig = cfg;
+    }
+    if (old != nullptr)
+        configGraveyard.push_back (old);
 }
 
 void LiveSamplerProcessor::timerCallback()
 {
-    // oslobodi memoriju instrumenata koje vise niko ne koristi
-    juce::StringArray keep = registers.getAllInstrumentNames();
-    for (auto& n : instrumentNames)
-        keep.add (n);
+    // stare konfiguracije i instrumenti se oslobadjaju ovde, ne na audio niti
+    configGraveyard.erase (std::remove_if (configGraveyard.begin(), configGraveyard.end(),
+                                           [] (const ConfigPtr& p) { return p.use_count() == 1; }),
+                           configGraveyard.end());
 
+    auto keep = neededInstruments (true);
     for (auto it = cache.begin(); it != cache.end();)
     {
         if (! keep.contains (it->first) && it->second.use_count() == 1)
@@ -412,88 +407,216 @@ void LiveSamplerProcessor::timerCallback()
         else
             ++it;
     }
-
     graveyard.erase (std::remove_if (graveyard.begin(), graveyard.end(),
                                      [] (const InstrumentPtr& p) { return p == nullptr || p.use_count() == 1; }),
                      graveyard.end());
-}
 
-juce::String LiveSamplerProcessor::getStatusText() const
-{
-    if (! libraryFolder.isDirectory())
-        return T ("Izaberi folder sa semplovima");
-    if (scanning)
-        return T ("Pretražujem folder...");
-    if (! pendingLoads.empty())
-        return T ("Učitavam: ") + pendingLoads.begin()->first
-             + (pendingLoads.size() > 1 ? " (+" + juce::String ((int) pendingLoads.size() - 1) + ")" : juce::String());
-
-    size_t bytes = 0;
-    for (auto& kv : cache)
-        bytes += kv.second->memoryBytes();
-
-    auto s = juce::String (instrumentList.size()) + T (" instrumenata  |  u memoriji: ")
-           + juce::String ((int) cache.size()) + " (" + juce::String ((double) bytes / (1024.0 * 1024.0), 0) + " MB)";
-    if (lastWarning.isNotEmpty())
-        s << T ("  |  ⚠ ") << lastWarning;
-    return s;
-}
-
-//==============================================================================
-//  Registri
-//==============================================================================
-static bool isRegisterParam (const juce::String& id)
-{
-    return id.startsWith ("p") || id.startsWith ("split") || id.startsWith ("lower");
-}
-
-void LiveSamplerProcessor::storeRegister (int index)
-{
-    auto& slot = registers[index];
-    slot = Registers::Slot();
-    slot.used = true;
-
-    for (auto* param : getParameters())
-        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (param))
-            if (isRegisterParam (rp->getParameterID()))
-                slot.values.set (rp->getParameterID(), rp->getValue());
-
-    for (int p = 0; p < numParts; ++p)
-        slot.instruments[p] = instrumentNames[p];
-
-    registers.saveTo (getRegistersFile());
-    currentRegister = index;
-    sendChangeMessage();
-}
-
-void LiveSamplerProcessor::recallRegister (int index)
-{
-    auto& slot = registers[index];
-    if (! slot.used)
-        return;
-
-    for (auto& nv : slot.values)
-        if (auto* rp = apvts.getParameter (nv.name.toString()))
-            rp->setValueNotifyingHost ((float) (double) nv.value);
-
-    for (int p = 0; p < numParts; ++p)
-        if (slot.instruments[p] != instrumentNames[p])
-            selectInstrument (p, slot.instruments[p]);
-
-    currentRegister = index;
-    sendChangeMessage();
+    if (saveNeeded && juce::Time::getMillisecondCounter() - lastSaveCheck > 1500)
+        saveNow();
+    lastSaveCheck = juce::Time::getMillisecondCounter();
 }
 
 void LiveSamplerProcessor::handleAsyncUpdate()
 {
     const int prog = pendingProgram.exchange (-1);
-    if (prog >= 0 && prog < Registers::numSlots)
-        recallRegister (prog);
+    if (prog >= 0 && prog < kNumPerfSlots)
+        recallPerformance (prog);
+
+    if (learnedType.load() != 0)
+    {
+        terca.learn.type = learnedType.exchange (0);
+        terca.learn.channel = learnedChannel.load();
+        terca.learn.number = learnedNumber.load();
+        rebuildConfig();
+        markSave();
+    }
+
+    if (tercaChanged.exchange (false))
+        sendChangeMessage();
+    sendChangeMessage();
 }
 
-void LiveSamplerProcessor::panic()
+//==============================================================================
+//  Useri
+//==============================================================================
+int LiveSamplerProcessor::findUser (const juce::String& name) const
 {
-    panicRequested = true;
+    if (name.isEmpty())
+        return -1;
+    for (size_t i = 0; i < users.size(); ++i)
+        if (users[i].name == name)
+            return (int) i;
+    return -1;
+}
+
+juce::StringArray LiveSamplerProcessor::getUserNames() const
+{
+    juce::StringArray s;
+    for (auto& u : users)
+        s.add (u.name);
+    return s;
+}
+
+juce::String LiveSamplerProcessor::uniqueUserName (const juce::String& base, int ignoreIndex) const
+{
+    auto clean = base.trim().isEmpty() ? juce::String ("User") : base.trim();
+    auto taken = [this, ignoreIndex] (const juce::String& n)
+    {
+        for (size_t i = 0; i < users.size(); ++i)
+            if ((int) i != ignoreIndex && users[i].name.equalsIgnoreCase (n))
+                return true;
+        return false;
+    };
+    if (! taken (clean))
+        return clean;
+    for (int k = 2;; ++k)
+        if (! taken (clean + " " + juce::String (k)))
+            return clean + " " + juce::String (k);
+}
+
+int LiveSamplerProcessor::createUser (const juce::String& baseName, const UserProgram* copyFrom)
+{
+    UserProgram u = copyFrom != nullptr ? *copyFrom : UserProgram();
+    u.name = uniqueUserName (baseName);
+    users.push_back (u);
+    markSave();
+    sendChangeMessage();
+    return (int) users.size() - 1;
+}
+
+int LiveSamplerProcessor::createUserFromInstrument (const juce::String& instrument)
+{
+    UserProgram u;
+    u.osc[0].on = true;
+    u.osc[0].instrument = instrument;
+    const int i = createUser (instrument.fromLastOccurrenceOf ("/", false, false), &u);
+    loadNeededInstruments();
+    requestInstrument (instrument, nullptr);
+    return i;
+}
+
+void LiveSamplerProcessor::updateUser (int index, const UserProgram& u)
+{
+    if (index < 0 || index >= (int) users.size())
+        return;
+
+    auto updated = u;
+    updated.name = uniqueUserName (u.name, index);
+    const auto oldName = users[(size_t) index].name;
+
+    // preimenovanje: popravi reference u performansima
+    if (oldName != updated.name)
+    {
+        for (auto& p : perf.parts)
+            if (p.user == oldName) p.user = updated.name;
+        for (auto& s : slots)
+            for (auto& p : s.parts)
+                if (p.user == oldName) p.user = updated.name;
+    }
+
+    users[(size_t) index] = updated;
+    markSave();
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::deleteUser (int index)
+{
+    if (index < 0 || index >= (int) users.size())
+        return;
+    users.erase (users.begin() + index);
+    markSave();
+    rebuildConfig();
+    sendChangeMessage();
+}
+
+//==============================================================================
+//  Performans
+//==============================================================================
+void LiveSamplerProcessor::updatePerformance (const Performance& p)
+{
+    perf = p;
+    perfDirty = true;
+    markSave();
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::storePerformance (int slot)
+{
+    if (slot < 0 || slot >= kNumPerfSlots)
+        return;
+    perf.used = true;
+    slots[(size_t) slot] = perf;
+    currentSlot = slot;
+    perfDirty = false;
+    markSave();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::recallPerformance (int slot)
+{
+    if (slot < 0 || slot >= kNumPerfSlots || ! slots[(size_t) slot].used)
+        return;
+    perf = slots[(size_t) slot];
+    currentSlot = slot;
+    currentBank = slot / kPerfPerBank;
+    perfDirty = false;
+    markSave();
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setCurrentBank (int b)
+{
+    currentBank = juce::jlimit (0, kNumPerfBanks - 1, b);
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+//==============================================================================
+//  Terce (message nit)
+//==============================================================================
+void LiveSamplerProcessor::updateTerca (const TercaSettings& t)
+{
+    terca = t;
+    if (tercaScale.load() >= (int) terca.scales.size())
+        tercaScale = 0;
+    markSave();
+    rebuildConfig();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setTercaOn (bool on)
+{
+    tercaOn = on;
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setTercaKey (int root, int scale)
+{
+    tercaRoot = ((root % 12) + 12) % 12;
+    tercaScale = juce::jlimit (0, juce::jmax (0, (int) terca.scales.size() - 1), scale);
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::tercaButton (bool down)
+{
+    int start1, size1, start2, size2;
+    uiTriggerFifo.prepareToWrite (1, start1, size1, start2, size2);
+    if (size1 > 0)
+    {
+        uiTriggerData[start1] = down ? 1 : 0;
+        uiTriggerFifo.finishedWrite (1);
+    }
+}
+
+juce::String LiveSamplerProcessor::getTercaText() const
+{
+    return Terca::keyName (tercaRoot.load(), terca, tercaScale.load());
 }
 
 //==============================================================================
@@ -509,87 +632,183 @@ void LiveSamplerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock
     reverbBuf.setSize (2, maxBlock);
     delayBuf.setSize (2, maxBlock);
     std::memset (routed, 0, sizeof (routed));
+    std::memset (harmonized, 0, sizeof (harmonized));
+    std::memset (heldCount, 0, sizeof (heldCount));
     keyboardState.reset();
 }
 
-void LiveSamplerProcessor::readSettings (PartSettings* ps, MasterSettings& ms)
+int LiveSamplerProcessor::heldMask() const
 {
-    for (int p = 0; p < numParts; ++p)
-    {
-        auto& x = pp[p];
-        auto& s = ps[p];
-        s.enabled = x.on->load() > 0.5f;
-        s.volumeDb = x.vol->load();
-        s.pan = x.pan->load();
-        s.octave = (int) std::lround (x.oct->load());
-        s.transpose = (int) std::lround (x.trans->load());
-        s.fineCents = x.fine->load();
-        s.velSens = x.velsens->load();
-        s.mono = x.mono->load() > 0.5f;
-        s.portamento = x.porta->load();
-        s.attack = x.att->load();
-        s.decay = x.dec->load();
-        s.sustain = x.sus->load();
-        s.release = x.rel->load();
-        s.cutoff = x.cutoff->load();
-        s.resonance = x.reso->load();
-        s.fxType = (int) std::lround (x.fxtype->load());
-        s.fxRate = x.fxrate->load();
-        s.fxDepth = x.fxdepth->load();
-        s.fxMix = x.fxmix->load();
-        s.reverbSend = x.rev->load();
-        s.delaySend = x.dly->load();
-        s.bendRange = (int) std::lround (x.bend->load());
-    }
-
-    ms.reverbSize = revSize->load();
-    ms.reverbDamping = revDamp->load();
-    ms.reverbLevel = revLevel->load();
-    ms.delayTimeMs = dlyTime->load();
-    ms.delayFeedback = dlyFb->load();
-    ms.delayLevel = dlyLevel->load();
-    ms.eqLowDb = eqLow->load();
-    ms.eqMidDb = eqMid->load();
-    ms.eqHighDb = eqHigh->load();
-    ms.compThresholdDb = compThr->load();
-    ms.compRatio = compRatio->load();
-    ms.masterDb = masterVol->load();
+    int m = 0;
+    for (int n = 0; n < 128; ++n)
+        if (heldCount[n] > 0)
+            m |= 1 << (n % 12);
+    return m;
 }
 
-void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const PartSettings* ps)
+void LiveSamplerProcessor::tryRecognize (int mask, const EngineConfig& c)
+{
+    int root, scale;
+    if (Terca::recognize (c.terca, mask, root, scale))
+    {
+        tercaRoot = root;
+        tercaScale = scale;
+        tercaOn = true;
+        recognizedInCapture = true;
+        tercaChanged = true;
+        triggerAsyncUpdate();
+    }
+}
+
+void LiveSamplerProcessor::tercaTrigger (bool down, const EngineConfig& c)
+{
+    if (down)
+    {
+        if (tercaCapturing)
+            return;
+        tercaCapturing = true;
+        recognizedInCapture = false;
+        capturedMask = 0;
+        if (const int held = heldMask(); held != 0)
+            tryRecognize (held, c);
+    }
+    else
+    {
+        if (! tercaCapturing)
+            return;
+        tercaCapturing = false;
+        if (! recognizedInCapture)
+            tercaOn = ! tercaOn.load();   // kratak pritisak: pali / gasi
+        tercaChanged = true;
+        triggerAsyncUpdate();
+    }
+}
+
+void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineConfig& c)
+{
+    ++heldCount[note];
+
+    if (tercaCapturing)
+    {
+        capturedMask |= 1 << (note % 12);
+        tryRecognize (capturedMask | heldMask(), c);
+    }
+
+    const bool tOn = tercaOn.load();
+    const int root = tercaRoot.load(), scale = tercaScale.load();
+
+    juce::uint8 used = 0, harm = 0;
+    for (int p = 0; p < kNumParts; ++p)
+    {
+        const auto& pr = c.parts[(size_t) p];
+        const auto& part = pr.part;
+        if (! pr.active)
+            continue;
+        if (part.midiChannel != 0 && part.midiChannel != ch + 1)
+            continue;
+        if (note < part.keyLow || note > part.keyHigh || vel < part.velLow || vel > part.velHigh)
+            continue;
+
+        const int shift = part.transpose + part.octave * 12;
+        parts[p].noteOn (note, note + shift, vel);
+        used |= (juce::uint8) (1 << p);
+
+        if (tOn && part.terca && ! tercaCapturing)
+        {
+            // terca samo na najvisi drzani ton u opsegu ovog dela (melodija)
+            bool isTop = true;
+            if (c.terca.topNoteOnly)
+                for (int n = note + 1; n <= part.keyHigh && n < 128; ++n)
+                    if (heldCount[n] > 0) { isTop = false; break; }
+
+            if (isTop)
+            {
+                // nova melodijska nota: nize note ovog dela gube tercu
+                if (c.terca.topNoteOnly)
+                    for (int cc = 0; cc < 16; ++cc)
+                        for (int n = part.keyLow; n < note && n < 128; ++n)
+                            if (harmonized[cc][n] & (1 << p))
+                            {
+                                parts[p].noteOff (128 + n);
+                                harmonized[cc][n] &= (juce::uint8) ~(1 << p);
+                            }
+
+                int hn[2];
+                const int count = Terca::harmonize (c.terca, root, scale, note, hn);
+                const int hv = juce::jlimit (1, 127, juce::roundToInt ((float) vel * c.terca.velocity));
+                for (int k = 0; k < count; ++k)
+                    parts[p].noteOn (128 + note, hn[k] + shift, hv, k > 0);
+                if (count > 0)
+                    harm |= (juce::uint8) (1 << p);
+            }
+        }
+    }
+    routed[ch][note] |= used;
+    harmonized[ch][note] |= harm;
+}
+
+void LiveSamplerProcessor::routeNoteOff (int ch, int note)
+{
+    if (heldCount[note] > 0)
+        --heldCount[note];
+
+    for (int p = 0; p < kNumParts; ++p)
+    {
+        if (routed[ch][note] & (1 << p))
+            parts[p].noteOff (note);
+        if (harmonized[ch][note] & (1 << p))
+            parts[p].noteOff (128 + note);
+    }
+    routed[ch][note] = 0;
+    harmonized[ch][note] = 0;
+}
+
+void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineConfig& c)
 {
     const int ch = juce::jlimit (0, 15, m.getChannel() - 1);
+    const auto& lt = c.terca.learn;
+
+    // dodela dugmeta za terce
+    if (learning.load())
+    {
+        if (m.isController() && m.getControllerValue() > 0 && m.getControllerNumber() != 64)
+        {
+            learnedChannel = 0;
+            learnedNumber = m.getControllerNumber();
+            learnedType = LearnTrigger::CC;
+            learning = false;
+            triggerAsyncUpdate();
+            return;
+        }
+        if (m.isNoteOn())
+        {
+            learnedChannel = m.getChannel();
+            learnedNumber = m.getNoteNumber();
+            learnedType = LearnTrigger::Note;
+            learning = false;
+            triggerAsyncUpdate();
+            return;
+        }
+    }
+
+    if (m.isController() && lt.matchesCC (m.getChannel(), m.getControllerNumber()))
+    {
+        tercaTrigger (m.getControllerValue() >= 64, c);
+        return;
+    }
+    if ((m.isNoteOn() || m.isNoteOff()) && lt.matchesNote (m.getChannel(), m.getNoteNumber()))
+    {
+        tercaTrigger (m.isNoteOn(), c);
+        return;
+    }
 
     if (m.isNoteOn())
     {
-        const int note = m.getNoteNumber();
-        const int lch = (int) std::lround (lowerCh->load());
-        const bool split = splitOn->load() > 0.5f;
-        const int splitPt = (int) std::lround (splitPoint->load());
-
-        juce::uint8 mask;
-        if (lch > 0 && m.getChannel() == lch)                 mask = 4;
-        else if (split && note < splitPt && ps[2].enabled)   mask = 4;
-        else                                                 mask = 1 | 2;
-
-        juce::uint8 used = 0;
-        for (int p = 0; p < numParts; ++p)
-        {
-            if ((mask & (1 << p)) && ps[p].enabled)
-            {
-                parts[p].noteOn (note, m.getVelocity());
-                used |= (juce::uint8) (1 << p);
-            }
-        }
-        routed[ch][note] |= used;
+        routeNoteOn (ch, m.getNoteNumber(), m.getVelocity(), c);
     }
     else if (m.isNoteOff())
     {
-        const int note = m.getNoteNumber();
-        for (int p = 0; p < numParts; ++p)
-            if (routed[ch][note] & (1 << p))
-                parts[p].noteOff (note);
-        routed[ch][note] = 0;
+        routeNoteOff (ch, m.getNoteNumber());
     }
     else if (m.isSustainPedalOn() || m.isSustainPedalOff())
     {
@@ -607,58 +826,13 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const PartSet
         for (auto& p : parts)
             p.allNotesOff (m.isAllSoundOff());
         std::memset (routed, 0, sizeof (routed));
+        std::memset (harmonized, 0, sizeof (harmonized));
+        std::memset (heldCount, 0, sizeof (heldCount));
     }
     else if (m.isProgramChange())
     {
         pendingProgram = m.getProgramChangeNumber();
         triggerAsyncUpdate();
-    }
-}
-
-void LiveSamplerProcessor::processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi,
-                                         int chunkStart, int len, const PartSettings* ps, const MasterSettings& ms)
-{
-    for (int p = 0; p < numParts; ++p)
-        parts[p].beginBlock (ps[p], len);
-
-    int pos = 0;
-    for (const auto meta : midi)
-    {
-        const int t = meta.samplePosition - chunkStart;
-        if (t < 0) continue;
-        if (t >= len) break;
-
-        if (t > pos)
-        {
-            for (auto& p : parts)
-                p.renderVoices (pos, t - pos);
-            pos = t;
-        }
-        handleMidi (meta.getMessage(), ps);
-    }
-
-    for (auto& p : parts)
-        p.renderVoices (pos, len - pos);
-
-    mainBuf.clear (0, len);
-    reverbBuf.clear (0, len);
-    delayBuf.clear (0, len);
-
-    for (auto& p : parts)
-        p.endBlock (mainBuf, reverbBuf, delayBuf, len);
-
-    master.process (mainBuf, reverbBuf, delayBuf, len, ms);
-
-    if (out.getNumChannels() >= 2)
-    {
-        out.copyFrom (0, chunkStart, mainBuf, 0, 0, len);
-        out.copyFrom (1, chunkStart, mainBuf, 1, 0, len);
-    }
-    else if (out.getNumChannels() == 1)
-    {
-        out.copyFrom (0, chunkStart, mainBuf, 0, 0, len);
-        out.addFrom (0, chunkStart, mainBuf, 1, 0, len);
-        out.applyGain (0, chunkStart, len, 0.5f);
     }
 }
 
@@ -668,6 +842,15 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     const int n = buffer.getNumSamples();
     buffer.clear();
 
+    {
+        const juce::SpinLock::ScopedLockType sl (configLock);
+        if (audioConfig != pendingConfig)
+            audioConfig = pendingConfig;
+    }
+    if (audioConfig == nullptr)
+        return;
+    const auto& c = *audioConfig;
+
     keyboardState.processNextMidiBuffer (midi, 0, n, true);
 
     if (panicRequested.exchange (false))
@@ -675,52 +858,120 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         for (auto& p : parts)
             p.allNotesOff (true);
         std::memset (routed, 0, sizeof (routed));
+        std::memset (harmonized, 0, sizeof (harmonized));
+        std::memset (heldCount, 0, sizeof (heldCount));
     }
 
-    PartSettings ps[numParts];
-    MasterSettings ms;
-    readSettings (ps, ms);
+    // TERCA dugme na ekranu
+    {
+        int start1, size1, start2, size2;
+        const int ready = uiTriggerFifo.getNumReady();
+        uiTriggerFifo.prepareToRead (ready, start1, size1, start2, size2);
+        for (int i = 0; i < size1; ++i) tercaTrigger (uiTriggerData[start1 + i] != 0, c);
+        for (int i = 0; i < size2; ++i) tercaTrigger (uiTriggerData[start2 + i] != 0, c);
+        uiTriggerFifo.finishedRead (size1 + size2);
+    }
 
     for (int start = 0; start < n; start += maxBlock)
-        processChunk (buffer, midi, start, juce::jmin (maxBlock, n - start), ps, ms);
+    {
+        const int len = juce::jmin (maxBlock, n - start);
+
+        for (int p = 0; p < kNumParts; ++p)
+            parts[p].beginBlock (&c.parts[(size_t) p], len);
+
+        int pos = 0;
+        for (const auto meta : midi)
+        {
+            const int t = meta.samplePosition - start;
+            if (t < 0) continue;
+            if (t >= len) break;
+            if (t > pos)
+            {
+                for (auto& p : parts) p.renderVoices (pos, t - pos);
+                pos = t;
+            }
+            handleMidi (meta.getMessage(), c);
+        }
+        for (auto& p : parts)
+            p.renderVoices (pos, len - pos);
+
+        mainBuf.clear (0, len);
+        reverbBuf.clear (0, len);
+        delayBuf.clear (0, len);
+        for (auto& p : parts)
+            p.endBlock (mainBuf, reverbBuf, delayBuf, len);
+
+        auto ms = c.master;
+        ms.masterDb += c.globalDb;
+        master.process (mainBuf, reverbBuf, delayBuf, len, ms);
+
+        if (buffer.getNumChannels() >= 2)
+        {
+            buffer.copyFrom (0, start, mainBuf, 0, 0, len);
+            buffer.copyFrom (1, start, mainBuf, 1, 0, len);
+        }
+        else if (buffer.getNumChannels() == 1)
+        {
+            buffer.copyFrom (0, start, mainBuf, 0, 0, len);
+            buffer.addFrom (0, start, mainBuf, 1, 0, len);
+            buffer.applyGain (0, start, len, 0.5f);
+        }
+    }
 
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear (ch, 0, n);
+
+    int voicesNow = 0;
+    for (auto& p : parts)
+        voicesNow += p.getNumActiveVoices();
+    activeVoices = voicesNow;
+}
+
+void LiveSamplerProcessor::panic()
+{
+    panicRequested = true;
+}
+
+juce::String LiveSamplerProcessor::getStatusText() const
+{
+    if (libraryFolders.isEmpty())
+        return T ("Dodaj folder sa semplovima (PODEŠAVANJA)");
+    if (scanning)
+        return T ("Pretražujem foldere...");
+    if (! pendingLoads.empty())
+        return T ("Učitavam: ") + pendingLoads.begin()->first.fromLastOccurrenceOf ("/", false, false)
+             + (pendingLoads.size() > 1 ? " (+" + juce::String ((int) pendingLoads.size() - 1) + ")" : juce::String());
+
+    size_t bytes = 0;
+    for (auto& kv : cache)
+        bytes += kv.second->memoryBytes();
+
+    auto s = juce::String (instrumentList.size()) + T (" instrumenata  |  ") + juce::String ((double) bytes / (1024.0 * 1024.0), 0) + " MB";
+    if (lastWarning.isNotEmpty())
+        s << T ("  |  ⚠ ") << lastWarning;
+    return s;
 }
 
 //==============================================================================
 void LiveSamplerProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    auto state = apvts.copyState();
-    for (int p = 0; p < numParts; ++p)
-        state.setProperty ("inst" + juce::String (p), instrumentNames[p], nullptr);
-    state.setProperty ("libraryFolder", libraryFolder.getFullPathName(), nullptr);
-
-    if (auto xml = state.createXml())
-        copyXmlToBinary (*xml, destData);
+    auto xml = perf.toXml();
+    xml->setAttribute ("slot", currentSlot);
+    copyXmlToBinary (*xml, destData);
 }
 
 void LiveSamplerProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     auto xml = getXmlFromBinary (data, sizeInBytes);
-    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+    if (xml == nullptr || ! xml->hasTagName ("Performance"))
         return;
-
-    auto state = juce::ValueTree::fromXml (*xml);
-    apvts.replaceState (state);
-
-    for (int p = 0; p < numParts; ++p)
-        instrumentNames[p] = state.getProperty ("inst" + juce::String (p)).toString();
-
-    juce::File folder (state.getProperty ("libraryFolder").toString());
-    if (folder.isDirectory() && folder != libraryFolder)
-        setLibraryFolder (folder);   // posle skeniranja ucitava instrumentNames
-    else
-        for (int p = 0; p < numParts; ++p)
-            selectInstrument (p, instrumentNames[p]);
+    perf = Performance::fromXml (*xml);
+    currentSlot = xml->getIntAttribute ("slot", -1);
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
 }
 
-//==============================================================================
 juce::AudioProcessorEditor* LiveSamplerProcessor::createEditor()
 {
     return new LiveSamplerEditor (*this);

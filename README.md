@@ -88,7 +88,7 @@ sačuvao: u folderu `IME Samples` pored `IME.nki`, u podfolderima ili u folderu 
 
 ## 3. Editor mapiranja
 
-Dugme **MAPIRANJE** gore otvara editor za instrument izabranog dela (Gornji 1/2, Donji).
+Stranica **MAPIRANJE** (ili dugme MAPA kod oscilatora na stranici USER) otvara editor za instrument izabranog oscilatora.
 - Grafik: tasteri levo-desno, velocity dole-gore. Klik bira zonu, prevlačenje je pomera,
   vučenje ivica menja raspon tastera ili jačine. Trouglić je root nota.
 - Desno se ručno podešavaju root, raspon, velocity, štim, jačina, pan, loop i "ista visina"
@@ -101,25 +101,36 @@ Dugme **MAPIRANJE** gore otvara editor za instrument izabranog dela (Gornji 1/2,
 - **Odbaci izmene** vraća poslednju sačuvanu mapu, **Automatsko** briše sačuvanu mapu i
   pravi je ponovo iz fajla.
 
-## 4. Sviranje
+## 4. User, Performans i Terce
 
-- **Gornji 1 / Gornji 2**: sviraju zajedno (lejer). Drugi se uključuje dugmetom sa imenom.
-- **SPLIT**: levo od "Tačke" svira Donji, desno Gornji. "Donji kanal" može da pošalje Donji
-  na poseban MIDI kanal (druga klavijatura); tada split nije potreban.
-- **< >** pored instrumenta: brzo prebacivanje na prethodni/sledeći instrument.
-- Dupli klik na potenciometar vraća ga na početnu vrednost.
-- **MONO + Portamento**: jedna nota u isto vreme, klizanje između nota. Portamento radi i u
-  poli režimu, od poslednje odsvirane note.
-- **Insert efekat** (po delu): Chorus, Phaser, Tremolo, Overdrive, Eho. Brzina/Dubina/Mix.
-- **Reverb / Delay** na delu su "send": koliko tog dela ide u master reverb i delay.
-- **Master**: reverb, delay, EQ (bas/sredina/visoki), kompresor (Odnos 1 = isključen),
-  jačina. Na kraju je uvek limiter da ne krcne u zvučnicima.
-- **Registri**: uključi **SNIMI**, pa klikni broj da sačuvaš trenutno stanje (instrumenti +
-  sva podešavanja delova). Klik na broj ih vraća. 4 banke (A–D) × 8 = 32 registra.
-  **MIDI Program Change 0–31** sa klavijature poziva registre.
-  Instrumenti iz svih registara se učitavaju unapred, da prebacivanje bude trenutno.
-- **Sustain pedala** (CC64) i **pitch bend** rade na svim delovima.
-- **PANIK** odmah utišava sve.
+**Podešavanja**: dodaj jedan ili više foldera sa semplovima (disk, USB stick). Kad ubaciš
+USB, klikni "Osveži". Instrumenti dobijaju ime po folderu, npr. `USB/Gudaci/Violina`.
+
+**USER** = zvuk od do 8 oscilatora. Svaki oscilator ima instrument iz biblioteke, jačinu,
+pan, transpoziciju, fino štimovanje, raspon tastera i velocity-ja. Zajedničko za usera:
+ADSR, cutoff/rezonanca, velocity osetljivost, mono, portamento, pitch bend i insert efekat.
+Dugme MAPA otvara editor mapiranja za taj instrument. Useri se čuvaju automatski.
+
+**PERFORMANS** = 8 delova. Svaki deo: user, uključen/isključen, jačina, pan, transpozicija,
+oktava, raspon tastera (split), velocity raspon, MIDI kanal, reverb/delay send, terca i
+sustain pedala. Traka ispod pokazuje gde je koji deo na klavijaturi. Performans pamti i
+master efekte (stranica EFEKTI).
+- Mesta za performanse: 4 banke (A–D) × 16. Uključi SNIMI pa klikni mesto da sačuvaš.
+- MIDI Program Change 0–63 poziva performanse. Instrumenti iz cele banke se učitavaju unapred.
+
+**TERCE**
+- Deo koji treba da dobije terce: uključi TERCA na tom delu (stranica PERFORMANS).
+- Dugme TERCA gore (ili dugme na klavijaturi): **drži ga i odsviraj akord** → terce se
+  uključuju u tom tonalitetu (npr. D mol). Odsviraš drugi akord dok držiš → menja se
+  tonalitet. **Kratak pritisak bez akorda** pali/gasi terce.
+- **LEARN**: klikni LEARN pa pritisni dugme ili pad na klavijaturi (npr. Impulse).
+  Od tada to dugme radi isto što i TERCA dugme.
+- Stranica TERCE:
+  - **Skale**: za svaki od 12 tonova (od tonike) koliko polutonova gore i dole ide terca.
+    Dur i Mol (harmonski) su podrazumevani, a možeš da dodaš svoje skale.
+  - **Pravila**: koji akord ili koja dva tona uključuju koju skalu, i pomeraj tonike
+    (npr. E7 sa +5 uključuje A mol). Pravila se proveravaju redom.
+  - Terca iznad / ispod / oba, jačina terce i "samo na najviši ton" (melodija).
 
 ## 5. Podešavanje zvuka (bitno za svirku uživo)
 
@@ -138,6 +149,6 @@ Semplovi se drže u RAM memoriji. Status gore pokazuje koliko memorije zauzimaju
 - `Source/MappingEditor.*`: editor mapiranja
 - `Source/SamplerPart.*`: glasovi, mono/portamento, velocity, filter, ADSR, insert efekti
 - `Source/MasterEffects.*`: reverb, delay, EQ, kompresor, limiter
-- `Source/Registers.*`: registri (čuvaju se u `%APPDATA%\LiveSampler\registers.xml`)
-- `Source/PluginProcessor.*`: parametri, MIDI rutiranje, split
-- `Source/PluginEditor.*`: interfejs
+- `Source/Model.*`: User, Performans, Terce (podaci, čuvanje, prepoznavanje akorda)
+- `Source/PluginProcessor.*`: MIDI rutiranje, delovi, terce, čuvanje u `%APPDATA%\LiveSampler`
+- `Source/PluginEditor.*`, `Source/Pages.*`: interfejs

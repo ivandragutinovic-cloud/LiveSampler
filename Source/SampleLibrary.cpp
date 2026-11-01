@@ -139,15 +139,30 @@ SampleLibrary::SampleLibrary()
     formatManager.registerBasicFormats();
 }
 
-void SampleLibrary::scan (const juce::File& rootFolder)
+juce::String SampleLibrary::rootLabel (const juce::File& r)
+{
+    auto n = r.getFileName();
+    if (n.isEmpty())   // ceo disk / USB stick, npr. "E:\"
+        n = r.getFullPathName().trimCharactersAtEnd ("\\/");
+    return n.isEmpty() ? juce::String ("Disk") : n;
+}
+
+void SampleLibrary::scan (const juce::Array<juce::File>& rootFolders)
 {
     const juce::ScopedLock sl (lock);
-    root = rootFolder;
+    roots = rootFolders;
     names.clear();
     entries.clear();
 
-    if (! root.isDirectory())
-        return;
+    for (auto& r : roots)
+        if (r.isDirectory())
+            scanRoot (r);
+
+    names.sortNatural();
+}
+
+void SampleLibrary::scanRoot (const juce::File& root)
+{
 
     std::set<juce::File> wavDirs;
     juce::Array<juce::File> kmpFiles, nkiFiles, kontaktFileDirs;
@@ -174,9 +189,10 @@ void SampleLibrary::scan (const juce::File& rootFolder)
             kontaktRoots.addIfNotAlreadyThere (d);
     }
 
-    auto rel = [this] (const juce::File& f)
+    const auto label = rootLabel (root);
+    auto rel = [&root, &label] (const juce::File& f)
     {
-        return f == root ? root.getFileName() : f.getRelativePathFrom (root).replaceCharacter ('\\', '/');
+        return f == root ? label : label + "/" + f.getRelativePathFrom (root).replaceCharacter ('\\', '/');
     };
 
     auto add = [this] (juce::String name, SourceType type, const juce::File& f, const juce::String& suffix)
@@ -213,8 +229,6 @@ void SampleLibrary::scan (const juce::File& rootFolder)
         add (rel (f.withFileExtension ({})), SourceType::Korg, f, "KMP");
     for (auto& f : nkiFiles)
         add (rel (f.withFileExtension ({})), SourceType::Kontakt, f, "NKI");
-
-    names.sortNatural();
 }
 
 //==============================================================================

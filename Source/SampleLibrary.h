@@ -77,11 +77,14 @@ class SampleLibrary
 public:
     SampleLibrary();
 
-    // Pretrazuje folder: WAV folderi, Korg .kmp i Kontakt .nki postaju instrumenti
-    void scan (const juce::File& rootFolder);
+    // Pretrazuje foldere (disk, USB): WAV folderi, Korg .kmp i Kontakt .nki postaju instrumenti.
+    // Ime instrumenta pocinje imenom foldera biblioteke, npr. "Kontakt Library/Gudaci/Violina"
+    void scan (const juce::Array<juce::File>& rootFolders);
+    void scan (const juce::File& rootFolder) { scan (juce::Array<juce::File> { rootFolder }); }
 
     const juce::StringArray& getInstrumentNames() const { return names; }
-    juce::File getRootFolder() const { return root; }
+    bool contains (const juce::String& name) const { const juce::ScopedLock sl (lock); return entries.count (name) > 0; }
+    static juce::String rootLabel (const juce::File& root);
 
     // Ucitava instrument (poziva se iz pozadinske niti, moze da traje).
     // ignoreMapFile: ne koristi sacuvanu mapu (za "vrati automatsko")
@@ -104,8 +107,9 @@ private:
     struct Entry { SourceType type; juce::File file; };
 
     void loadWavFolder (Instrument& inst, bool c3Is60);
+    void scanRoot (const juce::File& root);
 
-    juce::File root;
+    juce::Array<juce::File> roots;
     juce::StringArray names;
     std::map<juce::String, Entry> entries;
     juce::AudioFormatManager formatManager;

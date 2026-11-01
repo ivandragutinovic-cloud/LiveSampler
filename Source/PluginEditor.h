@@ -3,16 +3,26 @@
 #include "PluginProcessor.h"
 
 class MappingEditor;
+class PerformancePage;
+class UserPage;
+class TercePage;
+class EffectsPage;
+class SettingsPage;
 
 namespace Pal
 {
-    const juce::Colour bg       { 0xff121419 };
-    const juce::Colour panel    { 0xff1c2028 };
-    const juce::Colour panelHi  { 0xff262b35 };
+    const juce::Colour bg       { 0xff0f1115 };
+    const juce::Colour panel    { 0xff1a1d24 };
+    const juce::Colour panelHi  { 0xff262a33 };
     const juce::Colour text     { 0xffe8eaee };
     const juce::Colour dim      { 0xff8a91a0 };
-    const juce::Colour part[3]  { juce::Colour (0xffff8a3d), juce::Colour (0xff3dc5ff), juce::Colour (0xff7ddf64) };
+    const juce::Colour lcdBg    { 0xff0b1a20 };
+    const juce::Colour lcdText  { 0xff8fe9ff };
     const juce::Colour master   { 0xffc58aff };
+    const juce::Colour accent   { 0xffff8a3d };
+    const juce::Colour red      { 0xffff4d5e };
+    const juce::Colour part[8]  { juce::Colour (0xffff8a3d), juce::Colour (0xff3dc5ff), juce::Colour (0xff7ddf64), juce::Colour (0xffff5c8a),
+                                  juce::Colour (0xffc58aff), juce::Colour (0xffffd23d), juce::Colour (0xff3dffd0), juce::Colour (0xffff9be0) };
 }
 
 //==============================================================================
@@ -22,85 +32,48 @@ public:
     SamplerLookAndFeel();
     void drawRotarySlider (juce::Graphics&, int x, int y, int w, int h, float pos,
                            float startAngle, float endAngle, juce::Slider&) override;
-    void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour& bg,
+    void drawButtonBackground (juce::Graphics&, juce::Button& b, const juce::Colour& bg,
                                bool highlighted, bool down) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
+    juce::Font getPopupMenuFont() override { return juce::FontOptions (16.0f); }
+    juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::FontOptions (14.0f); }
 };
 
 //==============================================================================
-// Potenciometar sa nazivom i vrednoscu, vezan za parametar
-class Knob : public juce::Component
+namespace UI
+{
+    juce::String noteName (int n, bool c3Is60);
+    void setupIncDec (juce::Slider& s, double lo, double hi, double step,
+                      std::function<juce::String (double)> fmt = {},
+                      std::function<double (const juce::String&)> parse = {});
+    void setupNoteBox (juce::Slider& s, std::function<bool()> c3Is60);
+    void sectionTitle (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, juce::Colour c);
+    juce::String dbText (double v);
+    juce::String panText (double v);
+    juce::String timeText (double v);
+    juce::String hzText (double v);
+    juce::String pctText (double v);
+
+    // meni sa instrumentima, grupisano po folderima
+    void showInstrumentMenu (juce::Component* target, const juce::StringArray& names, const juce::String& current,
+                             bool allowEmpty, std::function<void (const juce::String&)> onPick);
+}
+
+// Potenciometar sa nazivom i vrednoscu (bez APVTS-a)
+class ValueKnob : public juce::Component
 {
 public:
-    Knob (juce::AudioProcessorValueTreeState& apvts, const juce::String& paramID,
-          const juce::String& title, juce::Colour accent);
+    ValueKnob (const juce::String& title, juce::Colour accent, double lo, double hi, double centre,
+               std::function<juce::String (double)> fmt, double defaultValue);
+    void setValue (double v) { if (! slider.isMouseButtonDown()) slider.setValue (v, juce::dontSendNotification); }
+    double getValue() const { return slider.getValue(); }
+    void setAccent (juce::Colour c) { slider.setColour (juce::Slider::rotarySliderFillColourId, c); }
+    std::function<void (double)> onChange;
     void resized() override;
 
-private:
     juce::Slider slider;
     juce::Label label;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
-};
-
-//==============================================================================
-class PartPanel : public juce::Component
-{
-public:
-    PartPanel (LiveSamplerProcessor&, int partIndex);
-    void paint (juce::Graphics&) override;
-    void resized() override;
-    void refresh();
-
-private:
-    void showInstrumentMenu();
-    void stepInstrument (int delta);
-
-    LiveSamplerProcessor& proc;
-    const int part;
-    const juce::Colour accent;
-
-    juce::TextButton onButton, monoButton, instrumentButton, prevButton { "<" }, nextButton { ">" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> onAtt, monoAtt;
-    juce::ComboBox fxBox;
-    juce::Label fxLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> fxAtt;
-    juce::OwnedArray<Knob> knobs;    // redosled odgovara rasporedu u resized()
-};
-
-//==============================================================================
-class MasterPanel : public juce::Component
-{
-public:
-    explicit MasterPanel (LiveSamplerProcessor&);
-    void paint (juce::Graphics&) override;
-    void resized() override;
-
-private:
-    juce::TextButton splitButton;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> splitAtt;
-    juce::OwnedArray<Knob> knobs;
-    struct Section { juce::String title; int first, count; };
-    juce::Array<Section> sections;
-};
-
-//==============================================================================
-class RegisterBar : public juce::Component
-{
-public:
-    explicit RegisterBar (LiveSamplerProcessor&);
-    void paint (juce::Graphics&) override;
-    void resized() override;
-    void refresh();
-
-private:
-    void registerClicked (int i);
-
-    LiveSamplerProcessor& proc;
-    int bank = 0;
-    juce::TextButton bankButtons[Registers::numBanks];
-    juce::TextButton regButtons[Registers::perBank];
-    juce::TextButton saveButton;
 };
 
 //==============================================================================
@@ -116,30 +89,63 @@ public:
     void resized() override;
 
     static constexpr int designW = 1280, designH = 860;
-    void showMapping (bool show);
+
+    enum Tab { TabPerformance = 0, TabUser, TabMapping, TabTerce, TabEffects, TabSettings, NumTabs };
+    void showTab (int tab);
+    void editUser (const juce::String& userName);            // otvori USER stranicu za ovog usera
+    void editMapping (const juce::String& userName, int osc);
+    void showMapping (bool show) { showTab (show ? TabMapping : TabPerformance); }
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void refreshAll();
-
-    SamplerLookAndFeel lnf;
-    LiveSamplerProcessor& proc;
+    void refreshSlots();
 
     struct Content : public juce::Component
     {
+        LiveSamplerEditor* owner = nullptr;
         void paint (juce::Graphics&) override;
     } content;
 
-    juce::Label title, status;
-    juce::TextButton folderButton, panicButton, mappingButton;
-    juce::ToggleButton c3Toggle;
-    std::unique_ptr<PartPanel> partPanels[LiveSamplerProcessor::numParts];
-    MasterPanel masterPanel;
-    RegisterBar registerBar;
-    juce::MidiKeyboardComponent keyboard;
+    // gornja traka: displej performansa i terce
+    struct Display : public juce::Component
+    {
+        LiveSamplerProcessor* proc = nullptr;
+        void paint (juce::Graphics&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        std::function<void()> onClick;
+    } display;
+
+    struct TercaButton : public juce::Component, public juce::SettableTooltipClient
+    {
+        LiveSamplerProcessor* proc = nullptr;
+        void paint (juce::Graphics&) override;
+        void mouseDown (const juce::MouseEvent&) override { proc->tercaButton (true); }
+        void mouseUp (const juce::MouseEvent&) override   { proc->tercaButton (false); }
+    } tercaButton;
+
+    SamplerLookAndFeel lnf;
+    LiveSamplerProcessor& proc;
+    juce::Label logo, status;
+    juce::TextButton panicButton, learnButton;
+    juce::TextButton tabButtons[NumTabs];
+    int currentTab = TabPerformance;
+
+    std::unique_ptr<PerformancePage> performancePage;
+    std::unique_ptr<UserPage> userPage;
     std::unique_ptr<MappingEditor> mappingEditor;
-    std::unique_ptr<juce::FileChooser> chooser;
+    std::unique_ptr<TercePage> tercePage;
+    std::unique_ptr<EffectsPage> effectsPage;
+    std::unique_ptr<SettingsPage> settingsPage;
+
+    // performans mesta
+    juce::TextButton bankButtons[kNumPerfBanks];
+    juce::TextButton slotButtons[kPerfPerBank];
+    juce::TextButton writeButton;
+
+    juce::MidiKeyboardComponent keyboard;
+    juce::TooltipWindow tooltips { this, 600 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LiveSamplerEditor)
 };

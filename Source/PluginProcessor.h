@@ -3,7 +3,7 @@
 #include "SampleLibrary.h"
 #include "SamplerPart.h"
 #include "MasterEffects.h"
-#include "Registers.h"
+#include "Model.h"
 
 class LiveSamplerProcessor : public juce::AudioProcessor,
                              public juce::ChangeBroadcaster,
@@ -11,13 +11,7 @@ class LiveSamplerProcessor : public juce::AudioProcessor,
                              private juce::Timer
 {
 public:
-    static constexpr int numParts = 3;
-    static juce::String partName (int p)
-    {
-        static const char* names[] = { "Gornji 1", "Gornji 2", "Donji (split)" };
-        return names[juce::jlimit (0, numParts - 1, p)];
-    }
-    static juce::String pid (int part, const char* name) { return "p" + juce::String (part) + "_" + name; }
+    static juce::Colour partColour (int i);
 
     LiveSamplerProcessor();
     ~LiveSamplerProcessor() override;
@@ -44,93 +38,156 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // --- za interfejs (message nit) ---
-    juce::AudioProcessorValueTreeState apvts;
     juce::MidiKeyboardState keyboardState;
 
-    void setLibraryFolder (const juce::File& folder);
-    juce::File getLibraryFolder() const { return libraryFolder; }
+    //==========================================================================
+    // Biblioteka (folderi sa semplovima, USB)
+    juce::Array<juce::File> getLibraryFolders() const { return libraryFolders; }
+    void addLibraryFolder (const juce::File& folder);
+    void removeLibraryFolder (int index);
+    void rescanLibrary();
     const juce::StringArray& getInstrumentList() const { return instrumentList; }
-
-    void selectInstrument (int part, const juce::String& name);
-    juce::String getInstrumentName (int part) const { return instrumentNames[part]; }
-
+    bool isScanning() const { return scanning; }
     bool getC3Is60() const { return c3Is60; }
     void setC3Is60 (bool shouldBe);
 
-    Registers& getRegisters() { return registers; }
-    void storeRegister (int index);
-    void recallRegister (int index);
-    int getCurrentRegister() const { return currentRegister; }
+    // Useri
+    int getNumUsers() const { return (int) users.size(); }
+    const UserProgram& getUser (int i) const { return users[(size_t) juce::jlimit (0, juce::jmax (0, (int) users.size() - 1), i)]; }
+    int findUser (const juce::String& name) const;
+    juce::StringArray getUserNames() const;
+    int createUser (const juce::String& baseName, const UserProgram* copyFrom = nullptr);
+    int createUserFromInstrument (const juce::String& instrument);
+    void updateUser (int index, const UserProgram& u);         // promena se cuje odmah
+    void deleteUser (int index);
+    juce::String uniqueUserName (const juce::String& base, int ignoreIndex = -1) const;
+
+    // Performans (radna kopija) i 64 mesta
+    const Performance& getPerformance() const { return perf; }
+    void updatePerformance (const Performance& p);
+    const Performance& getSlot (int i) const { return slots[(size_t) juce::jlimit (0, kNumPerfSlots - 1, i)]; }
+    void storePerformance (int slot);
+    void recallPerformance (int slot);
+    int getCurrentSlot() const { return currentSlot; }
+    bool isPerformanceDirty() const { return perfDirty; }
+    int getCurrentBank() const { return currentBank; }
+    void setCurrentBank (int b);
+
+    // Terce
+    const TercaSettings& getTerca() const { return terca; }
+    void updateTerca (const TercaSettings& t);
+    bool isTercaOn() const { return tercaOn.load(); }
+    int getTercaRoot() const { return tercaRoot.load(); }
+    int getTercaScale() const { return tercaScale.load(); }
+    void setTercaOn (bool on);
+    void setTercaKey (int root, int scale);
+    void tercaButton (bool down);                               // dugme TERCA na ekranu
+    void startLearn (bool shouldLearn) { learning = shouldLearn; sendChangeMessage(); }
+    bool isLearning() const { return learning.load(); }
+    juce::String getTercaText() const;
+
+    // Editor mapiranja
+    InstrumentPtr getLoadedInstrument (const juce::String& name) const;
+    void applyZones (const juce::String& name, std::vector<Zone> zones);
+    bool saveMap (const juce::String& name);
+    void reloadInstrument (const juce::String& name, bool ignoreMapFile);
+    void ensureLoaded (const juce::String& name) { if (instrumentList.contains (name) && cache.count (name) == 0) requestInstrument (name, nullptr); }
+
+    float getGlobalVolume() const { return globalDb; }
+    void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }
 
     juce::String getStatusText() const;
+    int getActiveVoices() const { return activeVoices.load(); }
     void panic();
 
-    // --- editor mapiranja ---
-    InstrumentPtr getLoadedInstrument (const juce::String& name) const;
-    void applyZones (const juce::String& name, std::vector<Zone> zones);   // odmah se cuje
-    bool saveMap (const juce::String& name);
-    void reloadInstrument (const juce::String& name, bool ignoreMapFile);   // ponisti izmene / vrati automatsko
+    juce::File getDataFile() const;
+    void saveNow();
 
 private:
-    void installInstrument (const juce::String& name, InstrumentPtr inst);
-    static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    struct EngineConfig
+    {
+        std::array<PartRuntime, kNumParts> parts;
+        MasterSettings master;
+        float globalDb = 0.0f;
+        TercaSettings terca;
+    };
+    using ConfigPtr = std::shared_ptr<const EngineConfig>;
+
     void handleAsyncUpdate() override;
     void timerCallback() override;
+
+    void rebuildConfig();
+    void loadNeededInstruments();
+    juce::StringArray neededInstruments (bool includeBank) const;
+    void markSave() { saveNeeded = true; }
+    void loadData();
+    void bootstrapIfEmpty();
 
     using LoadCallback = std::function<void (InstrumentPtr)>;
     void requestInstrument (const juce::String& name, LoadCallback cb, bool ignoreMapFile = false);
     void onInstrumentLoaded (const juce::String& name, InstrumentPtr inst, int epoch);
-    void preloadRegisterInstruments();
-    void rescanLibrary();
+    void installInstrument (const juce::String& name, InstrumentPtr inst);
 
-    void readSettings (PartSettings* ps, MasterSettings& ms);
-    void processChunk (juce::AudioBuffer<float>& out, const juce::MidiBuffer& midi,
-                       int chunkStart, int len, const PartSettings* ps, const MasterSettings& ms);
-    void handleMidi (const juce::MidiMessage& m, const PartSettings* ps);
+    // audio nit
+    void handleMidi (const juce::MidiMessage& m, const EngineConfig& c);
+    void routeNoteOn (int ch, int note, int vel, const EngineConfig& c);
+    void routeNoteOff (int ch, int note);
+    void tercaTrigger (bool down, const EngineConfig& c);
+    void tryRecognize (int mask, const EngineConfig& c);
+    int heldMask() const;
 
     // audio
-    SamplerPart parts[numParts];
+    SamplerPart parts[kNumParts];
     MasterEffects master;
     juce::AudioBuffer<float> mainBuf, reverbBuf, delayBuf;
     int maxBlock = 512;
     juce::uint8 routed[16][128] {};
+    juce::uint8 harmonized[16][128] {};
+    int heldCount[128] {};
+    bool tercaCapturing = false, recognizedInCapture = false;
+    int capturedMask = 0;
+
+    juce::SpinLock configLock;
+    ConfigPtr pendingConfig;      // poslednja verzija (message nit)
+    ConfigPtr audioConfig;        // koju audio nit koristi
+    std::vector<ConfigPtr> configGraveyard;
+
     std::atomic<int> pendingProgram { -1 };
     std::atomic<bool> panicRequested { false };
+    std::atomic<bool> tercaOn { false };
+    std::atomic<int> tercaRoot { 2 }, tercaScale { 1 };
+    std::atomic<bool> learning { false };
+    std::atomic<int> learnedType { 0 }, learnedChannel { 0 }, learnedNumber { 0 };
+    std::atomic<bool> tercaChanged { false };
+    std::atomic<int> activeVoices { 0 };
+    juce::AbstractFifo uiTriggerFifo { 32 };
+    int uiTriggerData[32] {};
 
     // biblioteka i ucitavanje
     SampleLibrary library;
-    juce::File libraryFolder;
+    juce::Array<juce::File> libraryFolders;
     juce::StringArray instrumentList;
-    juce::String instrumentNames[numParts];
-    int partRequestId[numParts] {};
     bool c3Is60 = true;
+    bool scanning = false;
+    std::atomic<int> scanCounter { 0 };
     int loadEpoch = 0;
     std::map<juce::String, InstrumentPtr> cache;
     std::map<juce::String, std::vector<LoadCallback>> pendingLoads;
     std::vector<InstrumentPtr> graveyard;
-    bool scanning = false;
-    std::atomic<int> scanCounter { 0 };
     juce::String lastWarning;
     juce::ThreadPool loadPool { 1 };
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
 
-    // podesavanja i registri
-    juce::ApplicationProperties appProps;
-    Registers registers;
-    int currentRegister = -1;
-    juce::File getRegistersFile();
-
-    // brzi pristup parametrima
-    struct PartParamPtrs
-    {
-        std::atomic<float> *on, *vol, *pan, *oct, *trans, *fine, *velsens, *mono, *porta,
-                           *att, *dec, *sus, *rel, *cutoff, *reso, *fxtype, *fxrate, *fxdepth,
-                           *fxmix, *rev, *dly, *bend;
-    } pp[numParts];
-    std::atomic<float> *splitOn, *splitPoint, *lowerCh;
-    std::atomic<float> *revSize, *revDamp, *revLevel, *dlyTime, *dlyFb, *dlyLevel,
-                       *eqLow, *eqMid, *eqHigh, *compThr, *compRatio, *masterVol;
+    // korisnicki podaci
+    std::vector<UserProgram> users;
+    std::array<Performance, kNumPerfSlots> slots;
+    Performance perf;
+    int currentSlot = -1, currentBank = 0;
+    bool perfDirty = false;
+    TercaSettings terca;
+    float globalDb = 0.0f;
+    bool saveNeeded = false;
+    juce::uint32 lastSaveCheck = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LiveSamplerProcessor)
 };

@@ -258,13 +258,17 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     title.setColour (juce::Label::textColourId, Pal::master);
     addAndMakeVisible (title);
 
-    for (int i = 0; i < LiveSamplerProcessor::numParts; ++i)
+    for (int i = 0; i < kNumOsc; ++i)
     {
-        partButtons[i].setButtonText (LiveSamplerProcessor::partName (i));
-        partButtons[i].setColour (juce::TextButton::buttonOnColourId, Pal::part[i]);
-        partButtons[i].onClick = [this, i] { setPart (i); };
-        addAndMakeVisible (partButtons[i]);
+        oscButtons[i].setButtonText ("OSC " + juce::String (i + 1));
+        oscButtons[i].setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        oscButtons[i].getProperties().set ("fontSize", 12.0f);
+        oscButtons[i].onClick = [this, i] { setOsc (i); };
+        addAndMakeVisible (oscButtons[i]);
     }
+    userLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    userLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (userLabel);
 
     instLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
     addAndMakeVisible (instLabel);
@@ -461,7 +465,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     hint.setColour (juce::Label::textColourId, Pal::dim);
     addAndMakeVisible (hint);
 
-    setPart (0);
+    setUserOsc (0, 0);
 }
 
 juce::String MappingEditor::noteName (int n) const
@@ -503,17 +507,28 @@ void MappingEditor::setupValueSlider (juce::Slider& s, double lo, double hi, dou
 }
 
 //==============================================================================
-void MappingEditor::setPart (int p)
+void MappingEditor::setUserOsc (int userIndex, int o)
 {
-    part = juce::jlimit (0, LiveSamplerProcessor::numParts - 1, p);
-    for (int i = 0; i < LiveSamplerProcessor::numParts; ++i)
-        partButtons[i].setToggleState (i == part, juce::dontSendNotification);
+    userIdx = userIndex;
+    osc = juce::jlimit (0, kNumOsc - 1, o);
+    for (int i = 0; i < kNumOsc; ++i)
+        oscButtons[i].setToggleState (i == osc, juce::dontSendNotification);
     refresh();
 }
 
 void MappingEditor::refresh()
 {
-    const auto name = proc.getInstrumentName (part);
+    juce::String name;
+    if (userIdx >= 0 && userIdx < proc.getNumUsers())
+    {
+        const auto& u = proc.getUser (userIdx);
+        name = u.osc[(size_t) osc].instrument;
+        userLabel.setText ("USER: " + u.name, juce::dontSendNotification);
+        for (int i = 0; i < kNumOsc; ++i)
+            oscButtons[i].setAlpha (u.osc[(size_t) i].instrument.isNotEmpty() ? 1.0f : 0.4f);
+        if (name.isNotEmpty() && proc.getLoadedInstrument (name) == nullptr)
+            proc.ensureLoaded (name);   // ucitaj i instrumente koji nisu u performansu
+    }
     auto cur = proc.getLoadedInstrument (name);
 
     if (name != instName)
@@ -773,38 +788,35 @@ void MappingEditor::resized()
     auto r = getLocalBounds().reduced (12);
 
     auto header = r.removeFromTop (34);
-    title.setBounds (header.removeFromLeft (130));
-    for (auto& b : partButtons)
-    {
-        b.setBounds (header.removeFromLeft (120).reduced (2, 0));
-    }
-    header.removeFromLeft (12);
-    closeButton.setBounds (header.removeFromRight (90));
-    header.removeFromRight (6);
-    resetButton.setBounds (header.removeFromRight (110));
-    header.removeFromRight (6);
-    revertButton.setBounds (header.removeFromRight (130));
-    header.removeFromRight (6);
-    saveButton.setBounds (header.removeFromRight (100));
-    header.removeFromRight (6);
-    undoButton.setBounds (header.removeFromRight (90));
-    header.removeFromRight (10);
-    instLabel.setBounds (header);
+    title.setBounds (header.removeFromLeft (112));
+    for (auto& b : oscButtons)
+        b.setBounds (header.removeFromLeft (62).reduced (2, 0));
+    header.removeFromLeft (10);
+    closeButton.setBounds (header.removeFromRight (80));
+    header.removeFromRight (4);
+    resetButton.setBounds (header.removeFromRight (104));
+    header.removeFromRight (4);
+    revertButton.setBounds (header.removeFromRight (124));
+    header.removeFromRight (4);
+    saveButton.setBounds (header.removeFromRight (92));
+    header.removeFromRight (4);
+    undoButton.setBounds (header.removeFromRight (80));
 
+    r.removeFromTop (6);
+    auto infoRow = r.removeFromTop (24);
+    userLabel.setBounds (infoRow.removeFromLeft (220));
+    stateLabel.setBounds (infoRow.removeFromRight (infoRow.getWidth() * 2 / 5));
+    instLabel.setBounds (infoRow);
+    hint.setVisible (false);
     r.removeFromTop (4);
-    auto stateRow = r.removeFromTop (20);
-    stateLabel.setBounds (stateRow.removeFromRight (stateRow.getWidth() * 2 / 5));
-    hint.setBounds (stateRow);
-
-    r.removeFromTop (4);
-    mapView.setBounds (r.removeFromTop (250));
+    mapView.setBounds (r.removeFromTop (172));
     r.removeFromTop (10);
 
     auto inspector = r.removeFromRight (420);
     r.removeFromRight (10);
     table.setBounds (r);
 
-    sampleInfo.setBounds (inspector.removeFromTop (54));
+    sampleInfo.setBounds (inspector.removeFromTop (46));
     inspector.removeFromTop (4);
 
     juce::Slider* sliders[] = { &rootSlider, &lowKeySlider, &highKeySlider, &tuneSlider,

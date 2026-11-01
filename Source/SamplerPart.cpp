@@ -24,15 +24,15 @@ void InsertFx::reset()
     odLowpassState[0] = odLowpassState[1] = 0.0f;
 }
 
-void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSettings& s)
+void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, int type, float rate, float depth, float mix)
 {
-    if (s.fxType != lastType)
+    if (type != lastType)
     {
         reset();
-        lastType = s.fxType;
+        lastType = type;
     }
 
-    if (s.fxType == Off || n <= 0)
+    if (type == Off || n <= 0)
         return;
 
     for (int ch = 0; ch < 2; ++ch)
@@ -40,14 +40,13 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
 
     auto block = juce::dsp::AudioBlock<float> (buffer).getSubBlock (0, (size_t) n);
     juce::dsp::ProcessContextReplacing<float> ctx (block);
-    const float mix = s.fxMix;
-    bool addDry = false; // true: izlaz = suvo + mokro*mix (eho)
+    bool addDry = false;
 
-    switch (s.fxType)
+    switch (type)
     {
         case Chorus:
-            chorus.setRate (0.1f + s.fxRate * 4.9f);
-            chorus.setDepth (juce::jlimit (0.0f, 1.0f, s.fxDepth));
+            chorus.setRate (0.1f + rate * 4.9f);
+            chorus.setDepth (juce::jlimit (0.0f, 1.0f, depth));
             chorus.setCentreDelay (7.0f);
             chorus.setFeedback (0.0f);
             chorus.setMix (1.0f);
@@ -55,8 +54,8 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
             break;
 
         case Phaser:
-            phaser.setRate (0.05f + s.fxRate * 3.0f);
-            phaser.setDepth (juce::jlimit (0.0f, 1.0f, s.fxDepth));
+            phaser.setRate (0.05f + rate * 3.0f);
+            phaser.setDepth (juce::jlimit (0.0f, 1.0f, depth));
             phaser.setCentreFrequency (900.0f);
             phaser.setFeedback (0.5f);
             phaser.setMix (1.0f);
@@ -65,13 +64,13 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
 
         case Tremolo:
         {
-            const double inc = juce::MathConstants<double>::twoPi * (1.0 + s.fxRate * 11.0) / sr;
+            const double inc = juce::MathConstants<double>::twoPi * (1.0 + rate * 11.0) / sr;
             auto* l = buffer.getWritePointer (0);
             auto* r = buffer.getWritePointer (1);
             for (int i = 0; i < n; ++i)
             {
                 const float lfo = 0.5f + 0.5f * (float) std::sin (tremPhase);
-                const float g = 1.0f - s.fxDepth * lfo;
+                const float g = 1.0f - depth * lfo;
                 l[i] *= g;
                 r[i] *= g;
                 tremPhase += inc;
@@ -83,9 +82,9 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
 
         case Overdrive:
         {
-            const float drive = 1.0f + s.fxDepth * 24.0f;
-            const float comp = 1.0f / (1.0f + s.fxDepth * 2.0f);
-            const float cutoff = 1000.0f + s.fxRate * 11000.0f;
+            const float drive = 1.0f + depth * 24.0f;
+            const float comp = 1.0f / (1.0f + depth * 2.0f);
+            const float cutoff = 1000.0f + rate * 11000.0f;
             const float a = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * cutoff / (float) sr);
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -105,8 +104,8 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
         case Echo:
         {
             addDry = true;
-            delayTimeSmoothed.setTargetValue ((float) ((0.06 + s.fxRate * 0.94) * sr));
-            const float fb = s.fxDepth * 0.85f;
+            delayTimeSmoothed.setTargetValue ((float) ((0.06 + rate * 0.94) * sr));
+            const float fb = depth * 0.85f;
             auto* l = buffer.getWritePointer (0);
             auto* r = buffer.getWritePointer (1);
             for (int i = 0; i < n; ++i)
@@ -114,7 +113,7 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
                 const float t = delayTimeSmoothed.getNextValue();
                 const float dl = delay.popSample (0, t);
                 const float dr = delay.popSample (1, t);
-                delay.pushSample (0, l[i] + dr * fb);   // blagi ping-pong
+                delay.pushSample (0, l[i] + dr * fb);
                 delay.pushSample (1, r[i] + dl * fb);
                 l[i] = dl;
                 r[i] = dr;
@@ -140,8 +139,6 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, const PartSetti
 //==============================================================================
 //  SamplerPart
 //==============================================================================
-SamplerPart::SamplerPart() {}
-
 void SamplerPart::prepare (double newSampleRate, int maxBlock)
 {
     sampleRate = newSampleRate;
@@ -162,20 +159,8 @@ void SamplerPart::prepare (double newSampleRate, int maxBlock)
     gainL.reset (sampleRate, 0.03);
     gainR.reset (sampleRate, 0.03);
     heldKeys.clear();
-    heldKeys.reserve (128);
-}
-
-void SamplerPart::setInstrument (InstrumentPtr newInstrument)
-{
-    const juce::SpinLock::ScopedLockType sl (instrumentLock);
-    std::swap (instrument, newInstrument);
-    // stari instrument (newInstrument) se oslobadja ovde, na message niti
-}
-
-InstrumentPtr SamplerPart::getInstrument() const
-{
-    const juce::SpinLock::ScopedLockType sl (instrumentLock);
-    return instrument;
+    heldKeys.reserve (numIds);
+    idPitch.fill (60);
 }
 
 int SamplerPart::getNumActiveVoices() const
@@ -186,46 +171,40 @@ int SamplerPart::getNumActiveVoices() const
     return n;
 }
 
-double SamplerPart::keyToPitch (int key) const
+void SamplerPart::beginBlock (const PartRuntime* runtime, int numSamples)
 {
-    return (double) (key + s.octave * 12 + s.transpose);
-}
+    cfg = runtime;
+    partBuffer.clear (0, numSamples);
 
-//==============================================================================
-void SamplerPart::beginBlock (const PartSettings& settings, int numSamples)
-{
-    s = settings;
+    if (cfg == nullptr)
+        return;
 
-    {
-        const juce::SpinLock::ScopedLockType sl (instrumentLock);
-        blockInstrument = instrument;
-    }
+    const auto& u = cfg->user;
+    envParams.attack  = juce::jmax (0.001f, u.attack);
+    envParams.decay   = juce::jmax (0.001f, u.decay);
+    envParams.sustain = u.sustain;
+    envParams.release = juce::jmax (0.005f, u.release);
 
-    envParams.attack  = juce::jmax (0.001f, s.attack);
-    envParams.decay   = juce::jmax (0.001f, s.decay);
-    envParams.sustain = s.sustain;
-    envParams.release = juce::jmax (0.005f, s.release);
+    glideCoef = u.portamento > 0.001f ? std::exp (-4.0 / (u.portamento * sampleRate)) : 0.0;
 
-    glideCoef = s.portamento > 0.001f ? std::exp (-4.0 / (s.portamento * sampleRate)) : 0.0;
-
-    filterOn = s.cutoff < 19500.0f || s.resonance > 0.01f;
-    const float q = 0.7071f + s.resonance * s.resonance * 9.0f;
+    filterOn = u.cutoff < 19500.0f || u.resonance > 0.01f;
+    filterQ = 0.7071f + u.resonance * u.resonance * 9.0f;
+    const float fc = juce::jlimit (20.0f, (float) sampleRate * 0.45f, u.cutoff);
     for (auto& v : voices)
     {
         if (! v.active) continue;
         v.env.setParameters (envParams);
         if (filterOn)
         {
-            v.filter.setCutoffFrequency (juce::jlimit (20.0f, (float) sampleRate * 0.45f, s.cutoff));
-            v.filter.setResonance (q);
+            v.filter.setCutoffFrequency (fc);
+            v.filter.setResonance (filterQ);
         }
     }
 
-    const float g = juce::Decibels::decibelsToGain (s.volumeDb, -60.0f);
-    gainL.setTargetValue (g * juce::jmin (1.0f, 1.0f - s.pan));
-    gainR.setTargetValue (g * juce::jmin (1.0f, 1.0f + s.pan));
-
-    partBuffer.clear (0, numSamples);
+    const auto& p = cfg->part;
+    const float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb, -60.0f) : 0.0f;
+    gainL.setTargetValue (g * juce::jmin (1.0f, 1.0f - p.pan));
+    gainR.setTargetValue (g * juce::jmin (1.0f, 1.0f + p.pan));
 }
 
 SamplerPart::Voice* SamplerPart::findFreeVoice()
@@ -244,27 +223,51 @@ SamplerPart::Voice* SamplerPart::findFreeVoice()
     return oldestReleased != nullptr ? oldestReleased : oldest;
 }
 
-void SamplerPart::startVoice (Voice& v, int key, int velocity, double startPitch, double targetPitch)
+void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitch)
 {
-    const int lookupNote = juce::jlimit (0, 127, (int) std::lround (targetPitch));
-    auto* zone = blockInstrument->findZone (lookupNote, velocity);
-    if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) blockInstrument->samples.size())
-        return;
-    auto* smp = blockInstrument->samples[(size_t) zone->sample].get();
+    const auto& u = cfg->user;
+    const juce::uint32 serial = ++serialCounter;
+    if (id < 128)
+        monoSerial = serial;
 
-    v.active = true;
-    v.key = key;
-    v.keyDown = true;
-    v.held = false;
-    v.instrument = blockInstrument;
-    v.sample = smp;
-    v.pos = (double) smp->startOffset;
-    v.pitch = startPitch;
-    v.pitchTarget = targetPitch;
-    v.rootKey = zone->rootKey;
-    v.zoneTune = zone->tuneCents / 100.0;
-    v.fixedPitch = zone->fixedPitch;
+    const float vel01 = (float) velocity / 127.0f;
+    const float velGain = (1.0f - u.velSens) + u.velSens * std::pow (vel01, 1.6f);
+
+    for (int i = 0; i < kNumOsc; ++i)
     {
+        const auto& o = u.osc[(size_t) i];
+        const auto& inst = cfg->inst[(size_t) i];
+        if (! o.on || inst == nullptr)
+            continue;
+        if (pitch < o.keyLow || pitch > o.keyHigh || velocity < o.velLow || velocity > o.velHigh)
+            continue;
+
+        const int oscPitch = pitch + o.transpose;
+        auto* zone = inst->findZone (juce::jlimit (0, 127, oscPitch), velocity);
+        if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) inst->samples.size())
+            continue;
+        auto* smp = inst->samples[(size_t) zone->sample].get();
+
+        auto* vp = findFreeVoice();
+        if (vp == nullptr)
+            return;
+        auto& v = *vp;
+
+        v.active = true;
+        v.id = id;
+        v.serial = serial;
+        v.keyDown = true;
+        v.held = false;
+        v.instrument = inst;
+        v.sample = smp;
+        v.oscTranspose = o.transpose;
+        v.pos = (double) smp->startOffset;
+        v.pitch = startPitch + o.transpose;
+        v.pitchTarget = (double) oscPitch;
+        v.rootKey = zone->rootKey;
+        v.tune = (zone->tuneCents + o.fineCents) / 100.0;
+        v.fixedPitch = zone->fixedPitch;
+
         const int len = smp->buffer.getNumSamples();
         if (zone->hasOwnLoop() && zone->loopEnd <= len)
         {
@@ -279,28 +282,26 @@ void SamplerPart::startVoice (Voice& v, int key, int velocity, double startPitch
             v.loopEnd = smp->loopEnd;
         }
         if (zone->sampleStart > 0 && zone->sampleStart < len - 64)
-            v.pos = juce::jmin ((double) zone->sampleStart, v.loop ? (double) v.loopStart : (double) zone->sampleStart);
-    }
-    {
-        const float g = juce::Decibels::decibelsToGain (zone->gainDb);
-        v.zoneGainL = g * juce::jmin (1.0f, 1.0f - zone->pan);
-        v.zoneGainR = g * juce::jmin (1.0f, 1.0f + zone->pan);
-    }
+            v.pos = v.loop ? juce::jmin ((double) zone->sampleStart, (double) v.loopStart) : (double) zone->sampleStart;
 
-    const float vel01 = (float) velocity / 127.0f;
-    v.velGain = (1.0f - s.velSens) + s.velSens * std::pow (vel01, 1.6f);
+        const float pan = juce::jlimit (-1.0f, 1.0f, zone->pan + o.pan);
+        const float g = juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb);
+        v.velGain = velGain;
+        v.gainL = g * juce::jmin (1.0f, 1.0f - pan);
+        v.gainR = g * juce::jmin (1.0f, 1.0f + pan);
 
-    v.fadingOut = false;
-    v.fadeGain = 1.0f;
-    v.age = ++ageCounter;
-    v.env.setParameters (envParams);
-    v.env.reset();
-    v.env.noteOn();
-    v.filter.reset();
-    if (filterOn)
-    {
-        v.filter.setCutoffFrequency (juce::jlimit (20.0f, (float) sampleRate * 0.45f, s.cutoff));
-        v.filter.setResonance (0.7071f + s.resonance * s.resonance * 9.0f);
+        v.fadingOut = false;
+        v.fadeGain = 1.0f;
+        v.age = ++ageCounter;
+        v.env.setParameters (envParams);
+        v.env.reset();
+        v.env.noteOn();
+        v.filter.reset();
+        if (filterOn)
+        {
+            v.filter.setCutoffFrequency (juce::jlimit (20.0f, (float) sampleRate * 0.45f, u.cutoff));
+            v.filter.setResonance (filterQ);
+        }
     }
 }
 
@@ -311,89 +312,102 @@ void SamplerPart::releaseVoice (Voice& v)
     v.env.noteOff();
 }
 
-void SamplerPart::noteOn (int key, int velocity)
+void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
 {
-    if (blockInstrument == nullptr || velocity <= 0)
+    if (cfg == nullptr || ! cfg->active || velocity <= 0 || id < 0 || id >= numIds)
         return;
 
-    const double target = keyToPitch (key);
+    const auto& u = cfg->user;
+    pitch = juce::jlimit (0, 127, pitch);
+    idPitch[(size_t) id] = pitch;
+    const bool porta = u.portamento > 0.001f;
 
-    if (s.mono)
+    if (u.mono && id < 128)
     {
-        heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), key), heldKeys.end());
-        heldKeys.push_back (key);
+        heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), id), heldKeys.end());
+        heldKeys.push_back (id);
 
-        // trenutni mono glas (najnoviji koji jos svira)
-        Voice* current = nullptr;
+        // glas koji trenutno svira (mono)
+        double startPitch = pitch;
+        bool found = false;
         for (auto& v : voices)
-            if (v.active && ! v.fadingOut && (current == nullptr || v.age > current->age))
-                current = &v;
-
-        double startPitch = target;
-        if (s.portamento > 0.001f)
         {
-            if (current != nullptr)       startPitch = current->pitch;
-            else if (lastPitch >= 0.0)    startPitch = lastPitch;
+            if (v.active && ! v.fadingOut && v.id < 128 && v.serial == monoSerial)
+            {
+                if (! found && porta)
+                {
+                    startPitch = v.pitch - v.oscTranspose;
+                    found = true;
+                }
+                v.fadingOut = true;
+            }
         }
+        if (! found && porta && lastPitch >= 0.0)
+            startPitch = lastPitch;
 
-        if (current != nullptr)
-            current->fadingOut = true;    // brzo utisavanje prethodne note
-
-        if (auto* v = findFreeVoice())
-            startVoice (*v, key, velocity, startPitch, target);
+        startVoices (id, pitch, velocity, startPitch);
     }
     else
     {
-        // ista nota ponovo: pusti prethodnu da se ugasi
-        for (auto& v : voices)
-            if (v.active && v.key == key && ! v.fadingOut)
-                releaseVoice (v);
+        if (! additive)
+            for (auto& v : voices)
+                if (v.active && v.id == id && ! v.fadingOut)
+                    releaseVoice (v);
 
-        const double startPitch = (s.portamento > 0.001f && lastPitch >= 0.0) ? lastPitch : target;
-        if (auto* v = findFreeVoice())
-            startVoice (*v, key, velocity, startPitch, target);
+        const double startPitch = (porta && lastPitch >= 0.0 && id < 128) ? lastPitch : (double) pitch;
+        startVoices (id, pitch, velocity, startPitch);
     }
 
-    lastPitch = target;
+    if (id < 128)
+        lastPitch = pitch;
 }
 
-void SamplerPart::noteOff (int key)
+void SamplerPart::noteOff (int id)
 {
-    if (s.mono)
-    {
-        heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), key), heldKeys.end());
+    if (id < 0 || id >= numIds)
+        return;
 
+    const bool sustainOn = sustainDown && (cfg == nullptr || cfg->part.sustainPedal);
+
+    if (cfg != nullptr && cfg->user.mono && id < 128)
+    {
+        heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), id), heldKeys.end());
+
+        bool retargeted = false;
         for (auto& v : voices)
         {
-            if (! v.active || v.fadingOut || v.key != key || ! v.keyDown)
+            if (! v.active || v.fadingOut || v.id != id || ! v.keyDown)
                 continue;
 
             if (! heldKeys.empty())
             {
                 // legato: vrati se na poslednji drzani taster
-                const int newKey = heldKeys.back();
-                v.key = newKey;
-                v.pitchTarget = keyToPitch (newKey);
-                if (s.portamento <= 0.001f)
+                const int newId = heldKeys.back();
+                const int newPitch = idPitch[(size_t) newId];
+                v.id = newId;
+                v.pitchTarget = newPitch + v.oscTranspose;
+                if (cfg->user.portamento <= 0.001f)
                     v.pitch = v.pitchTarget;
-                lastPitch = v.pitchTarget;
+                lastPitch = newPitch;
+                retargeted = true;
             }
             else
             {
                 v.keyDown = false;
-                if (sustainDown) v.held = true;
+                if (sustainOn) v.held = true;
                 else releaseVoice (v);
             }
         }
+        juce::ignoreUnused (retargeted);
         return;
     }
 
     for (auto& v : voices)
     {
-        if (v.active && v.key == key && v.keyDown && ! v.fadingOut)
+        if (v.active && v.id == id && v.keyDown && ! v.fadingOut)
         {
             v.keyDown = false;
-            if (sustainDown) v.held = true;
+            if (sustainOn) v.held = true;
             else releaseVoice (v);
         }
     }
@@ -437,7 +451,7 @@ void SamplerPart::renderVoices (int start, int num)
 
     auto* outL = partBuffer.getWritePointer (0) + start;
     auto* outR = partBuffer.getWritePointer (1) + start;
-    const double bendOffset = bend * (double) s.bendRange + s.fineCents / 100.0;
+    const double bendOffset = cfg != nullptr ? bend * (double) cfg->user.bendRange : 0.0;
     const float fadeStep = 1.0f / (0.006f * (float) sampleRate);   // 6 ms
 
     for (auto& v : voices)
@@ -453,7 +467,7 @@ void SamplerPart::renderVoices (int start, int num)
         const int loopStart = v.loopStart, loopEnd = v.loopEnd;
         const int loopLen = loopEnd - loopStart;
         const double rateRatio = smp->sampleRate / sampleRate;
-        const double pitchOffset = bendOffset + v.zoneTune - v.rootKey;
+        const double pitchOffset = bendOffset + v.tune - v.rootKey;
         auto incFor = [&] (double p) { return std::exp2 (((v.fixedPitch ? v.rootKey : p) + pitchOffset) / 12.0) * rateRatio; };
 
         auto fetch = [&] (const float* d, int idx) -> float
@@ -496,8 +510,8 @@ void SamplerPart::renderVoices (int start, int num)
                 g *= v.fadeGain;
             }
 
-            l *= g * v.zoneGainL;
-            r *= g * v.zoneGainR;
+            l *= g * v.gainL;
+            r *= g * v.gainR;
             if (filterOn)
             {
                 l = v.filter.processSample (0, l);
@@ -530,11 +544,17 @@ void SamplerPart::renderVoices (int start, int num)
     }
 }
 
-void SamplerPart::endBlock (juce::AudioBuffer<float>& mainOut,
-                            juce::AudioBuffer<float>& reverbSend,
+void SamplerPart::endBlock (juce::AudioBuffer<float>& mainOut, juce::AudioBuffer<float>& reverbSend,
                             juce::AudioBuffer<float>& delaySend, int n)
 {
-    insertFx.process (partBuffer, n, s);
+    if (cfg != nullptr)
+    {
+        const auto& u = cfg->user;
+        insertFx.process (partBuffer, n, u.fxType, u.fxRate, u.fxDepth, u.fxMix);
+    }
+
+    const float rev = cfg != nullptr ? cfg->part.reverbSend : 0.0f;
+    const float dly = cfg != nullptr ? cfg->part.delaySend : 0.0f;
 
     auto* pl = partBuffer.getWritePointer (0);
     auto* pr = partBuffer.getWritePointer (1);
@@ -550,7 +570,7 @@ void SamplerPart::endBlock (juce::AudioBuffer<float>& mainOut,
         const float l = pl[i] * gainL.getNextValue();
         const float r = pr[i] * gainR.getNextValue();
         ml[i] += l;  mr[i] += r;
-        rl[i] += l * s.reverbSend;  rr[i] += r * s.reverbSend;
-        dl[i] += l * s.delaySend;   dr[i] += r * s.delaySend;
+        rl[i] += l * rev;  rr[i] += r * rev;
+        dl[i] += l * dly;  dr[i] += r * dly;
     }
 }

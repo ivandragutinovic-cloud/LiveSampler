@@ -51,7 +51,8 @@ class MappingEditor : public juce::Component,
 public:
     explicit MappingEditor (LiveSamplerProcessor&);
 
-    void setPart (int p);
+    void setUserOsc (int userIndex, int oscIndex);
+    void setOsc (int oscIndex) { setUserOsc (userIdx, oscIndex); }
     void refresh();                      // pozvati kad se procesor promeni
     std::function<void()> onClose;
 
@@ -77,7 +78,7 @@ private:
     void editSelected (std::function<void (Zone&)> fn, bool coalesce = true);
 
     LiveSamplerProcessor& proc;
-    int part = 0;
+    int userIdx = 0, osc = 0;
     juce::String instName;
     InstrumentPtr inst;
     std::vector<Zone> zones;
@@ -88,7 +89,8 @@ private:
     bool updatingUI = false;
 
     juce::Label title, instLabel, stateLabel, sampleInfo, hint;
-    juce::TextButton partButtons[LiveSamplerProcessor::numParts];
+    juce::TextButton oscButtons[kNumOsc];
+    juce::Label userLabel;
     juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton;
 
     ZoneMapView mapView;

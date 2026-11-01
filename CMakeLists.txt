@@ -43,7 +43,8 @@ target_sources(LiveSampler PRIVATE
     Source/SampleLibrary.cpp
     Source/SamplerPart.cpp
     Source/MasterEffects.cpp
-    Source/Registers.cpp)
+    Source/Model.cpp
+    Source/Pages.cpp)
 
 target_compile_definitions(LiveSampler PUBLIC
     JUCE_WEB_BROWSER=0
