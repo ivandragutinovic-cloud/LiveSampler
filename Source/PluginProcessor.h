@@ -110,6 +110,7 @@ private:
     std::map<juce::String, std::vector<LoadCallback>> pendingLoads;
     std::vector<InstrumentPtr> graveyard;
     bool scanning = false;
+    std::atomic<int> scanCounter { 0 };
     juce::String lastWarning;
     juce::ThreadPool loadPool { 1 };
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);

@@ -76,12 +76,15 @@ root note, štim, jačina, pan) čita se iz KMP-a, a loop iz KSF-a.
 Nije podržano: kompresovani KSF i semplovi iz ROM-a klavijature ("INTERNAL").
 
 ### Kontakt NKI
-Svaki `.nki` fajl je jedan instrument. Semplovi (WAV/AIFF) se traže u folderu NKI-ja,
-njegovim podfolderima i u folderu `Samples` pored njega.
-- Stari Kontakt (1/2) NKI: mapiranje se čita tačno iz fajla.
-- Noviji NKI (Kontakt 4 i dalje) su zaključan format: program nađe koje semplove koristi
-  i mapira ih iz naziva fajlova. **Proveri mapu u editoru.**
-- NCW semplovi (Kontakt kompresija) nisu podržani. Treba ih pretvoriti u WAV.
+Svaki `.nki` fajl je jedan instrument. Semplovi (WAV/AIFF) se traže tamo gde ih je Kontakt
+sačuvao: u folderu `IME Samples` pored `IME.nki`, u podfolderima ili u folderu `Samples`.
+- Kontakt 2/3 NKI (npr. sačuvani iz Kontakt-a sa "Samples" folderom, ili konvertovani iz
+  Korg-a): zone, rasponi, root, velocity, štim, jačina, pan, početak sempla i loop čitaju se
+  tačno iz fajla.
+- Release zone (sviraju kad se pusti taster) se za sada preskaču.
+- Noviji NKI (Kontakt 4 i dalje) su zaključan format: program uzme semplove iz `IME Samples`
+  foldera i mapira ih po nazivu ili po root noti zapisanoj u WAV-u. **Proveri mapu u editoru.**
+- Monolitni NKI (semplovi upakovani u sam NKI) i NCW semplovi nisu podržani.
 
 ## 3. Editor mapiranja
 

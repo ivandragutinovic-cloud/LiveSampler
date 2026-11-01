@@ -29,8 +29,12 @@ struct Zone
     float tuneCents = 0.0f;
     float gainDb = 0.0f;
     float pan = 0.0f;                  // -1 .. 1
-    bool loop = true;                  // koristi loop iz sempla (ako ga ima)
+    bool loop = true;                  // koristi loop (zone ili sempla, ako postoji)
     bool fixedPitch = false;           // ista visina na svim tasterima (bubnjevi)
+    int sampleStart = 0;               // > 0: pocetak sempla (inace automatski bez tisine)
+    int loopStart = -1, loopEnd = -1;  // loop zone (Kontakt), ima prednost nad loop-om sempla
+
+    bool hasOwnLoop() const noexcept   { return loopStart >= 0 && loopEnd > loopStart + 16; }
 
     bool matches (int key, int vel) const noexcept
     {

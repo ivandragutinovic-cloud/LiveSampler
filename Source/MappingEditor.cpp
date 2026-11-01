@@ -363,7 +363,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     setupValueSlider (lowVelSlider, 1, 127, 1, {});
     setupValueSlider (highVelSlider, 1, 127, 1, {});
     setupValueSlider (tuneSlider, -100, 100, 1, " c");
-    setupValueSlider (gainSlider, -30, 12, 0.5, " dB");
+    setupValueSlider (gainSlider, -40, 24, 0.5, " dB");
     setupValueSlider (panSlider, -1, 1, 0.02, {});
 
     rootSlider.onValueChange    = [this] { editSelected ([this] (Zone& z) { z.rootKey = (int) rootSlider.getValue(); }); };
@@ -672,11 +672,11 @@ void MappingEditor::updateInspector()
     if (z.sample >= 0 && z.sample < (int) inst->samples.size())
     {
         const auto& s = *inst->samples[(size_t) z.sample];
-        loopToggle.setEnabled (s.hasLoop);
+        loopToggle.setEnabled (s.hasLoop || z.hasOwnLoop());
         juce::String info;
         info << s.displayName << "\n"
              << juce::String (s.lengthSeconds(), 2) << " s  |  " << juce::String (s.sampleRate / 1000.0, 1) << " kHz  |  "
-             << (s.hasLoop ? T ("ima loop") : T ("bez loop-a")) << "\n"
+             << (z.hasOwnLoop() ? T ("loop iz NKI zone") : (s.hasLoop ? T ("ima loop") : T ("bez loop-a"))) << "\n"
              << s.id;
         sampleInfo.setText (info, juce::dontSendNotification);
     }
@@ -726,7 +726,7 @@ void MappingEditor::paintCell (juce::Graphics& g, int row, int col, int w, int h
         case colGain:   t = juce::String (z.gainDb, 1); break;
         case colLoop:
         {
-            const bool has = z.sample >= 0 && z.sample < (int) inst->samples.size() && inst->samples[(size_t) z.sample]->hasLoop;
+            const bool has = z.hasOwnLoop() || (z.sample >= 0 && z.sample < (int) inst->samples.size() && inst->samples[(size_t) z.sample]->hasLoop);
             t = ! has ? "-" : (z.loop ? T ("da") : T ("isklj."));
             break;
         }

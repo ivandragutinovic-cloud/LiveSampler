@@ -264,7 +264,23 @@ void SamplerPart::startVoice (Voice& v, int key, int velocity, double startPitch
     v.rootKey = zone->rootKey;
     v.zoneTune = zone->tuneCents / 100.0;
     v.fixedPitch = zone->fixedPitch;
-    v.loop = smp->hasLoop && zone->loop;
+    {
+        const int len = smp->buffer.getNumSamples();
+        if (zone->hasOwnLoop() && zone->loopEnd <= len)
+        {
+            v.loop = zone->loop;
+            v.loopStart = zone->loopStart;
+            v.loopEnd = zone->loopEnd;
+        }
+        else
+        {
+            v.loop = smp->hasLoop && zone->loop;
+            v.loopStart = smp->loopStart;
+            v.loopEnd = smp->loopEnd;
+        }
+        if (zone->sampleStart > 0 && zone->sampleStart < len - 64)
+            v.pos = juce::jmin ((double) zone->sampleStart, v.loop ? (double) v.loopStart : (double) zone->sampleStart);
+    }
     {
         const float g = juce::Decibels::decibelsToGain (zone->gainDb);
         v.zoneGainL = g * juce::jmin (1.0f, 1.0f - zone->pan);
@@ -434,7 +450,7 @@ void SamplerPart::renderVoices (int start, int num)
         const float* R = smp->buffer.getReadPointer (1);
         const int len = smp->buffer.getNumSamples();
         const bool loop = v.loop;
-        const int loopStart = smp->loopStart, loopEnd = smp->loopEnd;
+        const int loopStart = v.loopStart, loopEnd = v.loopEnd;
         const int loopLen = loopEnd - loopStart;
         const double rateRatio = smp->sampleRate / sampleRate;
         const double pitchOffset = bendOffset + v.zoneTune - v.rootKey;

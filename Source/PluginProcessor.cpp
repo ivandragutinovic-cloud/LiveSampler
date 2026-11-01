@@ -205,14 +205,17 @@ void LiveSamplerProcessor::rescanLibrary()
 
     auto folder = libraryFolder;
     auto aliveFlag = alive;
-    loadPool.addJob ([this, folder, aliveFlag]
+    const int scanId = ++scanCounter;
+    loadPool.addJob ([this, folder, aliveFlag, scanId]
     {
+        if (scanId != scanCounter.load())
+            return;   // u medjuvremenu je izabran drugi folder
         library.scan (folder);
         auto names = library.getInstrumentNames();
 
-        juce::MessageManager::callAsync ([this, names, aliveFlag]
+        juce::MessageManager::callAsync ([this, names, aliveFlag, scanId]
         {
-            if (! aliveFlag->load())
+            if (! aliveFlag->load() || scanId != scanCounter.load())
                 return;
 
             scanning = false;

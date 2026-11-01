@@ -85,6 +85,7 @@ private:
         double pitch = 60.0, pitchTarget = 60.0;
         double rootKey = 60.0, zoneTune = 0.0;   // u polutonovima
         bool fixedPitch = false, loop = false;
+        int loopStart = 0, loopEnd = 0;
         float velGain = 1.0f, zoneGainL = 1.0f, zoneGainR = 1.0f;
         bool fadingOut = false;
         float fadeGain = 1.0f;
