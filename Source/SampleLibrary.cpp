@@ -74,6 +74,7 @@ bool Instrument::saveMap() const
         e->setAttribute ("loop", z.loop ? 1 : 0);
         e->setAttribute ("fixedPitch", z.fixedPitch ? 1 : 0);
         if (z.sampleStart > 0) e->setAttribute ("sampleStart", z.sampleStart);
+        if (z.sampleEnd > 0) e->setAttribute ("sampleEnd", z.sampleEnd);
         if (z.hasOwnLoop())
         {
             e->setAttribute ("loopStart", z.loopStart);
@@ -686,18 +687,25 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
         }
     }
 
-    // Korg loop: od LoopStart do kraja (LoopEnd)
+    // Korg SMP1: ime (16), banka (1), Start (3), Start2 (4), Loop Start (4), End (4).
+    // SMD1 atributi: bit 7 = loop iskljucen (Loop Off), tada se svira od Start do End jednom.
     if (smp != nullptr && smp->size >= 32)
     {
+        const auto* sp = r.d + smp->offset;
+        const int start = be ? ((sp[17] << 16) | (sp[18] << 8) | sp[19]) : ((sp[19] << 16) | (sp[18] << 8) | sp[17]);
         const int ls = (int) r.u32 (smp->offset + 24);
-        int le = (int) r.u32 (smp->offset + 28) + 1;
-        le = juce::jmin (le, frames);
-        if (ls >= 0 && le - ls >= 16)
+        const int le = juce::jmin ((int) r.u32 (smp->offset + 28) + 1, frames);
+        const bool loopOff = (attributes & 0x80) != 0;
+
+        sd->startOffset = start >= 0 && start < le - 16 ? start : 0;
+        sd->endPoint = le > sd->startOffset + 16 ? le : frames;
+        if (! loopOff && ls >= 0 && le - ls >= 16)
         {
             sd->hasLoop = true;
             sd->loopStart = ls;
             sd->loopEnd = le;
         }
+        return sd;
     }
 
     trimLeadingSilence (*sd);
@@ -1334,6 +1342,7 @@ bool SampleLibrary::applyMapFile (Instrument& inst)
         z.sampleStart = juce::jmax (0, e->getIntAttribute ("sampleStart", 0));
         z.loopStart = e->getIntAttribute ("loopStart", -1);
         z.loopEnd = e->getIntAttribute ("loopEnd", -1);
+        z.sampleEnd = e->getIntAttribute ("sampleEnd", -1);
         zones.push_back (z);
         used.insert (z.sample);
     }

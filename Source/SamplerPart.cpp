@@ -323,6 +323,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.fixedPitch = zone->fixedPitch;
 
         const int len = smp->buffer.getNumSamples();
+        v.endPos = zone->sampleEnd > 16 ? juce::jmin (zone->sampleEnd, len) : (smp->endPoint > 0 ? juce::jmin (smp->endPoint, len) : len);
         if (zone->hasOwnLoop() && zone->loopEnd <= len)
         {
             v.loop = zone->loop;
@@ -335,7 +336,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             v.loopStart = smp->loopStart;
             v.loopEnd = smp->loopEnd;
         }
-        if (zone->sampleStart > 0 && zone->sampleStart < len - 64)
+        if (zone->sampleStart > 0 && zone->sampleStart < v.endPos - 16)
             v.pos = v.loop ? juce::jmin ((double) zone->sampleStart, (double) v.loopStart) : (double) zone->sampleStart;
 
         const float pan = juce::jlimit (-1.0f, 1.0f, zone->pan + o.pan);
@@ -655,12 +656,13 @@ void SamplerPart::renderVoices (int start, int num)
         const bool loop = v.loop;
         const int loopStart = v.loopStart, loopEnd = v.loopEnd;
         const int loopLen = loopEnd - loopStart;
+        const int endPos = loop ? len : juce::jlimit (1, len, v.endPos > 0 ? v.endPos : len);
 
         auto fetch = [&] (const float* d, int idx) -> float
         {
             if (loop && idx >= loopEnd) idx -= loopLen;
             if (idx < 0) idx = 0;
-            return idx < len ? d[idx] : 0.0f;
+            return idx < endPos ? d[idx] : 0.0f;
         };
 
         for (int i = 0; i < num; ++i)
@@ -709,7 +711,7 @@ void SamplerPart::renderVoices (int start, int num)
                 while (v.pos >= (double) loopEnd)
                     v.pos -= (double) loopLen;
             }
-            else if (v.pos >= (double) (len - 1))
+            else if (v.pos >= (double) (endPos - 1))
             {
                 v.active = false;
                 break;

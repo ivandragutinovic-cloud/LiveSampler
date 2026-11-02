@@ -45,6 +45,57 @@ private:
 };
 
 //==============================================================================
+// Editor sempla i loop-a za izabranu zonu (kao Sample Edit / Loop Edit na Korgu):
+// Start, Loop Start i End se vuku misem ili upisuju; LOOP prikaz pokazuje spoj kraja i pocetka loop-a.
+class WaveEditor : public juce::Component
+{
+public:
+    WaveEditor();
+
+    struct Points { int start = 0, loopStart = 0, end = 0; bool loop = false; };
+    void setSample (SamplePtr s, const Points& p);
+    void clear();
+
+    // finished = pusten mis / upisana vrednost (za undo)
+    std::function<void (const Points&, bool finished)> onChange;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+private:
+    enum Marker { None = -1, Start = 0, LoopStart, End };
+    juce::Rectangle<int> waveArea() const;
+    double xToSample (float x) const;
+    float sampleToX (double s) const;
+    Marker markerAt (float x) const;
+    int snap (int pos) const;
+    void apply (Points np, bool finished);
+    void updateBoxes();
+    void zoomToFit();
+
+    SamplePtr sample;
+    Points pts;
+    bool loopView = false;
+    double viewStart = 0.0, viewLen = 1.0;      // prikaz u semplovima
+    int seamHalf = 400;                         // LOOP prikaz: koliko semplova sa svake strane spoja
+    Marker drag = None;
+    bool panning = false;
+    double panStartView = 0.0;
+    float panStartX = 0.0f;
+
+    juce::TextButton sampleMode, loopMode, fitButton;
+    juce::ToggleButton loopToggle, zeroToggle;
+    juce::Label labels[3];
+    juce::Slider boxes[3];
+    bool updating = false;
+};
+
+//==============================================================================
 class MappingEditor : public juce::Component,
                       private juce::TableListBoxModel
 {
@@ -94,6 +145,11 @@ private:
     juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton;
 
     ZoneMapView mapView;
+    WaveEditor waveEditor;
+    juce::TextButton viewButtons[2];      // MAPA / SEMPL I LOOP
+    bool waveView = false;
+    void setWaveView (bool w);
+    void updateWave();
     juce::TableListBox table;
 
     juce::Label sliderLabels[8];

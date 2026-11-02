@@ -9,6 +9,7 @@ struct SampleData
     int startOffset = 0;               // preskace tisinu na pocetku
     bool hasLoop = false;
     int loopStart = 0, loopEnd = 0;    // loopEnd je ekskluzivan
+    int endPoint = 0;                  // kraj sempla bez loop-a (ekskluzivan), 0 = do kraja bafera
     int fileRootKey = -1;              // root iz WAV smpl bloka, ako postoji
     juce::String id;                   // relativna putanja, koristi se u fajlu mape
     juce::String displayName;
@@ -32,7 +33,8 @@ struct Zone
     bool loop = true;                  // koristi loop (zone ili sempla, ako postoji)
     bool fixedPitch = false;           // ista visina na svim tasterima (bubnjevi)
     int sampleStart = 0;               // > 0: pocetak sempla (inace automatski bez tisine)
-    int loopStart = -1, loopEnd = -1;  // loop zone (Kontakt), ima prednost nad loop-om sempla
+    int loopStart = -1, loopEnd = -1;  // loop zone (Kontakt / editor), ima prednost nad loop-om sempla
+    int sampleEnd = -1;                // > 0: kraj sempla kad nema loop-a (editor)
 
     bool hasOwnLoop() const noexcept   { return loopStart >= 0 && loopEnd > loopStart + 16; }
 

@@ -73,6 +73,7 @@ Tišina na početku fajla se automatski preskače.
 Svaki `.kmp` fajl je jedan instrument. KSF semplovi treba da budu u folderu istog imena
 kao KMP (npr. `STRINGS.KMP` + folder `STRINGS`) ili pored KMP-a. Mapiranje (rasponi,
 root note, štim, jačina, pan) čita se iz KMP-a, a loop iz KSF-a.
+Iz KSF-a se čitaju Start, Loop Start, End i da li je loop uključen (Loop Off).
 Nije podržano: kompresovani KSF i semplovi iz ROM-a klavijature ("INTERNAL").
 
 ### Kontakt NKI
@@ -113,6 +114,9 @@ Stranica **MAPIRANJE** (ili dugme MAPA kod oscilatora na stranici USER) otvara e
   vučenje ivica menja raspon tastera ili jačine. Trouglić je root nota.
 - Desno se ručno podešavaju root, raspon, velocity, štim, jačina, pan, loop i "ista visina"
   (za bubnjeve). Zona može da se isključi, duplira (za round robin ili lejer) ili obriše.
+- **SAMPLE / LOOP EDIT** (dugme iznad grafika): oblik talasa izabrane zone. Start (S), Loop start i
+  End (E) se vuku mišem ili upisuju; Loop uključuje/isključuje loop; "Na nulu" pomera tačke na prolaz
+  kroz nulu. LOOP EDIT pokazuje spoj kraja i početka loop-a. Točkić zumira, prevlačenje pomera prikaz.
 - **Sve − / + oktava**: kad ceo instrument svira oktavu pogrešno.
 - **Rasponi po root**: ponovo deli tastere između zona prema root notama.
 - Sve promene se čuju odmah dok sviraš. **Poništi** (Ctrl+Z) vraća korak nazad.
