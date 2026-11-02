@@ -44,6 +44,7 @@ struct SoundBlock
     float pitchEgInt = 0.0f;            // polutonovi na pun nivo pitch EG-a
     EnvSettings pitchEg { 0.0f, 0.001f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f };
     float vibRate = 5.5f, vibDepth = 0.0f, vibDelay = 0.3f;   // Hz, centi, sekunde
+    float vibFade = 0.25f, vibOffset = 0.0f;                  // sekunde, -1..1 (pomera centar LFO-a)
     float mwToVib = 30.0f, atToVib = 0.0f;                    // centi
 
     // filter

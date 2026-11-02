@@ -23,7 +23,9 @@ namespace Kronos
         std::array<int, 8> xfadeRange {};   // 0 = Off
         std::array<int, 8> xfadeCurve {};   // 0 Linear, 1 Power, 2 Layer
         int transpose = 0, tuneCents = 0;
-        int lfo1Freq = 0, pitchLfo1Int = 0, pitchEgInt = 0;
+        int lfo1Freq = 0, lfo1Offset = 0, lfo1Delay = 0, lfo1Fade = 0;
+        int pitchLfo1Int = 0, pitchLfo1JsY = 0, pitchEgInt = 0;
+        int octave = 0;                   // -2..+1 (32' .. 4')
         int portaOn = 0, portaFingered = 0, portaConstTime = 0, portaTime = 0, bendUp = 2, bendDown = -2;
         int filterRouting = 0, cutoff = 99, resonance = 0, filterEgInt = 0, filterEgVel = 0;
         std::array<int, 9> filterEg {};   // start, attack t, attack lvl, decay t, break, slope t, sustain, release t, release lvl

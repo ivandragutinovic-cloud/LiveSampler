@@ -531,8 +531,11 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         sb.velSens = (float) juce::jlimit (0, 99, std::abs (q.ampVelocity)) / 99.0f;
         sb.filterEg = kFilterEg (q.filterEg);
         sb.vibRate = kLfoHz (q.lfo1Freq);
-        sb.vibDepth = kSemis (q.pitchLfo1Int) * 100.0f;
-        sb.vibDelay = 0.0f;
+        sb.vibDepth = std::abs (kSemis (q.pitchLfo1Int)) * 100.0f;
+        sb.mwToVib = std::abs (kSemis (q.pitchLfo1JsY)) * 100.0f;   // JS+Y = mod tockic
+        sb.vibDelay = q.lfo1Delay <= 0 ? 0.0f : kTime (q.lfo1Delay);
+        sb.vibFade = q.lfo1Fade <= 0 ? 0.005f : kTime (q.lfo1Fade);
+        sb.vibOffset = juce::jlimit (-1.0f, 1.0f, (float) q.lfo1Offset / 99.0f);
         // pitch EG: nivoi jos nisu nadjeni u PCG-u, pa intenzitet ostaje 0 da ne pokvari visinu
 
         // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje.
@@ -571,7 +574,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             os.fadeCurve = oscCurve;
             os.keyLow = juce::jmin (q.keyLow, q.keyHigh);
             os.keyHigh = juce::jmax (q.keyLow, q.keyHigh);
-            os.transpose = q.transpose;
+            os.transpose = q.transpose + q.octave * 12;
             os.fineCents = (float) q.tuneCents;
             os.levelDb = juce::jlimit (-60.0f, 6.0f, kLevelDb (zone.value) + kLevelDb (q.ampLevel));
             os.pan = juce::jlimit (-1.0f, 1.0f, ((float) q.pan - 64.0f) / 64.0f);

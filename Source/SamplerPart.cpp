@@ -405,12 +405,12 @@ void SamplerPart::updateModulation (Voice& v)
 
     // pitch: EG + vibrato + bend
     const float pEg = v.pitchEnv.advance (controlRate);
-    const double delayFade = juce::jlimit (0.0, 1.0, (v.time - sb.vibDelay) / 0.25);
+    const double delayFade = juce::jlimit (0.0, 1.0, (v.time - sb.vibDelay) / juce::jmax (0.005, (double) sb.vibFade));
     const double vibCents = sb.vibDepth * delayFade + modWheel * sb.mwToVib + aftertouch * sb.atToVib;
     v.vibPhase += juce::MathConstants<double>::twoPi * sb.vibRate * dt;
     if (v.vibPhase > juce::MathConstants<double>::twoPi) v.vibPhase -= juce::MathConstants<double>::twoPi;
     const double bendSemis = bend >= 0.0f ? bend * u.bendUp : bend * u.bendDown;
-    const double pitchMod = pEg * sb.pitchEgInt + std::sin (v.vibPhase) * vibCents / 100.0 + bendSemis + v.tune;
+    const double pitchMod = pEg * sb.pitchEgInt + (std::sin (v.vibPhase) * (1.0 - std::abs ((double) sb.vibOffset)) + (double) sb.vibOffset) * vibCents / 100.0 + bendSemis + v.tune;
 
     const double rateRatio = v.sample->sampleRate / sampleRate;
     const double played = v.fixedPitch ? v.rootKey : v.pitch;

@@ -735,9 +735,11 @@ void SoundEditor::rebuildKnobs()
             rows.push_back ({
                 P ("EG intenz.", -12, 12, 0, 0, stText, [] (U& u, int b) -> float& { return u.block[(size_t) b].pitchEgInt; }),
                 P ("Vibrato brz.", 0.1, 12, 4, 5.5, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibRate; }),
-                P ("Vibrato dub.", 0, 100, 0, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDepth; }),
-                P ("Kašnjenje", 0, 3, 0.5, 0.3, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDelay; }),
-                P ("Točkić→vib", 0, 100, 0, 30, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToVib; }),
+                P ("Vibrato dub.", 0, 300, 50, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDepth; }),
+                P ("Kašnjenje", 0, 5, 0.5, 0.3, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDelay; }),
+                P ("Fade", 0, 5, 0.5, 0.25, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibFade; }),
+                P ("Offset", -1, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibOffset; }),
+                P ("Točkić→vib", 0, 300, 50, 30, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToVib; }),
                 P ("Aftert.→vib", 0, 100, 0, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToVib; }) });
             rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].pitchEg; }, true, true));
             break;

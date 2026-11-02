@@ -82,6 +82,11 @@ namespace Kronos
             q.transpose   = s8 (b[3013]);
             q.tuneCents   = (int) (juce::int16) (b[3014] | (b[3015] << 8));
             q.lfo1Freq    = b[2977];
+            q.lfo1Offset  = s8 (b[2983]);
+            q.lfo1Delay   = b[2984];
+            q.lfo1Fade    = b[2985];
+            q.octave      = juce::jlimit (-2, 1, s8 (b[3012]));
+            q.pitchLfo1JsY = s8 (b[3030]);
             q.pitchEgInt  = s8 (b[3019]);
             q.pitchLfo1Int = s8 (b[3022]);
             q.portaOn        = b[3024] & 1;
