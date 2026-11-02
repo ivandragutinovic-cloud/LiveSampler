@@ -129,6 +129,7 @@ namespace Kronos
             tm.send1 = b[15];
             tm.send2 = b[16];
             tm.play = (b[34] & 0x80) == 0;
+            tm.external = (b[29] & 0x10) != 0;
             tm.keyHigh = b[37];
             tm.keyLow = b[38];
             tm.velHigh = juce::jlimit (1, 127, (int) b[40]);

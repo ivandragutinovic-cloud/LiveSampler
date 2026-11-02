@@ -81,6 +81,9 @@ struct UserProgram
     bool portaConstRate = false;
     int bendUp = 2, bendDown = 2;
 
+    // EQ zvuka (prenosi se u svaki performans; tamo moze dodatno da se dotera)
+    float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;
+
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;
 
@@ -99,6 +102,7 @@ struct PerfPart
     float volumeDb = 0.0f, pan = 0.0f;
     int transpose = 0, octave = 0;
     float detuneCents = 0.0f;
+    float eqLowDb = 0.0f, eqMidDb = 0.0f, eqHighDb = 0.0f;   // dodaje se na EQ usera
     int keyLow = 0, keyHigh = 127;
     int velLow = 1, velHigh = 127;
     int midiChannel = 0;                // 0 = svi kanali

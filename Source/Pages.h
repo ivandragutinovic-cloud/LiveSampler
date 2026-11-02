@@ -23,7 +23,8 @@ private:
     const int index;
     const juce::Colour colour;
 
-    juce::TextButton onButton, userButton, editButton, tercaButton, sustainButton;
+    void showEq();
+    juce::TextButton onButton, userButton, editButton, eqButton, tercaButton, sustainButton;
     ValueKnob volume, pan, reverb, delay;
     juce::Slider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
     juce::Label labels[7];
@@ -300,7 +301,7 @@ private:
 
     juce::TextButton loadButton, createSelected, createAll, playButton, modeButtons[2];
     bool combiMode = false;
-    juce::ToggleButton onlyUser;
+    juce::ToggleButton onlyUser, keepChannels;
     juce::TextEditor search;
     juce::Label fileLabel, infoLabel, help;
     juce::TableListBox table;

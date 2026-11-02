@@ -734,6 +734,26 @@ void SamplerPart::endBlock (juce::AudioBuffer<float>& mainOut, juce::AudioBuffer
     {
         const auto& u = cfg->user;
         insertFx.process (partBuffer, n, u.fxType, u.fxRate, u.fxDepth, u.fxMix);
+
+        // EQ: user + doterivanje u performansu
+        const float lo = juce::jlimit (-18.0f, 18.0f, u.eqLowDb + cfg->part.eqLowDb);
+        const float mi = juce::jlimit (-18.0f, 18.0f, u.eqMidDb + cfg->part.eqMidDb);
+        const float hi = juce::jlimit (-18.0f, 18.0f, u.eqHighDb + cfg->part.eqHighDb);
+        const float mf = juce::jlimit (100.0f, 8000.0f, u.eqMidFreq);
+        if (! juce::exactlyEqual (lo, eqLast[0])) { eqLow.set (Biquad::LowShelf, sampleRate, 150.0, 0.707, lo); eqLast[0] = lo; }
+        if (! juce::exactlyEqual (mi, eqLast[1]) || ! juce::exactlyEqual (mf, eqLast[3]))
+        { eqMid.set (Biquad::Peak, sampleRate, mf, 0.9, mi); eqLast[1] = mi; eqLast[3] = mf; }
+        if (! juce::exactlyEqual (hi, eqLast[2])) { eqHigh.set (Biquad::HighShelf, sampleRate, 6000.0, 0.707, hi); eqLast[2] = hi; }
+        if (std::abs (lo) > 0.05f || std::abs (mi) > 0.05f || std::abs (hi) > 0.05f)
+        {
+            auto* l = partBuffer.getWritePointer (0);
+            auto* r = partBuffer.getWritePointer (1);
+            for (int i = 0; i < n; ++i)
+            {
+                l[i] = eqHigh.process (0, eqMid.process (0, eqLow.process (0, l[i])));
+                r[i] = eqHigh.process (1, eqMid.process (1, eqLow.process (1, r[i])));
+            }
+        }
     }
 
     const float rev = cfg != nullptr ? cfg->part.reverbSend : 0.0f;

@@ -102,7 +102,8 @@ public:
     int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
-    juce::StringArray loadKronosCombi (const Kronos::Combi& c);
+    // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)
+    juce::StringArray loadKronosCombi (const Kronos::Combi& c, bool keepChannels);
 
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }

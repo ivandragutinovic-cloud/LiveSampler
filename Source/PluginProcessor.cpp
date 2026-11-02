@@ -605,7 +605,7 @@ int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
     return createUserFromKronos (p);
 }
 
-juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c)
+juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c, bool keepChannels)
 {
     juce::StringArray skipped;
     if (kronosPcg == nullptr)
@@ -618,7 +618,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c)
         const auto& tm = c.timbres[(size_t) t];
         auto& part = p.parts[(size_t) t];
         part = PerfPart();
-        if (! tm.play)
+        if (! tm.play || tm.external)   // EXT timbre ne svira u Kronosu, samo salje MIDI napolje
             continue;
 
         const auto* prog = kronosPcg->findProgram (tm.programBank, tm.programNumber);
@@ -642,7 +642,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c)
         part.velLow = juce::jmin (tm.velLow, tm.velHigh);
         part.velHigh = juce::jmax (tm.velLow, tm.velHigh);
         // timbre na globalnom kanalu Kronosa svira sa klavijature kao Gch -> svi kanali
-        part.midiChannel = tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
+        part.midiChannel = ! keepChannels || tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
         part.reverbSend = (float) tm.send1 / 127.0f;
         part.delaySend = (float) tm.send2 / 127.0f;
     }

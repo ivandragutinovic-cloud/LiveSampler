@@ -45,6 +45,10 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     e->setAttribute ("priority", priority);
     e->setAttribute ("portaOn", portaOn);
     e->setAttribute ("portamento", (double) portamento);
+    e->setAttribute ("eqLow", (double) eqLowDb);
+    e->setAttribute ("eqMid", (double) eqMidDb);
+    e->setAttribute ("eqMidFreq", (double) eqMidFreq);
+    e->setAttribute ("eqHigh", (double) eqHighDb);
     e->setAttribute ("portaFingered", portaFingered);
     e->setAttribute ("portaConstRate", portaConstRate);
     e->setAttribute ("bendUp", bendUp);
@@ -100,6 +104,10 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     u.fxRate = f ("fxRate", u.fxRate);
     u.fxDepth = f ("fxDepth", u.fxDepth);
     u.fxMix = f ("fxMix", u.fxMix);
+    u.eqLowDb = f ("eqLow", 0.0f);
+    u.eqMidDb = f ("eqMid", 0.0f);
+    u.eqMidFreq = f ("eqMidFreq", 1000.0f);
+    u.eqHighDb = f ("eqHigh", 0.0f);
 
     if (e.getChildByName ("Block") != nullptr)
     {
@@ -199,6 +207,13 @@ static void masterToXml (const MasterSettings& m, juce::XmlElement& e)
     e.setAttribute ("revSize", (double) m.reverbSize);
     e.setAttribute ("revDamp", (double) m.reverbDamping);
     e.setAttribute ("revLevel", (double) m.reverbLevel);
+    e.setAttribute ("revDecay", (double) m.reverbDecay);
+    e.setAttribute ("revPre", (double) m.reverbPreDelayMs);
+    e.setAttribute ("revLowCut", (double) m.reverbLowCut);
+    e.setAttribute ("revHighCut", (double) m.reverbHighCut);
+    e.setAttribute ("revDiff", (double) m.reverbDiffusion);
+    e.setAttribute ("revMod", (double) m.reverbMod);
+    e.setAttribute ("revWidth", (double) m.reverbWidth);
     e.setAttribute ("dlyTime", (double) m.delayTimeMs);
     e.setAttribute ("dlyFb", (double) m.delayFeedback);
     e.setAttribute ("dlyLevel", (double) m.delayLevel);
@@ -217,6 +232,13 @@ static MasterSettings masterFromXml (const juce::XmlElement& e)
     m.reverbSize = f ("revSize", m.reverbSize);
     m.reverbDamping = f ("revDamp", m.reverbDamping);
     m.reverbLevel = f ("revLevel", m.reverbLevel);
+    m.reverbDecay = f ("revDecay", m.reverbDecay);
+    m.reverbPreDelayMs = f ("revPre", m.reverbPreDelayMs);
+    m.reverbLowCut = f ("revLowCut", m.reverbLowCut);
+    m.reverbHighCut = f ("revHighCut", m.reverbHighCut);
+    m.reverbDiffusion = f ("revDiff", m.reverbDiffusion);
+    m.reverbMod = f ("revMod", m.reverbMod);
+    m.reverbWidth = f ("revWidth", m.reverbWidth);
     m.delayTimeMs = f ("dlyTime", m.delayTimeMs);
     m.delayFeedback = f ("dlyFb", m.delayFeedback);
     m.delayLevel = f ("dlyLevel", m.delayLevel);
@@ -248,6 +270,9 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("transpose", p.transpose);
         x->setAttribute ("octave", p.octave);
         x->setAttribute ("detune", (double) p.detuneCents);
+        x->setAttribute ("eqLow", (double) p.eqLowDb);
+        x->setAttribute ("eqMid", (double) p.eqMidDb);
+        x->setAttribute ("eqHigh", (double) p.eqHighDb);
         x->setAttribute ("keyLow", p.keyLow);
         x->setAttribute ("keyHigh", p.keyHigh);
         x->setAttribute ("velLow", p.velLow);
@@ -281,6 +306,9 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.transpose = x->getIntAttribute ("transpose", 0);
         p.octave = x->getIntAttribute ("octave", 0);
         p.detuneCents = (float) x->getDoubleAttribute ("detune", 0.0);
+        p.eqLowDb = (float) x->getDoubleAttribute ("eqLow", 0.0);
+        p.eqMidDb = (float) x->getDoubleAttribute ("eqMid", 0.0);
+        p.eqHighDb = (float) x->getDoubleAttribute ("eqHigh", 0.0);
         p.keyLow = juce::jlimit (0, 127, x->getIntAttribute ("keyLow", 0));
         p.keyHigh = juce::jlimit (0, 127, x->getIntAttribute ("keyHigh", 127));
         p.velLow = juce::jlimit (1, 127, x->getIntAttribute ("velLow", 1));

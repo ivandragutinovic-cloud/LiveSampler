@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include "SampleLibrary.h"
 #include "Model.h"
+#include "MasterEffects.h"
 
 // Sve sto deo performansa treba za sviranje (nepromenljivo dok traje jedan audio blok)
 struct PartRuntime
@@ -141,5 +142,7 @@ private:
 
     juce::AudioBuffer<float> partBuffer;
     InsertFx insertFx;
+    Biquad eqLow, eqMid, eqHigh;
+    float eqLast[4] { 999.0f, 999.0f, 999.0f, 999.0f };
     juce::SmoothedValue<float> gainL, gainR;
 };

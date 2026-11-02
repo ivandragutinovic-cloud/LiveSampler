@@ -102,7 +102,9 @@ sa semplovima, onako kako ih Kronos sačuva (npr. `Pikaso stage.PCG`, `Pikaso st
 - **KOMBIJI** (dugme gore levo na KRONOS strani): dupli klik učitava kombi kao trenutni performans
   sa 16 delova. Za svaki timbre na Play: program (pravi se user ako ga nema), jačina, pan,
   transpozicija, detune, key i velocity zona, MIDI kanal (Gch = svi kanali), Send1 → reverb,
-  Send2 → delay. Timbre-i sa fabričkim ROM programima se preskaču. Sačuvaj performans sa SNIMI.
+  Send2 → delay. Timbre-i sa fabričkim ROM programima i timbre-i na EXT se preskaču. MIDI kanali
+  iz kombija se po defaultu ignorišu (svi delovi sviraju sa tvoje klavijature); uključi "Zadrži MIDI
+  kanale" ako sviraš sa više klavijatura. Sačuvaj performans sa SNIMI.
 
 ## 3. Editor mapiranja
 
@@ -140,7 +142,8 @@ Editor zvuka (dole na USER stranici), posebno za OSC1 i OSC2:
 
 Zajedničko: **Poly / Mono / Mono legato** (legato ne pokreće notu ispočetka),
 prioritet note (poslednja, najviša, najniža), **portamento** (vreme, "samo vezano" /
-fingered, konstantna brzina) i pitch bend posebno gore i dole. Insert efekat je na EFEKAT.
+fingered, konstantna brzina) i pitch bend posebno gore i dole. Insert efekat i EQ usera (bas, sredina sa frekvencijom, visoki) su na EFEKAT / EQ. EQ ide sa
+userom u svaki performans, a u performansu se dodatno doteruje dugmetom EQ na delu (važi samo za taj performans).
 Useri se čuvaju automatski; useri iz prethodne verzije se prenose sami.
 
 **PERFORMANS** = 16 delova (kao timbre-i u Kronos kombiju), prikazanih po 8: dugmad DELOVI 1-8 / 9-16. Svaki deo: user, uključen/isključen, jačina, pan, transpozicija,

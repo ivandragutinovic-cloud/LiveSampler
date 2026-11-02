@@ -46,6 +46,12 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     editButton.onClick = [this] { editor.editUser (proc.getPerformance().parts[(size_t) index].user); };
     addAndMakeVisible (editButton);
 
+    eqButton.setButtonText ("EQ");
+    eqButton.getProperties().set ("fontSize", 11.0f);
+    eqButton.setTooltip (T ("Doteraj EQ ovog dela (dodaje se na EQ usera)"));
+    eqButton.onClick = [this] { showEq(); };
+    addAndMakeVisible (eqButton);
+
     volume.onChange = [this] (double v) { edit ([v] (PerfPart& pp) { pp.volumeDb = (float) v; }); };
     pan.onChange    = [this] (double v) { edit ([v] (PerfPart& pp) { pp.pan = (float) v; }); };
     reverb.onChange = [this] (double v) { edit ([v] (PerfPart& pp) { pp.reverbSend = (float) v; }); };
@@ -96,6 +102,65 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     addAndMakeVisible (sustainButton);
 
     refresh();
+}
+
+namespace
+{
+    // Mali prozor sa EQ-om dela: bas, sredina, visoki (dodaje se na EQ usera)
+    struct PartEqPanel : public juce::Component
+    {
+        PartEqPanel (LiveSamplerProcessor& p, int idx, juce::Colour c) : proc (p), index (idx)
+        {
+            auto db = [] (double v) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; };
+            const auto& part = proc.getPerformance().parts[(size_t) index];
+            const int u = proc.findUser (part.user);
+            if (u >= 0)
+            {
+                const auto& us = proc.getUser (u);
+                info.setText (T ("EQ usera: bas ") + db (us.eqLowDb) + T (", sredina ") + db (us.eqMidDb)
+                              + " @ " + juce::String (juce::roundToInt (us.eqMidFreq)) + T (" Hz, visoki ") + db (us.eqHighDb)
+                              + T ("\nOvde podešavaš samo za ovaj performans."), juce::dontSendNotification);
+            }
+            info.setFont (juce::FontOptions (12.0f));
+            info.setColour (juce::Label::textColourId, Pal::dim);
+            addAndMakeVisible (info);
+
+            const char* names[] = { "Bas", "Sredina", "Visoki" };
+            const float vals[] = { part.eqLowDb, part.eqMidDb, part.eqHighDb };
+            for (int k = 0; k < 3; ++k)
+            {
+                auto* kn = knobs.add (new ValueKnob (T (names[k]), c, -15.0, 15.0, 0.0, db, 0.0));
+                kn->setValue (vals[k]);
+                kn->onChange = [this, k] (double v)
+                {
+                    auto perf = proc.getPerformance();
+                    auto& pp = perf.parts[(size_t) index];
+                    (k == 0 ? pp.eqLowDb : k == 1 ? pp.eqMidDb : pp.eqHighDb) = (float) v;
+                    proc.updatePerformance (perf);
+                };
+                addAndMakeVisible (kn);
+            }
+            setSize (300, 150);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (6);
+            info.setBounds (r.removeFromTop (36));
+            const int w = r.getWidth() / 3;
+            for (auto* k : knobs) k->setBounds (r.removeFromLeft (w));
+        }
+        LiveSamplerProcessor& proc;
+        const int index;
+        juce::Label info;
+        juce::OwnedArray<ValueKnob> knobs;
+    };
+}
+
+void PartStrip::showEq()
+{
+    auto* top = getTopLevelComponent();
+    juce::CallOutBox::launchAsynchronously (std::make_unique<PartEqPanel> (proc, index, colour),
+                                            top->getLocalArea (this, eqButton.getBounds()), top);
 }
 
 void PartStrip::edit (std::function<void (PerfPart&)> fn)
@@ -194,7 +259,12 @@ void PartStrip::resized()
     r.removeFromTop (4);
     userButton.setBounds (r.removeFromTop (40));
     r.removeFromTop (2);
-    editButton.setBounds (r.removeFromTop (20));
+    {
+        auto row = r.removeFromTop (20);
+        eqButton.setBounds (row.removeFromRight (40));
+        row.removeFromRight (3);
+        editButton.setBounds (row);
+    }
     r.removeFromTop (4);
 
     auto knobs1 = r.removeFromTop (60);
@@ -552,6 +622,7 @@ void EnvelopeView::paint (juce::Graphics& g)
 static juce::String levelText (double v)  { return juce::String (juce::roundToInt (v * 100.0)); }
 static juce::String centsText (double v)  { return juce::String (juce::roundToInt (v)) + " c"; }
 static juce::String octText (double v)    { return (v > 0 ? "+" : "") + juce::String (v, 1) + " okt"; }
+static juce::String eqDb (double v)       { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; }
 static juce::String hzText2 (double v)    { return juce::String (v, 2) + " Hz"; }
 static juce::String stText (double v)     { return (v > 0 ? "+" : "") + juce::String (v, 1) + " st"; }
 
@@ -567,7 +638,7 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
         blockButtons[b].onClick = [this, b] { block = b; rebuildKnobs(); if (onBlockChanged) onBlockChanged(); };
         addAndMakeVisible (blockButtons[b]);
     }
-    const char* secNames[] = { "PITCH", "FILTER", "AMP", "ZAJEDNIČKO", "EFEKAT" };
+    const char* secNames[] = { "PITCH", "FILTER", "AMP", "ZAJEDNIČKO", "EFEKAT / EQ" };
     for (int s = 0; s < NumSections; ++s)
     {
         sectionButtons[s].setButtonText (T (secNames[s]));
@@ -699,7 +770,11 @@ void SoundEditor::rebuildKnobs()
             rows.push_back ({
                 P ("FX brzina", 0, 1, 0, 0.3, UI::pctText, [] (U& u, int) -> float& { return u.fxRate; }),
                 P ("FX dubina", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxDepth; }),
-                P ("FX mix", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxMix; }) });
+                P ("FX mix", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxMix; }),
+                P ("EQ bas", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqLowDb; }),
+                P ("EQ sredina", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqMidDb; }),
+                P ("Sredina Hz", 100, 8000, 1000, 1000, UI::hzText, [] (U& u, int) -> float& { return u.eqMidFreq; }),
+                P ("EQ visoki", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqHighDb; }) });
             break;
 
         default:
@@ -1481,7 +1556,13 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     };
     auto db = [] (double v) { return juce::String (v, 1) + " dB"; };
 
-    add ("REVERB", { { "Veličina", 0, 1, 0, 0.5, UI::pctText }, { "Prigušenje", 0, 1, 0, 0.5, UI::pctText }, { "Nivo", 0, 1, 0, 0.8, UI::pctText } });
+    auto ms = [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; };
+    auto sec = [] (double v) { return juce::String (v, 1) + " s"; };
+    add ("PLATE REVERB", { { "Veličina", 0, 1, 0, 0.5, UI::pctText }, { "Trajanje", 0.3, 10, 2, 2.2, sec },
+                           { "Predelay", 0, 150, 30, 20, ms }, { "Prigušenje", 0, 1, 0, 0.5, UI::pctText },
+                           { "Low cut", 20, 1000, 150, 150, UI::hzText }, { "High cut", 1000, 16000, 5000, 6000, UI::hzText },
+                           { "Gustina", 0, 1, 0, 0.7, UI::pctText }, { "Modulacija", 0, 1, 0, 0.3, UI::pctText },
+                           { "Širina", 0, 1, 0, 1.0, UI::pctText }, { "Nivo", 0, 1, 0, 0.8, UI::pctText } });
     add ("DELAY", { { "Vreme", 20, 1500, 350, 350, [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; } },
                     { "Ponavljanje", 0, 0.95, 0, 0.35, UI::pctText }, { "Nivo", 0, 1, 0, 0.6, UI::pctText } });
     add ("EQ", { { "Bas", -12, 12, 0, 0, db }, { "Sredina", -12, 12, 0, 0, db }, { "Visoki", -12, 12, 0, 0, db } });
@@ -1492,18 +1573,26 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     {
         knobs[i]->onChange = [this, fn] (double v) { edit ([fn, v] (MasterSettings& m) { fn (m, (float) v); }); };
     };
-    setter (0,  [] (MasterSettings& m, float v) { m.reverbSize = v; });
-    setter (1,  [] (MasterSettings& m, float v) { m.reverbDamping = v; });
-    setter (2,  [] (MasterSettings& m, float v) { m.reverbLevel = v; });
-    setter (3,  [] (MasterSettings& m, float v) { m.delayTimeMs = v; });
-    setter (4,  [] (MasterSettings& m, float v) { m.delayFeedback = v; });
-    setter (5,  [] (MasterSettings& m, float v) { m.delayLevel = v; });
-    setter (6,  [] (MasterSettings& m, float v) { m.eqLowDb = v; });
-    setter (7,  [] (MasterSettings& m, float v) { m.eqMidDb = v; });
-    setter (8,  [] (MasterSettings& m, float v) { m.eqHighDb = v; });
-    setter (9,  [] (MasterSettings& m, float v) { m.compThresholdDb = v; });
-    setter (10, [] (MasterSettings& m, float v) { m.compRatio = v; });
-    setter (11, [] (MasterSettings& m, float v) { m.masterDb = v; });
+    int k = 0;
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbSize = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbDecay = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbPreDelayMs = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbDamping = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbLowCut = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbHighCut = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbDiffusion = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbMod = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbWidth = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbLevel = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.delayTimeMs = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.delayFeedback = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.delayLevel = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.eqLowDb = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.eqMidDb = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.eqHighDb = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.compThresholdDb = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.compRatio = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.masterDb = v; });
 
     globalVolume = std::make_unique<ValueKnob> ("MASTER", juce::Colours::white, -60.0, 6.0, -12.0, UI::dbText, 0.0);
     globalVolume->onChange = [this] (double v) { proc.setGlobalVolume ((float) v); };
@@ -1520,7 +1609,8 @@ void EffectsPage::edit (std::function<void (MasterSettings&)> fn)
 void EffectsPage::refresh()
 {
     const auto& m = proc.getPerformance().master;
-    const float vals[] = { m.reverbSize, m.reverbDamping, m.reverbLevel, m.delayTimeMs, m.delayFeedback, m.delayLevel,
+    const float vals[] = { m.reverbSize, m.reverbDecay, m.reverbPreDelayMs, m.reverbDamping, m.reverbLowCut, m.reverbHighCut,
+                           m.reverbDiffusion, m.reverbMod, m.reverbWidth, m.reverbLevel, m.delayTimeMs, m.delayFeedback, m.delayLevel,
                            m.eqLowDb, m.eqMidDb, m.eqHighDb, m.compThresholdDb, m.compRatio, m.masterDb };
     for (int i = 0; i < knobs.size(); ++i)
         knobs[i]->setValue (vals[i]);
@@ -1547,27 +1637,23 @@ void EffectsPage::paint (juce::Graphics& g)
 
 void EffectsPage::resized()
 {
-    auto r = getLocalBounds().reduced (24, 20);
-    auto row1 = r.removeFromTop (150).withTrimmedTop (40);
-    const int kw = 110, gap = 30;
-    int x = row1.getX();
-    for (int si = 0; si < 3; ++si)
+    auto r = getLocalBounds().reduced (24, 16);
+    r.removeFromBottom (28);
+    const int rowH = r.getHeight() / 3;
+    const int kw = juce::jmin (110, r.getWidth() / 10), kh = juce::jmin (110, rowH - 40), gap = 30;
+    // red 1: reverb, red 2: delay + EQ, red 3: kompresor + performans + master
+    const int rowOf[] = { 0, 1, 1, 2, 2 };
+    int x = 0, lastRow = -1, y = 0;
+    for (int si = 0; si < sections.size(); ++si)
     {
+        const int row = rowOf[juce::jmin (si, 4)];
+        if (row != lastRow) { x = r.getX(); y = r.getY() + row * rowH + 36; lastRow = row; }
         auto& s = sections.getReference (si);
         for (int k = 0; k < s.count; ++k, x += kw)
-            knobs[s.first + k]->setBounds (x, row1.getY(), kw, 110);
+            knobs[s.first + k]->setBounds (x, y, kw, kh);
         x += gap;
     }
-    auto row2 = r.removeFromTop (190).withTrimmedTop (60);
-    x = row2.getX();
-    for (int si = 3; si < sections.size(); ++si)
-    {
-        auto& s = sections.getReference (si);
-        for (int k = 0; k < s.count; ++k, x += kw)
-            knobs[s.first + k]->setBounds (x, row2.getY(), kw, 110);
-        x += gap;
-    }
-    globalVolume->setBounds (x + 80, row2.getY(), 160, 110);
+    globalVolume->setBounds (x + 60, y, 160, kh);
 }
 
 //==============================================================================
@@ -1691,6 +1777,10 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     onlyUser.onClick = [this] { rebuildRows(); };
     addAndMakeVisible (onlyUser);
 
+    keepChannels.setButtonText (T ("Zadrži MIDI kanale iz kombija"));
+    keepChannels.setTooltip (T ("Isključeno: svi delovi sviraju sa tvoje klavijature, na bilo kom kanalu. Uključi samo ako sviraš sa više klavijatura na različitim kanalima."));
+    addChildComponent (keepChannels);
+
     search.setTextToShowWhenEmpty (T ("Traži po imenu..."), Pal::dim);
     search.onTextChange = [this] { rebuildRows(); };
     addAndMakeVisible (search);
@@ -1795,6 +1885,7 @@ void KronosPage::setMode (bool combis)
     playButton.setTooltip (combis ? T ("Kombi postaje trenutni performans (16 delova). Može i dupli klik. Sačuvaj ga dugmetom SNIMI.")
                                   : T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
     createSelected.setVisible (! combis);
+    keepChannels.setVisible (combis);
     createAll.setVisible (! combis);
     search.setText ({}, juce::dontSendNotification);
     rebuildRows();
@@ -1808,7 +1899,7 @@ juce::String KronosPage::timbreSummary (const Kronos::Combi& c, int& romCount) c
     for (int t = 0; t < 16; ++t)
     {
         const auto& tm = c.timbres[(size_t) t];
-        if (! tm.play) continue;
+        if (! tm.play || tm.external) continue;
         const auto* p = pcg != nullptr ? pcg->findProgram (tm.programBank, tm.programNumber) : nullptr;
         if (p == nullptr || ! p->usesUser()) { ++romCount; continue; }
         parts.add (juce::String (t + 1) + " " + p->name);
@@ -1821,7 +1912,7 @@ void KronosPage::loadCombiRow (int row)
     auto* pcg = proc.getKronosPcg();
     if (pcg == nullptr || row < 0 || row >= (int) rows.size())
         return;
-    const auto skipped = proc.loadKronosCombi (pcg->combis[(size_t) rows[(size_t) row]]);
+    const auto skipped = proc.loadKronosCombi (pcg->combis[(size_t) rows[(size_t) row]], keepChannels.getToggleState());
     if (! skipped.isEmpty())
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
             T ("Ovi timbre-i nisu preneti (nema tvojih semplova u biblioteci):\n\n") + skipped.joinIntoString ("\n"));
@@ -1955,7 +2046,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                 for (auto& tm : cb.timbres)
                 {
                     const auto s = tm.channel == 0 || tm.channel == pcg->globalChannel ? juce::String ("Gch") : juce::String (tm.channel);
-                    if (tm.play && ! ch.contains (s)) ch.add (s);
+                    if (tm.play && ! tm.external && ! ch.contains (s)) ch.add (s);
                 }
                 t = ch.joinIntoString (", ");
                 c = Pal::dim;
@@ -2021,6 +2112,8 @@ void KronosPage::resized()
     filt.removeFromLeft (14);
     onlyUser.setBounds (filt.removeFromLeft (300));
     search.setBounds (filt.removeFromLeft (260));
+    filt.removeFromLeft (14);
+    keepChannels.setBounds (filt.removeFromLeft (260));
     r.removeFromTop (8);
     help.setBounds (r.removeFromBottom (22));
     r.removeFromBottom (6);
