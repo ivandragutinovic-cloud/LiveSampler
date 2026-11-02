@@ -54,6 +54,47 @@ namespace Kronos
         return ((juce::uint32) p[0] << 24) | ((juce::uint32) p[1] << 16) | ((juce::uint32) p[2] << 8) | (juce::uint32) p[3];
     }
 
+    // Mesta su utvrdjena test programima (T01-T14) napravljenim na Kronosu.
+    // OSC2 parametri su na istim mestima + 466, osim raspona tastera.
+    static void readParams (Program& p, const juce::uint8* d)
+    {
+        auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
+        p.doubleMode = (d[2558] & 0x01) != 0;
+        p.mono       = (d[2558] & 0x80) != 0;
+        p.legato     = (d[2559] & 0x01) != 0;
+        p.priority   = (d[2559] >> 2) & 3;
+
+        for (int o = 0; o < 2; ++o)
+        {
+            auto& q = p.params[(size_t) o];
+            const auto* b = d + o * 466;
+            q.keyLow  = d[2684 + o * 2];
+            q.keyHigh = d[2685 + o * 2];
+            q.velLow  = juce::jlimit (1, 127, (int) b[2972]);
+            q.velHigh = juce::jlimit (1, 127, (int) b[2973]);
+            for (int z = 0; z < 7; ++z)
+                q.zoneBottom[(size_t) z] = juce::jlimit (1, 127, (int) b[2950 + z * 3]);
+            q.zoneBottom[7] = 1;
+            q.transpose   = s8 (b[3013]);
+            q.tuneCents   = (int) (juce::int16) (b[3014] | (b[3015] << 8));
+            q.lfo1Freq    = b[2977];
+            q.pitchEgInt  = s8 (b[3019]);
+            q.pitchLfo1Int = s8 (b[3022]);
+            q.portaOn     = b[3024];
+            q.portaTime   = b[3025];
+            q.bendUp      = s8 (b[3026]);
+            q.bendDown    = s8 (b[3027]);
+            q.filterRouting = b[3036];
+            q.cutoff      = b[3047];
+            q.resonance   = b[3048];
+            q.filterEgInt = s8 (b[3056]);
+            for (int i = 0; i < 9; ++i) q.filterEg[(size_t) i] = s8 (b[3094 + i]);
+            for (int i = 0; i < 8; ++i) q.ampEg[(size_t) i] = b[3151 + i];
+            q.ampLevel    = b[3141];
+            q.pan         = b[3193];
+        }
+    }
+
     bool Pcg::load (const juce::File& f, juce::String& error)
     {
         programs.clear();
@@ -124,6 +165,7 @@ namespace Kronos
                         p.hd1 = id == "PBK1" && itemSize == (juce::uint32) programSize;
                         if (p.hd1)
                         {
+                            readParams (p, item);
                             for (int o = 0; o < 2; ++o)
                             {
                                 const int base = o == 0 ? osc1ZonesOffset : osc2ZonesOffset;

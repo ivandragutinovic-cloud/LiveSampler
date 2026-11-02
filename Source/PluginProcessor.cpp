@@ -464,29 +464,108 @@ bool LiveSamplerProcessor::loadKronosPcg (const juce::File& f, juce::String& err
     return true;
 }
 
+namespace
+{
+    // Kronos vrednosti 0..99 -> nase jedinice (priblizno, po uhu i Korg tabelama)
+    float kTime (int v)      { return v <= 0 ? 0.001f : 0.003f * std::exp (0.09f * (float) v); }
+    float kHz (int v, float lo, float range) { return lo * std::pow (range, (float) juce::jlimit (0, 99, v) / 99.0f); }
+    float kSemis (int v)     // intenzitet pitch-a: 60 = 1 poluton, 115 = 12
+    {
+        if (v == 0) return 0.0f;
+        const float s = std::pow (2.0f, ((float) std::abs (v) - 60.0f) / 15.3f);
+        return v < 0 ? -s : s;
+    }
+    float kLevelDb (int v)   { return v <= 0 ? -60.0f : 40.0f * std::log10 ((float) v / 127.0f); }
+
+    EnvSettings kAmpEg (const std::array<int, 8>& e)
+    {
+        EnvSettings s;
+        s.start = (float) e[0] / 99.0f;
+        s.attackTime = kTime (e[1]);  s.attackLevel = (float) e[2] / 99.0f;
+        s.decayTime = kTime (e[3]);   s.breakLevel = (float) e[4] / 99.0f;
+        s.slopeTime = kTime (e[5]);   s.sustain = (float) e[6] / 99.0f;
+        s.releaseTime = kTime (e[7]); s.releaseLevel = 0.0f;
+        return s;
+    }
+
+    EnvSettings kFilterEg (const std::array<int, 9>& e)
+    {
+        EnvSettings s;
+        s.start = (float) e[0] / 99.0f;
+        s.attackTime = kTime (e[1]);  s.attackLevel = (float) e[2] / 99.0f;
+        s.decayTime = kTime (e[3]);   s.breakLevel = (float) e[4] / 99.0f;
+        s.slopeTime = kTime (e[5]);   s.sustain = (float) e[6] / 99.0f;
+        s.releaseTime = kTime (e[7]); s.releaseLevel = (float) e[8] / 99.0f;
+        return s;
+    }
+}
+
 int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
 {
-    // Faza 1: glavni user multisempl sa OSC1 (ili OSC2 ako OSC1 nema user sempl), ceo velocity opseg.
-    // Slojevi, rasponi i parametri zvuka dolaze kad se utvrde mesta u PCG-u (faza 2).
     UserProgram u;
-    int o = 0;
-    for (int oscIdx = 0; oscIdx < 2 && o == 0; ++oscIdx)
+    int n = 0;
+    const int numOsc = prog.doubleMode ? 2 : 1;
+
+    for (int o = 0; o < numOsc; ++o)
     {
-        const int z = prog.firstUserZone (oscIdx);
-        if (z < 0) continue;
-        const auto& zone = prog.osc[(size_t) oscIdx][(size_t) z];
-        const auto inst = library.findKronosMultisample (zone.uuid, zone.ms);
-        if (inst.isEmpty()) continue;
-        u.osc[0].on = true;
-        u.osc[0].instrument = inst;
-        o = 1;
+        const auto& q = prog.params[(size_t) o];
+        auto& sb = u.block[(size_t) o];
+
+        // zvuk (Zvuk A = OSC1, Zvuk B = OSC2)
+        sb.ampEg = kAmpEg (q.ampEg);
+        sb.filterType = (q.filterRouting & 3) == 3 || (q.filterRouting & 3) == 1 ? FilterType::LP24 : FilterType::LP12;
+        sb.cutoff = kHz (q.cutoff, 20.0f, 1000.0f);
+        sb.resonance = (float) juce::jlimit (0, 99, q.resonance) / 99.0f;
+        sb.filterEgInt = (float) q.filterEgInt / 99.0f * 5.0f;
+        sb.filterEg = kFilterEg (q.filterEg);
+        sb.vibRate = kHz (q.lfo1Freq, 0.03f, 1000.0f);
+        sb.vibDepth = kSemis (q.pitchLfo1Int) * 100.0f;
+        sb.vibDelay = 0.0f;
+        // pitch EG: nivoi jos nisu nadjeni u PCG-u, pa intenzitet ostaje 0 da ne pokvari visinu
+
+        // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje
+        int top = 127;
+        for (int z = 0; z < 8 && top >= 1; ++z)
+        {
+            const auto& zone = prog.osc[(size_t) o][(size_t) z];
+            if (! zone.used) break;
+            const int bottom = juce::jmin (top, q.zoneBottom[(size_t) z]);
+            const int lo = juce::jmax (bottom, q.velLow), hi = juce::jmin (top, q.velHigh);
+            top = bottom - 1;
+            if (! zone.user || lo > hi || n >= kNumOsc) continue;
+
+            const auto inst = library.findKronosMultisample (zone.uuid, zone.ms);
+            if (inst.isEmpty()) continue;
+
+            auto& os = u.osc[(size_t) n++];
+            os.on = true;
+            os.instrument = inst;
+            os.block = o;
+            os.velLow = lo;
+            os.velHigh = hi;
+            os.keyLow = juce::jmin (q.keyLow, q.keyHigh);
+            os.keyHigh = juce::jmax (q.keyLow, q.keyHigh);
+            os.transpose = q.transpose;
+            os.fineCents = (float) q.tuneCents;
+            os.levelDb = juce::jlimit (-60.0f, 6.0f, kLevelDb (zone.value) + kLevelDb (q.ampLevel));
+            os.pan = juce::jlimit (-1.0f, 1.0f, ((float) q.pan - 64.0f) / 64.0f);
+        }
     }
-    if (o == 0)
+    if (n == 0)
         return -1;
+
+    const auto& q1 = prog.params[0];
+    u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
+    u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
+    u.portaOn = q1.portaOn != 0;
+    u.portamento = q1.portaTime <= 0 ? 0.0f : 0.002f * std::exp (0.085f * (float) q1.portaTime);
+    u.bendUp = juce::jlimit (0, 24, std::abs (q1.bendUp));
+    u.bendDown = juce::jlimit (0, 24, std::abs (q1.bendDown));
 
     const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
     loadNeededInstruments();
-    requestInstrument (users[(size_t) idx].osc[0].instrument, nullptr);
+    for (auto& os : users[(size_t) idx].osc)
+        if (os.on) requestInstrument (os.instrument, nullptr);
     return idx;
 }
 

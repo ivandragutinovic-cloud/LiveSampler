@@ -93,8 +93,12 @@ sa semplovima, onako kako ih Kronos sačuva (npr. `Pikaso stage.PCG`, `Pikaso st
 - Multisemplovi iz KSC-a dobijaju broj i ime kao na Kronosu (npr. `MS0000 Kabina pr`).
 - Tabela pokazuje programe koji koriste tvoje semplove; fabrički ROM zvukovi se preskaču.
 - Dupli klik na program: napravi usera i stavi ga na PART 1, da odmah sviraš.
-- Faza 1 uzima glavni multisempl programa. Slojevi, rasponi, filter i envelope iz
-  Kronosa dolaze u fazi 2, a kombiji u fazi 3.
+- Iz programa se prenose: velocity zone (svaka zona postaje jedan oscilator), OSC1 i OSC2
+  (Double → Zvuk A i Zvuk B), raspon tastera, transpozicija, štim, jačina zone i programa, pan,
+  filter (cutoff, rezonanca, 12/24 dB, filter EG sa intenzitetom), amp EG, LFO vibrato,
+  Mono / Legato / prioritet, portamento i pitch bend.
+- Vrednosti (vremena, Hz) su preračunate približno. Uporedi sa Kronosom i doteraj na USER strani.
+- Još se ne prenose: pitch EG, crossfade između zona, ROM zone i efekti. Kombiji dolaze u fazi 3.
 
 ## 3. Editor mapiranja
 
