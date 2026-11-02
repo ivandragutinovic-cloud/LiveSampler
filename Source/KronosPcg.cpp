@@ -253,13 +253,16 @@ namespace Kronos
                                     const auto* zp = item + base + z * zoneSize;
                                     auto& zone = p.osc[(size_t) o][(size_t) z];
                                     const bool korg = std::memcmp (zp + 1, "KORG", 4) == 0;
-                                    zone.user = zp[0] == 1 && ! korg;
-                                    zone.used = zone.user || korg;
+                                    // Zone MS Type: 0 = Off, 1 = Multisample, 2 = Wave Sequence (Korg Prog_HD-1.txt).
+                                    // Iskljucena zona moze da zadrzi stari UUID ("KORG...") pa se ne sme brojati.
+                                    const int type = zp[0] & 0x03;
+                                    zone.user = type == 1 && ! korg;
+                                    zone.used = type != 0 && (zone.user || korg);
                                     zone.ms = zp[18] | (zp[19] << 8);
                                     zone.value = zp[20];
                                     if (zone.user)
                                         zone.uuid = juce::String::toHexString (zp + 1, 16, 0).toLowerCase();
-                                    else if (korg)
+                                    else if (korg && zone.used)
                                         zone.romKey = "rom:" + juce::String::toHexString (zp, 20, 0).toLowerCase();
                                 }
                             }
