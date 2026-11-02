@@ -475,12 +475,12 @@ namespace
         const float s = std::pow (2.0f, ((float) std::abs (v) - 60.0f) / 15.3f);
         return v < 0 ? -s : s;
     }
-    // LFO: 40 = 1.8 Hz (izmereno na Kronosu: 9 titraja za 5 s), 0 = 0.03 Hz, 99 = 30 Hz
+    // LFO: 40 = 1.7 Hz (izmereno na Kronosu: 17 titraja za 10 s), 0 = 0.03 Hz, 99 = 30 Hz
     float kLfoHz (int v)
     {
         const float x = (float) juce::jlimit (0, 99, v);
-        return x <= 40.0f ? 0.03f * std::pow (60.0f, x / 40.0f)
-                          : 1.8f * std::pow (30.0f / 1.8f, (x - 40.0f) / 59.0f);
+        return x <= 40.0f ? 0.03f * std::pow (1.7f / 0.03f, x / 40.0f)
+                          : 1.7f * std::pow (30.0f / 1.7f, (x - 40.0f) / 59.0f);
     }
     float kLevelDb (int v)   { return v <= 0 ? -60.0f : 40.0f * std::log10 ((float) v / 127.0f); }
 
