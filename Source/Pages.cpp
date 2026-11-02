@@ -2192,7 +2192,7 @@ juce::String KronosPage::timbreSummary (const Kronos::Combi& c, int& romCount) c
         const auto& tm = c.timbres[(size_t) t];
         if (! tm.play) continue;
         const auto* p = pcg != nullptr ? pcg->findProgram (tm.programBank, tm.programNumber) : nullptr;
-        if (p == nullptr || ! p->usesUser()) { ++romCount; continue; }
+        if (p == nullptr || ! proc.kronosProgramPlayable (*p)) { ++romCount; continue; }
         parts.add (juce::String (t + 1) + " " + p->name);
     }
     return parts.joinIntoString ("  ·  ");
@@ -2254,7 +2254,7 @@ void KronosPage::rebuildRows()
         {
             const auto& p = pcg->programs[i];
             if (! p.hd1) continue;
-            if (onlyUser.getToggleState() && ! p.usesUser()) continue;
+            if (onlyUser.getToggleState() && ! proc.kronosProgramPlayable (p)) continue;
             if (q.isNotEmpty() && ! p.name.containsIgnoreCase (q)) continue;
             rows.push_back ((int) i);
         }
@@ -2299,7 +2299,12 @@ void KronosPage::refresh()
 
 juce::String KronosPage::msText (const Kronos::Zone& z) const
 {
-    if (! z.user) return z.used ? "ROM" : "-";
+    if (! z.user)
+    {
+        if (! z.used) return "-";
+        const auto r = proc.resolveKronosZone (z);
+        return r.isNotEmpty() ? "ROM: " + r.fromLastOccurrenceOf ("/", false, false) : "ROM MS" + juce::String (z.ms);
+    }
     const auto inst = proc.findKronosMultisample (z.uuid, z.ms);
     if (inst.isEmpty()) return "MS" + juce::String (z.ms) + T ("  (nije u biblioteci)");
     return inst.fromLastOccurrenceOf ("/", false, false);
@@ -2361,8 +2366,8 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
         {
             const int o = col == kcOsc1 ? 0 : 1;
             const int z = p.firstUserZone (o);
-            t = z >= 0 ? msText (p.osc[(size_t) o][(size_t) z]) : (p.osc[(size_t) o][0].used ? "ROM" : "-");
-            if (z < 0) c = Pal::dim;
+            t = z >= 0 ? msText (p.osc[(size_t) o][(size_t) z]) : (p.osc[(size_t) o][0].used ? msText (p.osc[(size_t) o][0]) : "-");
+            if (z < 0 && ! (p.osc[(size_t) o][0].used && proc.resolveKronosZone (p.osc[(size_t) o][0]).isNotEmpty())) c = Pal::dim;
             int extra = 0;
             for (auto& zz : p.osc[(size_t) o]) if (zz.user) ++extra;
             if (extra > 1) t << "  (+" << (extra - 1) << ")";

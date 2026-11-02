@@ -11,7 +11,8 @@ namespace Kronos
         bool user = false;     // user multisempl iz KSC kolekcije (ne fabricki ROM)
         juce::String uuid;     // UUID KSC kolekcije (hex, mala slova)
         int ms = 0;            // broj multisempla u kolekciji
-        int value = 127;       // bajt posle broja (verovatno jacina zone) - proverava se u fazi 2
+        int value = 127;       // jacina zone
+        juce::String romKey;   // fabricki ROM / EXs multisempl: "rom:" + 20 bajtova zone (tip, banka, broj)
     };
 
     // Parametri jednog oscilatora (OSC1/OSC2) - sirove vrednosti kao na Kronosu

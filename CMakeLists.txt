@@ -67,3 +67,35 @@ target_link_libraries(LiveSampler
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Kronos Autosampler: poseban mali program za presemplovanje fabrickih ROM multisemplova
+juce_add_gui_app(KronosAutosampler
+    COMPANY_NAME "LiveSampler"
+    PRODUCT_NAME "Kronos Autosampler")
+
+juce_generate_juce_header(KronosAutosampler)
+
+target_sources(KronosAutosampler PRIVATE
+    Autosampler/Main.cpp
+    Source/KronosPcg.cpp)
+
+target_include_directories(KronosAutosampler PRIVATE Source)
+
+target_compile_definitions(KronosAutosampler PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_ASIO=1
+    JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+if(MSVC)
+    target_compile_options(KronosAutosampler PRIVATE /utf-8)
+endif()
+
+target_link_libraries(KronosAutosampler
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_formats
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags)

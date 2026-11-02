@@ -115,6 +115,21 @@ public:
     const Kronos::Pcg* getKronosPcg() const { return kronosPcg.get(); }
     juce::File getKronosFile() const { return kronosFile; }
     juce::String findKronosMultisample (const juce::String& uuid, int ms) const { return library.findKronosMultisample (uuid, ms); }
+    // instrument za Kronos zonu: tvoj sempl iz KSC-a ili presemplovan ROM (prazno = nema)
+    juce::String resolveKronosZone (const Kronos::Zone& z) const
+    {
+        if (z.user) return library.findKronosMultisample (z.uuid, z.ms);
+        if (z.romKey.isNotEmpty()) return library.findKronosRom (z.romKey);
+        return {};
+    }
+    bool kronosProgramPlayable (const Kronos::Program& p) const
+    {
+        if (! p.hd1 || p.drumKit) return false;
+        for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
+            for (auto& z : p.osc[(size_t) o])
+                if (z.used && resolveKronosZone (z).isNotEmpty()) return true;
+        return false;
+    }
     int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.

@@ -259,6 +259,8 @@ namespace Kronos
                                     zone.value = zp[20];
                                     if (zone.user)
                                         zone.uuid = juce::String::toHexString (zp + 1, 16, 0).toLowerCase();
+                                    else if (korg)
+                                        zone.romKey = "rom:" + juce::String::toHexString (zp, 20, 0).toLowerCase();
                                 }
                             }
                         }

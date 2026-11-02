@@ -163,6 +163,13 @@ void SampleLibrary::scan (const juce::Array<juce::File>& rootFolders)
     names.sortNatural();
 }
 
+juce::String SampleLibrary::findKronosRom (const juce::String& romKey) const
+{
+    const juce::ScopedLock sl (lock);
+    auto it = kronosMs.find (romKey.toLowerCase());
+    return it != kronosMs.end() ? it->second : juce::String();
+}
+
 juce::String SampleLibrary::findKronosMultisample (const juce::String& uuid, int index) const
 {
     const juce::ScopedLock sl (lock);
@@ -232,7 +239,15 @@ void SampleLibrary::scanRoot (const juce::File& root)
             if (a.getFileName().endsWithIgnoreCase ("Samples") && kontaktFileDirs.contains (a.getParentDirectory()))
                 insideKontakt = true;
         if (! insideKontakt)
+        {
             add (rel (d), SourceType::WavFolder, d, "WAV");
+            // presemplovan Kronos ROM multisempl (Kronos Autosampler upisuje kronos-ms.txt)
+            const auto tag = d.getChildFile ("kronos-ms.txt");
+            if (tag.existsAsFile())
+                for (auto& l : juce::StringArray::fromLines (tag.loadFileAsString()))
+                    if (l.trim().startsWith ("rom:"))
+                        kronosMs[l.trim().toLowerCase()] = names[names.size() - 1];
+        }
     }
 
     // Korg Kronos KSC kolekcije: multisemplovi dobijaju broj i ime kao na Kronosu

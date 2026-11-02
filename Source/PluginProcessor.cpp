@@ -630,9 +630,9 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             top = bottom - 1 + (lowerExists ? range : 0);
             prevRange = lowerExists ? range : 0;
             prevCurve = curve;
-            if (! zone.user || lo > hi || ms >= kMsPerOsc) continue;
+            if (lo > hi || ms >= kMsPerOsc) continue;
 
-            const auto inst = library.findKronosMultisample (zone.uuid, zone.ms);
+            const auto inst = resolveKronosZone (zone);
             if (inst.isEmpty()) continue;
 
             auto& os = u.osc[(size_t) (o * kMsPerOsc + ms++)];
@@ -703,13 +703,13 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
             continue;
 
         const auto* prog = kronosPcg->findProgram (tm.programBank, tm.programNumber);
-        const int u = prog != nullptr && prog->hd1 && prog->usesUser() ? userForKronosProgram (*prog) : -1;
+        const int u = prog != nullptr && kronosProgramPlayable (*prog) ? userForKronosProgram (*prog) : -1;
         if (u < 0)
         {
             skipped.add ("Timbre " + juce::String (t + 1) + ": "
                          + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
                          + (prog != nullptr && prog->drumKit ? " (drum kit, još nije podržan)"
-                            : prog != nullptr && ! prog->usesUser() ? " (fabrički ROM)" : ""));
+                            : prog != nullptr && ! prog->usesUser() ? " (fabrički ROM, nije presemplovan)" : ""));
             continue;
         }
 

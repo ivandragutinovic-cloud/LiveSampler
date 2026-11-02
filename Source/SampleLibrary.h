@@ -90,6 +90,7 @@ public:
 
     // Kronos: instrument za multisempl broj 'index' iz KSC kolekcije sa datim UUID-om
     juce::String findKronosMultisample (const juce::String& uuid, int index) const;
+    juce::String findKronosRom (const juce::String& romKey) const;   // presemplovan ROM multisempl (autosampler)
 
     // Ucitava instrument (poziva se iz pozadinske niti, moze da traje).
     // ignoreMapFile: ne koristi sacuvanu mapu (za "vrati automatsko")

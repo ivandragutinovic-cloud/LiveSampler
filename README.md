@@ -209,3 +209,22 @@ Semplovi se drže u RAM memoriji. Status gore pokazuje koliko memorije zauzimaju
 - `Source/Model.*`: User, Performans, Terce (podaci, čuvanje, prepoznavanje akorda)
 - `Source/PluginProcessor.*`: MIDI rutiranje, delovi, terce, čuvanje u `%APPDATA%\LiveSampler`
 - `Source/PluginEditor.*`, `Source/Pages.*`: interfejs
+
+## 7. Kronos Autosampler (poseban program)
+
+`Kronos Autosampler.exe` (u paketu **KronosAutosampler-Windows**) presempluje fabričke ROM / EXs
+multisemplove koje koriste tvoji programi i kombiji, da bi ih Live Sampler svirao umesto ROM-a.
+
+1. **Učitaj PCG** i izaberi programe ili kombije (Kombiji) → **Dodaj izabrane**. Desno se vidi spisak
+   ROM multisemplova koje treba snimiti (svaki samo jednom).
+2. Izaberi **šablon** (inicijalizovan program sa Kronosa, npr. "Init"), **banku** i **od broja**, pa
+   **Napravi PCG**. Nastaje `<ime>_AUTOSAMPLER.PCG` sa po jednim programom za svaki multisempl
+   (OSC1 MS1 = taj multisempl, otvoren filter, bez efekata, bez velocity uticaja). Na Kronosu ga
+   učitaj samo u tu banku.
+3. **Audio ulaz**: Kronos USB audio. **MIDI izlaz**: Kronos. Podesi **Bank CC0 / CC32** tako da
+   **Test** na Kronosu izabere prvi novi program. Zatim **START**.
+   - Snima se svaki treći ton (podesivo) punom jačinom; u Live Sampleru svaki sempl pokriva i polustepen
+     ispod i iznad.
+   - Postojeći snimci se preskaču, pa snimanje može da se prekine i nastavi.
+   - Semplovi idu u `C:\KRONOS\KRONOS ROM\...` sa fajlom `kronos-ms.txt`. U Live Sampleru klikni
+     Osveži; Kronos programi i kombiji onda koriste ove semplove umesto ROM-a.
