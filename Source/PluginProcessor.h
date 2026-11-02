@@ -73,6 +73,22 @@ public:
     bool isPerformanceDirty() const { return perfDirty; }
     int getCurrentBank() const { return currentBank; }
     void setCurrentBank (int b);
+    juce::String getBankName (int b) const;
+    void setBankName (int b, const juce::String& n);
+    void clearPerformanceSlot (int slot);
+
+    // set liste (velika dugmad za svirku)
+    const SetList& getSetList (int i) const { return setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)]; }
+    void updateSetList (int i, const SetList& s);
+    int getCurrentSetList() const { return currentSetList; }
+    void setCurrentSetList (int i);
+    int getSetListPage() const { return setListPage; }
+    void setSetListPage (int p);
+    int getCurrentSetListSlot() const { return currentSetListSlot; }
+    void recallSetListSlot (int slot);          // u trenutnoj set listi
+    // Program Change: 0 = performansi (CC0 bira listu), 1 = set lista (PC bira mesto u set listi)
+    int getProgramChangeMode() const { return pcMode; }
+    void setProgramChangeMode (int m) { pcMode = juce::jlimit (0, 1, m); markSave(); }
 
     // Terce
     const TercaSettings& getTerca() const { return terca; }
@@ -164,7 +180,7 @@ private:
     ConfigPtr audioConfig;        // koju audio nit koristi
     std::vector<ConfigPtr> configGraveyard;
 
-    std::atomic<int> pendingProgram { -1 };
+    std::atomic<int> pendingProgram { -1 }, pendingBankMsb { -1 };
     std::atomic<bool> panicRequested { false };
     std::atomic<bool> tercaOn { false };
     std::atomic<int> tercaRoot { 2 }, tercaScale { 1 };
@@ -198,6 +214,9 @@ private:
     std::array<Performance, kNumPerfSlots> slots;
     Performance perf;
     int currentSlot = -1, currentBank = 0;
+    std::array<juce::String, kNumPerfBanks> bankNames;
+    std::array<SetList, kNumSetLists> setLists;
+    int currentSetList = 0, setListPage = 0, currentSetListSlot = -1, pcMode = 0;
     bool perfDirty = false;
     TercaSettings terca;
     float globalDb = 0.0f;

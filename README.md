@@ -130,7 +130,7 @@ Stranica **MAPIRANJE** (ili dugme MAPA kod oscilatora na stranici USER) otvara e
 **Podešavanja**: dodaj jedan ili više foldera sa semplovima (disk, USB stick). Kad ubaciš
 USB, klikni "Osveži". Instrumenti dobijaju ime po folderu, npr. `USB/Gudaci/Violina`.
 
-**USER** = zvuk kao Kronos program: **OSC1 i OSC2**, a u njima do 8 multisemplova (MS1, MS2…).
+**USER** = zvuk od do **8 OSC-ova** (Kronos koristi OSC1 i OSC2), a u svakom do 8 multisemplova (MS1–MS8).
 Svaki multisempl ima instrument iz biblioteke, jačinu, pan, transpoziciju, fino štimovanje,
 raspon tastera i velocity-ja (sa crossfade-om). Dugmad OSC 1 / OSC 2 (dole) biraju koji se OSC
 prikazuje: gore se vide njegovi MS1–MS8, a dole njegov zvuk. Dugme MAPA otvara editor mapiranja za taj instrument.
@@ -144,6 +144,18 @@ Editor zvuka (dole na USER stranici), posebno za OSC1 i OSC2:
 - Envelope je kao na Kronosu: Start, Attack (vreme i nivo), Decay, Break nivo, Slope,
   Sustain, Release (i Release nivo za pitch i filter). Grafik desno pokazuje oblik.
 
+Svaki MS ima i: **KO** (key off: svira kad pustiš taster) i **EQ** (bas, sredina sa frekvencijom, visoki,
+samo za taj MS). Strelica pored MS-a: kopiraj / nalepi / obriši MS. Strelica pored OSC dugmadi: kopiraj /
+nalepi / obriši ceo OSC (zvuk + 8 MS), i između različitih usera.
+
+**MONO / PRELAZ** (za izabrani OSC):
+- **Mono opseg**: kad je user Mono / Mono legato, samo tasteri u ovom opsegu sviraju mono (legato, portamento);
+  ostali sviraju poly i bez portamenta.
+- **Prelaz** (kao žica preko pragova): uključi PRELAZ na više OSC-ova. OSC bez izabranih intervala svira prvi
+  ton. Dok držiš ton i odsviraš sledeći, OSC čiji interval (1–24 polustepena, gore/dole) je pogođen se pali,
+  a prethodni se gasi.
+- Terce na mono useru su i same mono / legato / portamento (svaki glas terce ima svoju mono liniju).
+
 Zajedničko: **Poly / Mono / Mono legato** (legato ne pokreće notu ispočetka),
 prioritet note (poslednja, najviša, najniža), **portamento** (vreme, "samo vezano" /
 fingered, konstantna brzina) i pitch bend posebno gore i dole. Insert efekat i EQ usera (bas, sredina sa frekvencijom, visoki) su na EFEKAT / EQ. EQ ide sa
@@ -154,8 +166,13 @@ Useri se čuvaju automatski; useri iz prethodne verzije se prenose sami.
 oktava, raspon tastera (split), velocity raspon, MIDI kanal, reverb/delay send, terca i
 sustain pedala. Traka ispod pokazuje gde je koji deo na klavijaturi. Performans pamti i
 master efekte (stranica EFEKTI).
-- Mesta za performanse: 4 banke (A–D) × 16. Uključi SNIMI pa klikni mesto da sačuvaš.
-- MIDI Program Change 0–63 poziva performanse. Instrumenti iz cele banke se učitavaju unapred.
+- Strelica pored PART dugmeta: kopiraj / nalepi / isprazni ceo deo (i u drugi performans).
+- **LISTE**: 16 lista po 128 performansa. Klik učitava, SNIMI + klik čuva, desni klik: meni.
+  MIDI: Bank Select (CC0) bira listu, Program Change 0–127 performans.
+- **SET LISTA**: 16 set lista po 128 velikih dugmadi (strane po 16). EDIT + klik: stavi performans, natpis,
+  boju. Traka dole pokazuje trenutnu stranu set liste za brzo prebacivanje. Uključi "Program Change bira set
+  listu" da CC0 bira set listu, a PC dugme. Instrumenti sa trenutne strane se učitavaju unapred.
+- **CEO EKRAN** (gore desno): na širokom ekranu PERFORMANS pokazuje svih 16 delova odjednom.
 
 **TERCE**
 - Deo koji treba da dobije terce: uključi TERCA na tom delu (stranica PERFORMANS).

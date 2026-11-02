@@ -315,3 +315,53 @@ private:
     juce::Label fileLabel, infoLabel, help;
     juce::TableListBox table;
 };
+
+//==============================================================================
+//  LISTE: 16 lista po 128 performansa (kao Kronos banke kombija)
+//==============================================================================
+class ListsPage : public juce::Component
+{
+public:
+    ListsPage (LiveSamplerProcessor&, LiveSamplerEditor&);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+
+private:
+    juce::Rectangle<int> gridArea() const;
+    int cellAt (juce::Point<int> p) const;
+    void cellMenu (int index);
+
+    LiveSamplerProcessor& proc;
+    LiveSamplerEditor& editor;
+    juce::TextButton bankButtons[kNumPerfBanks], writeButton;
+    juce::Label nameLabel, nameEdit, help;
+};
+
+//==============================================================================
+//  SET LISTA: velika dugmad za svirku (kao Montage / Kronos Set List)
+//==============================================================================
+class SetListPage : public juce::Component
+{
+public:
+    SetListPage (LiveSamplerProcessor&, LiveSamplerEditor&);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+
+    static juce::Colour slotColour (int c);
+
+private:
+    juce::Rectangle<int> gridArea() const;
+    int cellAt (juce::Point<int> p) const;
+    void editSlot (int slot);
+
+    LiveSamplerProcessor& proc;
+    LiveSamplerEditor& editor;
+    juce::ComboBox listSelect;
+    juce::Label nameEdit;
+    juce::TextButton pageButtons[kSetListSlots / 16], editButton;
+    juce::ToggleButton pcMode;
+};

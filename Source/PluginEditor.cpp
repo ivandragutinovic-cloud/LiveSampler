@@ -254,9 +254,9 @@ void LiveSamplerEditor::Content::paint (juce::Graphics& g)
     g.fillAll (Pal::bg);
     // traka sa tabovima
     g.setColour (Pal::panel);
-    g.fillRect (0, 0, designW, 120);
+    g.fillRect (0, 0, getWidth(), 120);
     g.setColour (Pal::panelHi);
-    g.drawHorizontalLine (120, 0.0f, (float) designW);
+    g.drawHorizontalLine (120, 0.0f, (float) getWidth());
 }
 
 void LiveSamplerEditor::Display::paint (juce::Graphics& g)
@@ -272,14 +272,13 @@ void LiveSamplerEditor::Display::paint (juce::Graphics& g)
     const int slot = proc->getCurrentSlot();
     auto inner = getLocalBounds().reduced (12, 6);
 
-    auto left = inner.removeFromLeft (64);
+    auto left = inner.removeFromLeft (84);
     g.setColour (Pal::lcdText.withAlpha (0.6f));
     g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     g.drawText ("PERFORM", left.removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (Pal::lcdText);
     g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-    const juce::String slotText = slot >= 0 ? juce::String::charToString ((juce::juce_wchar) ('A' + slot / kPerfPerBank))
-                                                  + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 2)
+    const juce::String slotText = slot >= 0 ? juce::String (slot / kPerfPerBank + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3)
                                             : juce::String ("---");
     g.drawText (slotText, left, juce::Justification::centredLeft);
 
@@ -367,7 +366,12 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     panicButton.onClick = [this] { proc.panic(); };
     content.addAndMakeVisible (panicButton);
 
-    const char* tabNames[] = { "PERFORMANS", "USER", "MAPIRANJE", "TERCE", "EFEKTI", "KRONOS", "PODEŠAVANJA" };
+    fullButton.setButtonText (T ("CEO EKRAN"));
+    fullButton.setTooltip (T ("Ceo ekran (na širokom ekranu stane svih 16 delova). Ponovni klik vraća prozor."));
+    fullButton.onClick = [this] { toggleFullScreen(); };
+    content.addAndMakeVisible (fullButton);
+
+    const char* tabNames[] = { "PERFORMANS", "SET LISTA", "LISTE", "USER", "MAPIRANJE", "TERCE", "EFEKTI", "KRONOS", "PODEŠAVANJA" };
     for (int i = 0; i < NumTabs; ++i)
     {
         tabButtons[i].setButtonText (T (tabNames[i]));
@@ -384,42 +388,28 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     effectsPage = std::make_unique<EffectsPage> (proc);
     settingsPage = std::make_unique<SettingsPage> (proc);
     kronosPage = std::make_unique<KronosPage> (proc, *this);
+    listsPage = std::make_unique<ListsPage> (proc, *this);
+    setListPage = std::make_unique<SetListPage> (proc, *this);
     mappingEditor->onClose = [this] { showTab (TabUser); };
     for (auto* c : pages())
         content.addChildComponent (c);
 
-    for (int b = 0; b < kNumPerfBanks; ++b)
-    {
-        bankButtons[b].setButtonText (juce::String::charToString ((juce::juce_wchar) ('A' + b)));
-        bankButtons[b].setColour (juce::TextButton::buttonOnColourId, Pal::lcdText);
-        bankButtons[b].onClick = [this, b] { proc.setCurrentBank (b); };
-        content.addAndMakeVisible (bankButtons[b]);
-    }
-    for (int i = 0; i < kPerfPerBank; ++i)
+    for (int i = 0; i < 16; ++i)
     {
         slotButtons[i].getProperties().set ("fontSize", 12.0f);
-        slotButtons[i].onClick = [this, i]
-        {
-            const int slot = proc.getCurrentBank() * kPerfPerBank + i;
-            if (writeButton.getToggleState())
-            {
-                proc.storePerformance (slot);
-                writeButton.setToggleState (false, juce::dontSendNotification);
-            }
-            else
-            {
-                proc.recallPerformance (slot);
-            }
-            refreshSlots();
-        };
+        slotButtons[i].onClick = [this, i] { proc.recallSetListSlot (proc.getSetListPage() * 16 + i); };
         content.addAndMakeVisible (slotButtons[i]);
     }
-    writeButton.setButtonText ("SNIMI");
-    writeButton.setClickingTogglesState (true);
-    writeButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
-    writeButton.setTooltip (T ("Uključi SNIMI pa klikni mesto da sačuvaš trenutni performans"));
-    writeButton.onClick = [this] { refreshSlots(); };
-    content.addAndMakeVisible (writeButton);
+    pagePrev.setButtonText ("<");
+    pageNext.setButtonText (">");
+    pagePrev.onClick = [this] { proc.setSetListPage (proc.getSetListPage() - 1); };
+    pageNext.onClick = [this] { proc.setSetListPage (proc.getSetListPage() + 1); };
+    content.addAndMakeVisible (pagePrev);
+    content.addAndMakeVisible (pageNext);
+    setListLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    setListLabel.setColour (juce::Label::textColourId, Pal::lcdText);
+    setListLabel.setJustificationType (juce::Justification::centred);
+    content.addAndMakeVisible (setListLabel);
 
     keyboard.setAvailableRange (21, 108);
     keyboard.setOctaveForMiddleC (proc.getC3Is60() ? 3 : 4);
@@ -429,10 +419,8 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     content.addAndMakeVisible (keyboard);
 
     setResizable (true, true);
-    setResizeLimits (640, 640 * designH / designW, 2560, 2560 * designH / designW);
-    if (auto* c = getConstrainer())
-        c->setFixedAspectRatio ((double) designW / designH);
-    setSize (1200, 1200 * designH / designW);
+    setResizeLimits (640, 640 * designH / baseW, 4096, 2400);
+    setSize (1200, 1200 * designH / baseW);
 
     proc.addChangeListener (this);
     showTab (TabPerformance);
@@ -450,6 +438,8 @@ LiveSamplerEditor::~LiveSamplerEditor()
     effectsPage.reset();
     settingsPage.reset();
     kronosPage.reset();
+    listsPage.reset();
+    setListPage.reset();
     setLookAndFeel (nullptr);
 }
 
@@ -461,7 +451,7 @@ void LiveSamplerEditor::paint (juce::Graphics& g)
 std::vector<juce::Component*> LiveSamplerEditor::pages() const
 {
     // redosled odgovara enum Tab
-    return { performancePage.get(), userPage.get(), mappingEditor.get(), tercePage.get(),
+    return { performancePage.get(), setListPage.get(), listsPage.get(), userPage.get(), mappingEditor.get(), tercePage.get(),
              effectsPage.get(), kronosPage.get(), settingsPage.get() };
 }
 
@@ -495,7 +485,10 @@ void LiveSamplerEditor::editMapping (const juce::String& userName, int osc)
 
 void LiveSamplerEditor::resized()
 {
-    const float scale = (float) getWidth() / (float) designW;
+    // visina odredjuje razmeru; siri prozor (ili ceo ekran) dobija vise mesta po sirini
+    const float scale = (float) getHeight() / (float) designH;
+    designW = juce::jmax (baseW, (int) std::floor ((float) getWidth() / scale));
+    content.setSize (designW, designH);
     content.setTransform (juce::AffineTransform::scale (scale));
 
     auto r = juce::Rectangle<int> (0, 0, designW, designH);
@@ -509,6 +502,8 @@ void LiveSamplerEditor::resized()
     learnButton.setBounds (top.removeFromLeft (80).reduced (0, 8));
     top.removeFromLeft (10);
     panicButton.setBounds (top.removeFromRight (90).reduced (0, 8));
+    top.removeFromRight (8);
+    fullButton.setBounds (top.removeFromRight (100).reduced (0, 8));
     top.removeFromRight (10);
     status.setBounds (top);
 
@@ -522,15 +517,12 @@ void LiveSamplerEditor::resized()
     keyboard.setKeyWidth ((float) kb.getWidth() / 52.0f);
 
     auto slotsBar = r.removeFromBottom (58).reduced (12, 6);
-    for (auto& b : bankButtons)
-    {
-        b.setBounds (slotsBar.removeFromLeft (40));
-        slotsBar.removeFromLeft (4);
-    }
-    slotsBar.removeFromLeft (8);
-    writeButton.setBounds (slotsBar.removeFromRight (90));
-    slotsBar.removeFromRight (8);
-    const int sw = slotsBar.getWidth() / kPerfPerBank;
+    setListLabel.setBounds (slotsBar.removeFromLeft (120));
+    pagePrev.setBounds (slotsBar.removeFromLeft (30));
+    slotsBar.removeFromLeft (4);
+    pageNext.setBounds (slotsBar.removeFromRight (30));
+    slotsBar.removeFromRight (4);
+    const int sw = slotsBar.getWidth() / 16;
     for (auto& b : slotButtons)
         b.setBounds (slotsBar.removeFromLeft (sw).reduced (2, 0));
 
@@ -541,21 +533,39 @@ void LiveSamplerEditor::resized()
 
 void LiveSamplerEditor::refreshSlots()
 {
-    const int bank = proc.getCurrentBank();
-    const bool writing = writeButton.getToggleState();
-    for (int b = 0; b < kNumPerfBanks; ++b)
-        bankButtons[b].setToggleState (b == bank, juce::dontSendNotification);
-
-    for (int i = 0; i < kPerfPerBank; ++i)
+    const auto& sl = proc.getSetList (proc.getCurrentSetList());
+    const int page = proc.getSetListPage();
+    setListLabel.setText ((sl.name.isNotEmpty() ? sl.name : T ("Set lista ") + juce::String (proc.getCurrentSetList() + 1))
+                          + "\n" + juce::String (page * 16 + 1) + "-" + juce::String (page * 16 + 16), juce::dontSendNotification);
+    pagePrev.setEnabled (page > 0);
+    pageNext.setEnabled (page < kSetListSlots / 16 - 1);
+    for (int i = 0; i < 16; ++i)
     {
-        const int slot = bank * kPerfPerBank + i;
-        const auto& s = proc.getSlot (slot);
-        const bool current = proc.getCurrentSlot() == slot;
-        slotButtons[i].setButtonText (juce::String (i + 1) + (s.used ? "\n" + s.name : juce::String()));
-        auto col = current ? Pal::lcdText : (s.used ? Pal::panelHi.brighter (0.25f) : Pal::panelHi.darker (0.3f));
-        if (writing) col = col.interpolatedWith (Pal::red, 0.35f);
+        const int slot = page * 16 + i;
+        const auto& s = sl.slots[(size_t) slot];
+        const bool has = s.perf >= 0 && proc.getSlot (s.perf).used;
+        const bool current = proc.getCurrentSetListSlot() == slot;
+        const auto name = has ? (s.label.isNotEmpty() ? s.label : proc.getSlot (s.perf).name) : juce::String();
+        slotButtons[i].setButtonText (juce::String (slot + 1) + (has ? "\n" + name : juce::String()));
+        auto col = current ? Pal::lcdText : (has ? SetListPage::slotColour (s.colour).brighter (0.2f) : Pal::panelHi.darker (0.3f));
         slotButtons[i].setColour (juce::TextButton::buttonColourId, col);
-        slotButtons[i].setColour (juce::TextButton::textColourOffId, current ? juce::Colours::black : (s.used ? Pal::text : Pal::dim));
+        slotButtons[i].setColour (juce::TextButton::textColourOffId, current ? juce::Colours::black : (has ? Pal::text : Pal::dim));
+    }
+}
+
+void LiveSamplerEditor::toggleFullScreen()
+{
+    auto* top = getTopLevelComponent();
+    auto& desk = juce::Desktop::getInstance();
+    if (desk.getKioskModeComponent() == top)
+    {
+        desk.setKioskModeComponent (nullptr);
+        fullButton.setToggleState (false, juce::dontSendNotification);
+    }
+    else
+    {
+        desk.setKioskModeComponent (top, false);
+        fullButton.setToggleState (true, juce::dontSendNotification);
     }
 }
 
@@ -578,6 +588,8 @@ void LiveSamplerEditor::refreshAll()
         case TabEffects:     effectsPage->refresh(); break;
         case TabSettings:    settingsPage->refresh(); break;
         case TabKronos:      kronosPage->refresh(); break;
+        case TabLists:       listsPage->refresh(); break;
+        case TabSetList:     setListPage->refresh(); break;
         default: break;
     }
 }

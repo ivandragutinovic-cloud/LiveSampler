@@ -9,6 +9,8 @@ class TercePage;
 class EffectsPage;
 class SettingsPage;
 class KronosPage;
+class ListsPage;
+class SetListPage;
 
 namespace Pal
 {
@@ -91,9 +93,10 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr int designW = 1280, designH = 860;
+    static constexpr int baseW = 1280, designH = 860;
+    int designW = baseW;      // sire na sirokom ekranu (full screen: svih 16 delova)
 
-    enum Tab { TabPerformance = 0, TabUser, TabMapping, TabTerce, TabEffects, TabKronos, TabSettings, NumTabs };
+    enum Tab { TabPerformance = 0, TabSetList, TabLists, TabUser, TabMapping, TabTerce, TabEffects, TabKronos, TabSettings, NumTabs };
     void showTab (int tab);
     void editUser (const juce::String& userName);            // otvori USER stranicu za ovog usera
     void editMapping (const juce::String& userName, int osc);
@@ -131,7 +134,8 @@ private:
     SamplerLookAndFeel lnf;
     LiveSamplerProcessor& proc;
     juce::Label logo, status;
-    juce::TextButton panicButton, learnButton;
+    juce::TextButton panicButton, learnButton, fullButton;
+    void toggleFullScreen();
     juce::TextButton tabButtons[NumTabs];
     int currentTab = TabPerformance;
 
@@ -142,12 +146,13 @@ private:
     std::unique_ptr<EffectsPage> effectsPage;
     std::unique_ptr<SettingsPage> settingsPage;
     std::unique_ptr<KronosPage> kronosPage;
+    std::unique_ptr<ListsPage> listsPage;
+    std::unique_ptr<SetListPage> setListPage;
     std::vector<juce::Component*> pages() const;
 
-    // performans mesta
-    juce::TextButton bankButtons[kNumPerfBanks];
-    juce::TextButton slotButtons[kPerfPerBank];
-    juce::TextButton writeButton;
+    // brza traka: dugmad trenutne strane set liste
+    juce::TextButton slotButtons[16], pagePrev, pageNext;
+    juce::Label setListLabel;
 
     juce::MidiKeyboardComponent keyboard;
     juce::TooltipWindow tooltips { this, 600 };

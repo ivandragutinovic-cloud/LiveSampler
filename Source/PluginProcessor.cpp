@@ -48,7 +48,7 @@ juce::File LiveSamplerProcessor::getDataFile() const
 void LiveSamplerProcessor::saveNow()
 {
     juce::XmlElement root ("LiveSamplerData");
-    root.setAttribute ("version", 2);
+    root.setAttribute ("version", 3);
     root.setAttribute ("c3Is60", c3Is60);
     root.setAttribute ("globalDb", (double) globalDb);
     root.setAttribute ("currentSlot", currentSlot);
@@ -70,6 +70,36 @@ void LiveSamplerProcessor::saveNow()
         auto x = slots[(size_t) i].toXml();
         x->setAttribute ("slot", i);
         ps->addChildElement (x.release());
+    }
+
+    root.setAttribute ("pcMode", pcMode);
+    root.setAttribute ("currentSetList", currentSetList);
+    root.setAttribute ("setListPage", setListPage);
+    auto* bn = root.createNewChildElement ("BankNames");
+    for (int b = 0; b < kNumPerfBanks; ++b)
+        if (bankNames[(size_t) b].isNotEmpty())
+        {
+            auto* x = bn->createNewChildElement ("Bank");
+            x->setAttribute ("index", b);
+            x->setAttribute ("name", bankNames[(size_t) b]);
+        }
+    auto* sls = root.createNewChildElement ("SetLists");
+    for (int l = 0; l < kNumSetLists; ++l)
+    {
+        const auto& sl = setLists[(size_t) l];
+        auto* x = sls->createNewChildElement ("SetList");
+        x->setAttribute ("index", l);
+        x->setAttribute ("name", sl.name);
+        for (int i = 0; i < kSetListSlots; ++i)
+        {
+            const auto& s = sl.slots[(size_t) i];
+            if (s.perf < 0) continue;
+            auto* y = x->createNewChildElement ("Slot");
+            y->setAttribute ("index", i);
+            y->setAttribute ("perf", s.perf);
+            y->setAttribute ("label", s.label);
+            y->setAttribute ("colour", s.colour);
+        }
     }
 
     auto cur = perf.toXml();
@@ -118,12 +148,42 @@ void LiveSamplerProcessor::loadData()
         for (auto* u : us->getChildWithTagNameIterator ("User"))
             users.push_back (UserProgram::fromXml (*u));
 
+    const bool oldSlots = xml->getIntAttribute ("version", 2) < 3;   // ranije: 4 banke po 16
+    if (oldSlots && currentSlot >= 0)
+        currentSlot = (currentSlot / 16) * kPerfPerBank + currentSlot % 16;
+    if (oldSlots)
+        currentBank = 0;
     if (auto* ps = xml->getChildByName ("Slots"))
         for (auto* p : ps->getChildWithTagNameIterator ("Performance"))
         {
-            const int i = p->getIntAttribute ("slot", -1);
+            int i = p->getIntAttribute ("slot", -1);
+            if (oldSlots && i >= 0) i = (i / 16) * kPerfPerBank + i % 16;
             if (i >= 0 && i < kNumPerfSlots)
                 slots[(size_t) i] = Performance::fromXml (*p);
+        }
+
+    pcMode = juce::jlimit (0, 1, xml->getIntAttribute ("pcMode", 0));
+    currentSetList = juce::jlimit (0, kNumSetLists - 1, xml->getIntAttribute ("currentSetList", 0));
+    setListPage = juce::jlimit (0, kSetListSlots / 16 - 1, xml->getIntAttribute ("setListPage", 0));
+    if (auto* bn = xml->getChildByName ("BankNames"))
+        for (auto* x : bn->getChildWithTagNameIterator ("Bank"))
+            if (const int b = x->getIntAttribute ("index", -1); b >= 0 && b < kNumPerfBanks)
+                bankNames[(size_t) b] = x->getStringAttribute ("name");
+    if (auto* sls = xml->getChildByName ("SetLists"))
+        for (auto* x : sls->getChildWithTagNameIterator ("SetList"))
+        {
+            const int l = x->getIntAttribute ("index", -1);
+            if (l < 0 || l >= kNumSetLists) continue;
+            auto& sl = setLists[(size_t) l];
+            sl.name = x->getStringAttribute ("name");
+            for (auto* y : x->getChildWithTagNameIterator ("Slot"))
+            {
+                const int i = y->getIntAttribute ("index", -1);
+                if (i < 0 || i >= kSetListSlots) continue;
+                sl.slots[(size_t) i].perf = y->getIntAttribute ("perf", -1);
+                sl.slots[(size_t) i].label = y->getStringAttribute ("label");
+                sl.slots[(size_t) i].colour = y->getIntAttribute ("colour", 0);
+            }
         }
 
     if (auto* cur = xml->getChildByName ("Current"))
@@ -239,9 +299,13 @@ juce::StringArray LiveSamplerProcessor::neededInstruments (bool includeBank) con
 
     addPerf (perf);
     if (includeBank)
-        for (int i = 0; i < kPerfPerBank; ++i)
-            if (const auto& s = slots[(size_t) (currentBank * kPerfPerBank + i)]; s.used)
-                addPerf (s);
+    {
+        // unapred: dugmad trenutne strane set liste (da prebacivanje na svirci bude trenutno)
+        const auto& sl = setLists[(size_t) currentSetList];
+        for (int i = setListPage * 16; i < setListPage * 16 + 16; ++i)
+            if (const int p = sl.slots[(size_t) i].perf; p >= 0 && p < kNumPerfSlots && slots[(size_t) p].used)
+                addPerf (slots[(size_t) p]);
+    }
     return names;
 }
 
@@ -422,9 +486,18 @@ void LiveSamplerProcessor::timerCallback()
 
 void LiveSamplerProcessor::handleAsyncUpdate()
 {
+    const int msb = pendingBankMsb.exchange (-1);
+    if (msb >= 0)
+    {
+        if (pcMode == 1) setCurrentSetList (msb);
+        else             setCurrentBank (msb);
+    }
     const int prog = pendingProgram.exchange (-1);
-    if (prog >= 0 && prog < kNumPerfSlots)
-        recallPerformance (prog);
+    if (prog >= 0 && prog < 128)
+    {
+        if (pcMode == 1) recallSetListSlot (prog);
+        else             recallPerformance (currentBank * kPerfPerBank + prog);
+    }
 
     if (learnedType.load() != 0)
     {
@@ -796,8 +869,65 @@ void LiveSamplerProcessor::recallPerformance (int slot)
 void LiveSamplerProcessor::setCurrentBank (int b)
 {
     currentBank = juce::jlimit (0, kNumPerfBanks - 1, b);
+    markSave();
+    sendChangeMessage();
+}
+
+juce::String LiveSamplerProcessor::getBankName (int b) const
+{
+    b = juce::jlimit (0, kNumPerfBanks - 1, b);
+    return bankNames[(size_t) b].isNotEmpty() ? bankNames[(size_t) b] : T ("Lista ") + juce::String (b + 1);
+}
+
+void LiveSamplerProcessor::setBankName (int b, const juce::String& n)
+{
+    bankNames[(size_t) juce::jlimit (0, kNumPerfBanks - 1, b)] = n.trim();
+    markSave();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::clearPerformanceSlot (int slot)
+{
+    if (slot < 0 || slot >= kNumPerfSlots) return;
+    slots[(size_t) slot] = Performance();
+    if (currentSlot == slot) currentSlot = -1;
+    markSave();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::updateSetList (int i, const SetList& s)
+{
+    setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)] = s;
+    markSave();
     loadNeededInstruments();
     sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setCurrentSetList (int i)
+{
+    currentSetList = juce::jlimit (0, kNumSetLists - 1, i);
+    currentSetListSlot = -1;
+    markSave();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setSetListPage (int p)
+{
+    setListPage = juce::jlimit (0, kSetListSlots / 16 - 1, p);
+    markSave();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::recallSetListSlot (int slot)
+{
+    if (slot < 0 || slot >= kSetListSlots) return;
+    const int p = setLists[(size_t) currentSetList].slots[(size_t) slot].perf;
+    if (p < 0 || p >= kNumPerfSlots || ! slots[(size_t) p].used) return;
+    currentSetListSlot = slot;
+    if (slot / 16 != setListPage) setListPage = slot / 16;
+    recallPerformance (p);
 }
 
 //==============================================================================
@@ -1063,6 +1193,11 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         std::memset (routed, 0, sizeof (routed));
         std::memset (harmonized, 0, sizeof (harmonized));
         std::memset (heldCount, 0, sizeof (heldCount));
+    }
+    else if (m.isController() && m.getControllerNumber() == 0)   // Bank Select MSB: lista / set lista
+    {
+        pendingBankMsb = juce::jlimit (0, kNumPerfBanks - 1, m.getControllerValue());
+        triggerAsyncUpdate();
     }
     else if (m.isProgramChange())
     {

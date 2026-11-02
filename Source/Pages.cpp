@@ -303,19 +303,28 @@ void PartStrip::resized()
     }
     r.removeFromTop (4);
 
-    auto knobs1 = r.removeFromTop (60);
-    volume.setBounds (knobs1.removeFromLeft (knobs1.getWidth() / 2));
-    pan.setBounds (knobs1);
-    auto knobs2 = r.removeFromTop (60);
-    reverb.setBounds (knobs2.removeFromLeft (knobs2.getWidth() / 2));
-    delay.setBounds (knobs2);
+    const bool compact = getWidth() < 120;   // svih 16 delova na ekranu
+    if (compact)
+    {
+        for (auto* k : { &volume, &pan, &reverb, &delay })
+            k->setBounds (r.removeFromTop (46));
+    }
+    else
+    {
+        auto knobs1 = r.removeFromTop (60);
+        volume.setBounds (knobs1.removeFromLeft (knobs1.getWidth() / 2));
+        pan.setBounds (knobs1);
+        auto knobs2 = r.removeFromTop (60);
+        reverb.setBounds (knobs2.removeFromLeft (knobs2.getWidth() / 2));
+        delay.setBounds (knobs2);
+    }
     r.removeFromTop (4);
 
     juce::Slider* boxes[] = { &transpose, &octave, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
     for (int k = 0; k < 7; ++k)
     {
-        auto row = r.removeFromTop (25);
-        labels[k].setBounds (row.removeFromLeft (46));
+        auto row = r.removeFromTop (compact ? 22 : 25);
+        labels[k].setBounds (row.removeFromLeft (compact ? 34 : 46));
         boxes[k]->setBounds (row.reduced (0, 1));
         boxes[k]->setTextBoxStyle (juce::Slider::TextBoxLeft, false, juce::jmax (40, row.getWidth() - 40), 22);
     }
@@ -457,11 +466,17 @@ void PerformancePage::resized()
     pageButtons[1].setBounds (top.removeFromRight (130).reduced (2, 2));
     pageButtons[0].setBounds (top.removeFromRight (130).reduced (2, 2));
 
+    // sirok ekran (ceo ekran): svih 16 delova odjednom
+    const bool all16 = r.getWidth() >= 1440;
+    pageButtons[0].setVisible (! all16);
+    pageButtons[1].setVisible (! all16);
+    if (all16) page = 0;
+
     r.removeFromTop (4);
-    ranges.setBounds (r.removeFromBottom (78));
+    ranges.setBounds (r.removeFromBottom (all16 ? 50 : 78));
     r.removeFromBottom (6);
 
-    const int perPage = 8, gap = 6;
+    const int perPage = all16 ? 16 : 8, gap = all16 ? 4 : 6;
     const int w = (r.getWidth() - gap * (perPage - 1)) / perPage;
     for (int i = 0; i < strips.size(); ++i)
     {
@@ -2401,4 +2416,366 @@ void KronosPage::resized()
     playButton.setBounds (btns.removeFromLeft (170));
     r.removeFromBottom (8);
     table.setBounds (r);
+}
+
+//==============================================================================
+//  ListsPage
+//==============================================================================
+ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
+{
+    for (int b = 0; b < kNumPerfBanks; ++b)
+    {
+        bankButtons[b].setButtonText (juce::String (b + 1));
+        bankButtons[b].setColour (juce::TextButton::buttonOnColourId, Pal::lcdText);
+        bankButtons[b].onClick = [this, b] { proc.setCurrentBank (b); };
+        addAndMakeVisible (bankButtons[b]);
+    }
+    writeButton.setButtonText ("SNIMI");
+    writeButton.setClickingTogglesState (true);
+    writeButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
+    writeButton.setTooltip (T ("Uključi SNIMI pa klikni mesto da sačuvaš trenutni performans"));
+    writeButton.onClick = [this] { repaint(); };
+    addAndMakeVisible (writeButton);
+
+    styleLabel (nameLabel, T ("IME LISTE"), 12.5f);
+    addAndMakeVisible (nameLabel);
+    nameEdit.setEditable (true);
+    nameEdit.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    nameEdit.setColour (juce::Label::backgroundColourId, Pal::bg);
+    nameEdit.setColour (juce::Label::textColourId, Pal::lcdText);
+    nameEdit.onTextChange = [this] { proc.setBankName (proc.getCurrentBank(), nameEdit.getText()); };
+    addAndMakeVisible (nameEdit);
+
+    help.setText (T ("Klik: učitaj. SNIMI + klik: sačuvaj trenutni performans. Desni klik: meni (snimi, u set listu, obriši). "
+                     "MIDI: Bank Select (CC0) bira listu, Program Change 0-127 performans."), juce::dontSendNotification);
+    help.setFont (juce::FontOptions (12.0f));
+    help.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (help);
+}
+
+void ListsPage::refresh()
+{
+    const int bank = proc.getCurrentBank();
+    for (int b = 0; b < kNumPerfBanks; ++b)
+    {
+        bankButtons[b].setToggleState (b == bank, juce::dontSendNotification);
+        bankButtons[b].setTooltip (proc.getBankName (b));
+    }
+    if (! nameEdit.isBeingEdited())
+        nameEdit.setText (proc.getBankName (bank), juce::dontSendNotification);
+    repaint();
+}
+
+juce::Rectangle<int> ListsPage::gridArea() const
+{
+    auto r = getLocalBounds().reduced (12, 10);
+    r.removeFromTop (34 + 8 + 30 + 8);
+    r.removeFromBottom (24);
+    return r;
+}
+
+int ListsPage::cellAt (juce::Point<int> p) const
+{
+    auto g = gridArea();
+    if (! g.contains (p)) return -1;
+    const int cols = 8, rows = 16;
+    const int c = (p.x - g.getX()) * cols / g.getWidth();
+    const int r = (p.y - g.getY()) * rows / g.getHeight();
+    return juce::jlimit (0, 127, c * rows + r);   // po kolonama: 1-16, 17-32...
+}
+
+void ListsPage::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+
+    auto area = gridArea();
+    const int cols = 8, rows = 16;
+    const float cw = area.getWidth() / (float) cols, ch = area.getHeight() / (float) rows;
+    const int bank = proc.getCurrentBank();
+    const bool writing = writeButton.getToggleState();
+    g.setFont (juce::FontOptions (12.5f));
+    for (int i = 0; i < kPerfPerBank; ++i)
+    {
+        const int c = i / rows, r = i % rows;
+        auto cell = juce::Rectangle<float> (area.getX() + c * cw, area.getY() + r * ch, cw, ch).reduced (1.5f);
+        const int slot = bank * kPerfPerBank + i;
+        const auto& s = proc.getSlot (slot);
+        const bool current = proc.getCurrentSlot() == slot;
+        auto col = current ? Pal::lcdText : (s.used ? Pal::panelHi.brighter (0.15f) : Pal::bg);
+        if (writing) col = col.interpolatedWith (Pal::red, 0.25f);
+        g.setColour (col);
+        g.fillRoundedRectangle (cell, 3.0f);
+        g.setColour (current ? juce::Colours::black : (s.used ? Pal::text : Pal::dim.withAlpha (0.6f)));
+        g.drawText (juce::String (i + 1).paddedLeft ('0', 3) + "  " + (s.used ? s.name : juce::String()),
+                    cell.reduced (5.0f, 0.0f), juce::Justification::centredLeft, true);
+    }
+}
+
+void ListsPage::mouseDown (const juce::MouseEvent& e)
+{
+    const int i = cellAt (e.getPosition());
+    if (i < 0) return;
+    const int slot = proc.getCurrentBank() * kPerfPerBank + i;
+    if (e.mods.isPopupMenu()) { cellMenu (i); return; }
+    if (writeButton.getToggleState())
+    {
+        proc.storePerformance (slot);
+        writeButton.setToggleState (false, juce::dontSendNotification);
+    }
+    else
+    {
+        proc.recallPerformance (slot);
+    }
+    repaint();
+}
+
+void ListsPage::cellMenu (int i)
+{
+    const int slot = proc.getCurrentBank() * kPerfPerBank + i;
+    const bool used = proc.getSlot (slot).used;
+    juce::PopupMenu m;
+    m.addItem (1, T ("Učitaj"), used);
+    m.addItem (2, T ("Snimi trenutni performans ovde"));
+    m.addItem (3, T ("Dodaj u set listu (prvo prazno mesto)"), used);
+    m.addSeparator();
+    m.addItem (4, T ("Obriši"), used);
+    juce::Component::SafePointer<ListsPage> safe (this);
+    m.showMenuAsync ({}, [safe, slot] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& pr = safe->proc;
+        if (r == 1) pr.recallPerformance (slot);
+        if (r == 2) pr.storePerformance (slot);
+        if (r == 4) pr.clearPerformanceSlot (slot);
+        if (r == 3)
+        {
+            auto sl = pr.getSetList (pr.getCurrentSetList());
+            for (auto& s : sl.slots)
+                if (s.perf < 0) { s.perf = slot; break; }
+            pr.updateSetList (pr.getCurrentSetList(), sl);
+        }
+        safe->repaint();
+    });
+}
+
+void ListsPage::resized()
+{
+    auto r = getLocalBounds().reduced (12, 10);
+    auto top = r.removeFromTop (34);
+    writeButton.setBounds (top.removeFromRight (100));
+    top.removeFromRight (10);
+    const int bw = top.getWidth() / kNumPerfBanks;
+    for (auto& b : bankButtons)
+        b.setBounds (top.removeFromLeft (bw).reduced (2, 0));
+    r.removeFromTop (8);
+    auto nameRow = r.removeFromTop (30);
+    nameLabel.setBounds (nameRow.removeFromLeft (90));
+    nameEdit.setBounds (nameRow.removeFromLeft (360).reduced (0, 1));
+    help.setBounds (r.removeFromBottom (22));
+}
+
+//==============================================================================
+//  SetListPage
+//==============================================================================
+juce::Colour SetListPage::slotColour (int c)
+{
+    static const juce::Colour cols[] = { juce::Colour (0xff2a3140), juce::Colour (0xff8a3d1f), juce::Colour (0xff1f5e8a),
+                                         juce::Colour (0xff2f7d4a), juce::Colour (0xff7a2a5a), juce::Colour (0xff7a6a1f),
+                                         juce::Colour (0xff1f7a72), juce::Colour (0xff5a3d8a) };
+    return cols[juce::jlimit (0, 7, c)];
+}
+
+SetListPage::SetListPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
+{
+    listSelect.onChange = [this] { const int i = listSelect.getSelectedItemIndex(); if (i >= 0) proc.setCurrentSetList (i); };
+    addAndMakeVisible (listSelect);
+
+    nameEdit.setEditable (true);
+    nameEdit.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    nameEdit.setColour (juce::Label::backgroundColourId, Pal::bg);
+    nameEdit.setColour (juce::Label::textColourId, Pal::lcdText);
+    nameEdit.setTooltip (T ("Ime set liste (dupli klik za izmenu)"));
+    nameEdit.onTextChange = [this]
+    {
+        auto sl = proc.getSetList (proc.getCurrentSetList());
+        sl.name = nameEdit.getText().trim();
+        proc.updateSetList (proc.getCurrentSetList(), sl);
+    };
+    addAndMakeVisible (nameEdit);
+
+    for (int i = 0; i < kSetListSlots / 16; ++i)
+    {
+        pageButtons[i].setButtonText (juce::String (i * 16 + 1) + "-" + juce::String (i * 16 + 16));
+        pageButtons[i].setColour (juce::TextButton::buttonOnColourId, Pal::lcdText);
+        pageButtons[i].getProperties().set ("fontSize", 12.0f);
+        pageButtons[i].onClick = [this, i] { proc.setSetListPage (i); };
+        addAndMakeVisible (pageButtons[i]);
+    }
+    editButton.setButtonText ("EDIT");
+    editButton.setClickingTogglesState (true);
+    editButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
+    editButton.setTooltip (T ("Uključi EDIT pa klikni dugme: stavi performans, natpis, boju"));
+    editButton.onClick = [this] { repaint(); };
+    addAndMakeVisible (editButton);
+
+    pcMode.setButtonText (T ("Program Change bira set listu"));
+    pcMode.setTooltip (T ("Uključeno: CC0 bira set listu, Program Change 0-127 dugme. Isključeno: Program Change bira performans iz liste."));
+    pcMode.onClick = [this] { proc.setProgramChangeMode (pcMode.getToggleState() ? 1 : 0); };
+    addAndMakeVisible (pcMode);
+}
+
+void SetListPage::refresh()
+{
+    listSelect.clear (juce::dontSendNotification);
+    for (int i = 0; i < kNumSetLists; ++i)
+    {
+        const auto& n = proc.getSetList (i).name;
+        listSelect.addItem (juce::String (i + 1) + "  " + (n.isNotEmpty() ? n : T ("Set lista")), i + 1);
+    }
+    listSelect.setSelectedItemIndex (proc.getCurrentSetList(), juce::dontSendNotification);
+    if (! nameEdit.isBeingEdited())
+    {
+        const auto& n = proc.getSetList (proc.getCurrentSetList()).name;
+        nameEdit.setText (n.isNotEmpty() ? n : T ("Set lista ") + juce::String (proc.getCurrentSetList() + 1), juce::dontSendNotification);
+    }
+    for (int i = 0; i < kSetListSlots / 16; ++i)
+        pageButtons[i].setToggleState (i == proc.getSetListPage(), juce::dontSendNotification);
+    pcMode.setToggleState (proc.getProgramChangeMode() == 1, juce::dontSendNotification);
+    repaint();
+}
+
+juce::Rectangle<int> SetListPage::gridArea() const
+{
+    auto r = getLocalBounds().reduced (12, 10);
+    r.removeFromTop (36 + 8 + 30 + 10);
+    return r;
+}
+
+int SetListPage::cellAt (juce::Point<int> p) const
+{
+    auto g = gridArea();
+    if (! g.contains (p)) return -1;
+    const int c = (p.x - g.getX()) * 4 / g.getWidth();
+    const int r = (p.y - g.getY()) * 4 / g.getHeight();
+    return proc.getSetListPage() * 16 + juce::jlimit (0, 15, r * 4 + c);
+}
+
+void SetListPage::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+
+    auto area = gridArea().toFloat();
+    const float cw = area.getWidth() / 4.0f, ch = area.getHeight() / 4.0f;
+    const auto& sl = proc.getSetList (proc.getCurrentSetList());
+    const bool editing = editButton.getToggleState();
+    for (int k = 0; k < 16; ++k)
+    {
+        const int slot = proc.getSetListPage() * 16 + k;
+        const auto& s = sl.slots[(size_t) slot];
+        auto cell = juce::Rectangle<float> (area.getX() + (k % 4) * cw, area.getY() + (k / 4) * ch, cw, ch).reduced (5.0f);
+        const bool has = s.perf >= 0 && proc.getSlot (s.perf).used;
+        const bool current = proc.getCurrentSetListSlot() == slot;
+        auto col = has ? slotColour (s.colour) : Pal::bg;
+        if (current) col = col.brighter (0.6f);
+        g.setColour (col);
+        g.fillRoundedRectangle (cell, 10.0f);
+        g.setColour (current ? Pal::lcdText : (editing ? Pal::red.withAlpha (0.7f) : Pal::panelHi));
+        g.drawRoundedRectangle (cell, 10.0f, current ? 3.0f : 1.5f);
+
+        g.setColour (Pal::dim);
+        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.drawText (juce::String (slot + 1), cell.reduced (12.0f, 8.0f), juce::Justification::topLeft);
+        if (! has) continue;
+        const auto& perfName = proc.getSlot (s.perf).name;
+        g.setColour (juce::Colours::white);
+        g.setFont (juce::FontOptions (juce::jmin (30.0f, ch * 0.24f), juce::Font::bold));
+        g.drawFittedText (s.label.isNotEmpty() ? s.label : perfName, cell.reduced (12.0f, 24.0f).toNearestInt(), juce::Justification::centred, 2);
+        g.setColour (juce::Colours::white.withAlpha (0.6f));
+        g.setFont (juce::FontOptions (12.0f));
+        g.drawText (proc.getBankName (s.perf / kPerfPerBank) + " " + juce::String (s.perf % kPerfPerBank + 1).paddedLeft ('0', 3)
+                        + (s.label.isNotEmpty() ? "  " + perfName : juce::String()),
+                    cell.reduced (12.0f, 8.0f), juce::Justification::bottomLeft, true);
+    }
+}
+
+void SetListPage::mouseDown (const juce::MouseEvent& e)
+{
+    const int slot = cellAt (e.getPosition());
+    if (slot < 0) return;
+    if (editButton.getToggleState() || e.mods.isPopupMenu())
+        editSlot (slot);
+    else
+        proc.recallSetListSlot (slot);
+}
+
+void SetListPage::editSlot (int slot)
+{
+    juce::PopupMenu m, pick, colours;
+    m.addItem (1, T ("Stavi trenutni performans"), proc.getCurrentSlot() >= 0);
+    for (int b = 0; b < kNumPerfBanks; ++b)
+    {
+        juce::PopupMenu sub;
+        for (int i = 0; i < kPerfPerBank; ++i)
+            if (const auto& s = proc.getSlot (b * kPerfPerBank + i); s.used)
+                sub.addItem (1000 + b * kPerfPerBank + i, juce::String (i + 1).paddedLeft ('0', 3) + "  " + s.name);
+        if (sub.getNumItems() > 0)
+            pick.addSubMenu (proc.getBankName (b), sub);
+    }
+    m.addSubMenu (T ("Izaberi performans"), pick);
+    m.addItem (2, T ("Natpis na dugmetu..."));
+    const char* cn[] = { "Siva", "Narandžasta", "Plava", "Zelena", "Ljubičasta", "Žuta", "Tirkizna", "Indigo" };
+    for (int c = 0; c < 8; ++c)
+        colours.addColouredItem (100 + c, T (cn[c]), slotColour (c).brighter (0.4f));
+    m.addSubMenu (T ("Boja"), colours);
+    m.addSeparator();
+    m.addItem (3, T ("Isprazni dugme"));
+
+    juce::Component::SafePointer<SetListPage> safe (this);
+    m.showMenuAsync ({}, [safe, slot] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& pr = safe->proc;
+        auto sl = pr.getSetList (pr.getCurrentSetList());
+        auto& s = sl.slots[(size_t) slot];
+        if (r == 1) s.perf = pr.getCurrentSlot();
+        if (r >= 1000) s.perf = r - 1000;
+        if (r >= 100 && r < 108) s.colour = r - 100;
+        if (r == 3) s = SetListSlot();
+        if (r == 2)
+        {
+            auto* w = new juce::AlertWindow (T ("Natpis"), T ("Tekst na dugmetu (prazno = ime performansa)"), juce::MessageBoxIconType::NoIcon);
+            w->addTextEditor ("t", s.label);
+            w->addButton ("OK", 1);
+            w->addButton (T ("Otkaži"), 0);
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, slot, w] (int res)
+            {
+                if (safe == nullptr || res == 0) return;
+                auto& p2 = safe->proc;
+                auto sl2 = p2.getSetList (p2.getCurrentSetList());
+                sl2.slots[(size_t) slot].label = w->getTextEditorContents ("t").trim();
+                p2.updateSetList (p2.getCurrentSetList(), sl2);
+            }), true);
+            return;
+        }
+        pr.updateSetList (pr.getCurrentSetList(), sl);
+    });
+}
+
+void SetListPage::resized()
+{
+    auto r = getLocalBounds().reduced (12, 10);
+    auto top = r.removeFromTop (36);
+    listSelect.setBounds (top.removeFromLeft (260).reduced (0, 3));
+    top.removeFromLeft (10);
+    nameEdit.setBounds (top.removeFromLeft (300).reduced (0, 3));
+    editButton.setBounds (top.removeFromRight (100));
+    top.removeFromRight (10);
+    pcMode.setBounds (top.removeFromRight (260));
+    r.removeFromTop (8);
+    auto pages = r.removeFromTop (30);
+    const int pw = pages.getWidth() / (kSetListSlots / 16);
+    for (auto& b : pageButtons)
+        b.setBounds (pages.removeFromLeft (pw).reduced (2, 0));
 }
