@@ -2198,16 +2198,68 @@ juce::String KronosPage::timbreSummary (const Kronos::Combi& c, int& romCount) c
     return parts.joinIntoString ("  ·  ");
 }
 
+juce::File KronosPage::findAutosampler()
+{
+    // trazi "Kronos Autosampler.exe" pored Live Samplera, u susednim folderima i na Desktopu
+    const auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+    juce::Array<juce::File> roots { exeDir, exeDir.getParentDirectory(), exeDir.getParentDirectory().getParentDirectory(),
+                                    juce::File::getSpecialLocation (juce::File::userDesktopDirectory) };
+    for (auto& r : roots)
+    {
+        if (! r.isDirectory()) continue;
+        for (auto& f : r.findChildFiles (juce::File::findFiles, false, "Kronos Autosampler.exe"))
+            return f;
+        for (auto& d : r.findChildFiles (juce::File::findDirectories, false))
+        {
+            for (auto& f : d.findChildFiles (juce::File::findFiles, false, "Kronos Autosampler.exe"))
+                return f;
+            for (auto& dd : d.findChildFiles (juce::File::findDirectories, false))
+                for (auto& f : dd.findChildFiles (juce::File::findFiles, false, "Kronos Autosampler.exe"))
+                    return f;
+        }
+    }
+    return {};
+}
+
+void KronosPage::offerAutosample (const juce::String& message, const juce::String& args)
+{
+    juce::Component::SafePointer<KronosPage> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Kronos", message,
+        T ("Presempluj sa Kronosa"), T ("Zatvori"), nullptr,
+        juce::ModalCallbackFunction::create ([safe, args] (int r)
+        {
+            if (safe == nullptr || r == 0) return;
+            const auto exe = findAutosampler();
+            if (! exe.existsAsFile())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos",
+                    T ("Ne nalazim \"Kronos Autosampler.exe\". Raspakuj KronosAutosampler-Windows pored Live Samplera ili na Desktop."));
+                return;
+            }
+            exe.startAsProcess (args);
+        }));
+}
+
 void KronosPage::loadCombiRow (int row)
 {
     auto* pcg = proc.getKronosPcg();
     if (pcg == nullptr || row < 0 || row >= (int) rows.size())
         return;
-    const auto skipped = proc.loadKronosCombi (pcg->combis[(size_t) rows[(size_t) row]], keepChannels.getToggleState());
-    if (! skipped.isEmpty())
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
-            T ("Ovi timbre-i nisu preneti (nema tvojih semplova u biblioteci):\n\n") + skipped.joinIntoString ("\n"));
+    const auto& combi = pcg->combis[(size_t) rows[(size_t) row]];
+    const auto skipped = proc.loadKronosCombi (combi, keepChannels.getToggleState());
     editor.showTab (LiveSamplerEditor::TabPerformance);
+    if (skipped.isEmpty())
+        return;
+    bool rom = false;
+    for (auto& s : skipped) rom = rom || s.contains (T ("fabrički ROM"));
+    const auto msg = T ("Ovi timbre-i nisu preneti:\n\n") + skipped.joinIntoString ("\n");
+    if (! rom)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
+        return;
+    }
+    offerAutosample (msg + T ("\n\nDa presemplujem njihove ROM multisemplove sa Kronosa (Kronos Autosampler)?"),
+                     "--pcg \"" + pcg->file.getFullPathName() + "\" --combi " + juce::String (combi.bankId) + ":" + juce::String (combi.number));
 }
 
 void KronosPage::playRow (int row)
@@ -2215,11 +2267,20 @@ void KronosPage::playRow (int row)
     auto* pcg = proc.getKronosPcg();
     if (pcg == nullptr || row < 0 || row >= (int) rows.size())
         return;
-    const int u = userFor (pcg->programs[(size_t) rows[(size_t) row]]);
+    const auto& prog = pcg->programs[(size_t) rows[(size_t) row]];
+    const int u = userFor (prog);
     if (u < 0)
     {
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
-            T ("Semplovi ovog programa nisu u biblioteci. Proveri da je KSC kolekcija u folderu biblioteke (PODEŠAVANJA)."));
+        bool rom = false;
+        for (auto& o : prog.osc) for (auto& z : o) rom = rom || z.romKey.isNotEmpty();
+        if (prog.drumKit)
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", T ("Ovo je drum kit program; drum kitovi još nisu podržani."));
+        else if (rom)
+            offerAutosample (T ("Program \"") + prog.name + T ("\" koristi fabričke ROM multisemplove koji još nisu presemplovani.\n\nDa ih presemplujem sa Kronosa (Kronos Autosampler)?"),
+                             "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
+        else
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
+                T ("Semplovi ovog programa nisu u biblioteci. Proveri da je KSC kolekcija u folderu biblioteke (PODEŠAVANJA)."));
         return;
     }
     auto perf = proc.getPerformance();

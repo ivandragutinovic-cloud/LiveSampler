@@ -115,8 +115,9 @@ class MainComponent : public juce::Component,
 public:
     MainComponent() : juce::Thread ("autosampler")
     {
-        setSize (1180, 820);
-        deviceManager.initialise (2, 2, nullptr, true);
+        juce::Logger::writeToLog ("MainComponent: audio");
+        const auto err = deviceManager.initialise (2, 2, nullptr, true);
+        if (err.isNotEmpty()) juce::Logger::writeToLog ("audio greska: " + err);
         deviceManager.addAudioCallback (&recorder);
 
         auto styleTitle = [this] (juce::Label& l, const juce::String& t)
@@ -282,6 +283,43 @@ public:
         addAndMakeVisible (help);
 
         startTimerHz (10);
+        updateInfo();
+        setSize (1180, 820);
+        juce::Logger::writeToLog ("MainComponent: gotovo");
+    }
+
+    // Live Sampler pokrece: --pcg "<fajl>" --program <bankId>:<broj> ... --combi <bankId>:<broj> ...
+    void applyCommandLine (const juce::String& commandLine)
+    {
+        auto args = juce::StringArray::fromTokens (commandLine, true);
+        for (auto& a : args) a = a.unquoted();
+        const int pi = args.indexOf ("--pcg");
+        if (pi < 0 || pi + 1 >= args.size()) return;
+        const juce::File f (args[pi + 1]);
+        if (! f.existsAsFile()) return;
+        if (pcgFile != f || pcg == nullptr) loadPcg (f);
+        if (pcg == nullptr) return;
+        for (int i = 0; i + 1 < args.size(); ++i)
+        {
+            const bool isProg = args[i] == "--program", isCombi = args[i] == "--combi";
+            if (! isProg && ! isCombi) continue;
+            const auto bank = (juce::uint32) args[i + 1].upToFirstOccurrenceOf (":", false, false).getLargeIntValue();
+            const int num = args[i + 1].fromFirstOccurrenceOf (":", false, false).getIntValue();
+            if (isProg)
+            {
+                if (auto* p = pcg->findProgram (bank, num)) addProgram (*p);
+            }
+            else
+            {
+                for (auto& c : pcg->combis)
+                    if (c.bankId == bank && c.number == num)
+                        for (auto& t : c.timbres)
+                            if (t.play)
+                                if (auto* p = pcg->findProgram (t.programBank, t.programNumber)) addProgram (*p);
+            }
+        }
+        neededList.updateContent();
+        neededList.repaint();
         updateInfo();
     }
 
@@ -1118,12 +1156,37 @@ class AutosamplerApp : public juce::JUCEApplication
 public:
     const juce::String getApplicationName() override { return "Kronos Autosampler"; }
     const juce::String getApplicationVersion() override { return "1.0"; }
-    void initialise (const juce::String&) override
+    static void crashHandler (void*)
     {
+        auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Kronos Autosampler GRESKA.txt");
+        f.replaceWithText ("Kronos Autosampler se srusio.\n\n" + juce::SystemStats::getStackBacktrace());
+    }
+
+    void initialise (const juce::String& commandLine) override
+    {
+        juce::SystemStats::setApplicationCrashHandler (crashHandler);
+        logger.reset (juce::FileLogger::createDefaultAppLogger ("LiveSampler", "autosampler-log.txt", "Kronos Autosampler"));
+        juce::Logger::setCurrentLogger (logger.get());
+        juce::Logger::writeToLog ("start: " + commandLine);
         juce::LookAndFeel::getDefaultLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, bg);
         window = std::make_unique<Window>();
+        juce::Logger::writeToLog ("prozor napravljen");
+        if (auto* mc = dynamic_cast<MainComponent*> (window->getContentComponent()))
+            mc->applyCommandLine (commandLine);
     }
-    void shutdown() override { window.reset(); }
+
+    void anotherInstanceStarted (const juce::String& commandLine) override
+    {
+        if (window != nullptr)
+            if (auto* mc = dynamic_cast<MainComponent*> (window->getContentComponent()))
+            {
+                window->toFront (true);
+                mc->applyCommandLine (commandLine);
+            }
+    }
+    bool moreThanOneInstanceAllowed() override { return false; }
+    std::unique_ptr<juce::FileLogger> logger;
+    void shutdown() override { window.reset(); juce::Logger::setCurrentLogger (nullptr); }
 
     struct Window : public juce::DocumentWindow
     {

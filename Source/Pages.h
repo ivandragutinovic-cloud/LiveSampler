@@ -295,6 +295,8 @@ private:
     void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
     void playRow (int row);
     void loadCombiRow (int row);
+    void offerAutosample (const juce::String& message, const juce::String& args);
+    static juce::File findAutosampler();
     void setMode (bool combis);
     juce::String timbreSummary (const Kronos::Combi& c, int& romCount) const;
     void rebuildRows();
