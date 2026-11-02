@@ -1,5 +1,6 @@
 #include "Pages.h"
 #include "Text.h"
+#include "KronosNames.h"
 #include <optional>
 
 static juce::String semis (double v)
@@ -2364,7 +2365,21 @@ juce::String KronosPage::msText (const Kronos::Zone& z) const
     {
         if (! z.used) return "-";
         const auto r = proc.resolveKronosZone (z);
-        return r.isNotEmpty() ? "ROM: " + r.fromLastOccurrenceOf ("/", false, false) : "ROM MS" + juce::String (z.ms);
+        if (r.isNotEmpty()) return "ROM: " + r.fromLastOccurrenceOf ("/", false, false);
+        // ime iz Voice Name Liste (ROM / EXs, mono / stereo)
+        juce::MemoryBlock mb;
+        mb.loadFromHexString (z.romKey.fromFirstOccurrenceOf ("rom:", false, false));
+        const auto* b = (const juce::uint8*) mb.getData();
+        if (mb.getSize() >= 20)
+        {
+            const int type = b[0] & 3, bankByte = b[16], bank = bankByte >> 1;
+            juce::String t = type == 2 ? juce::String ("WaveSeq") : bank == 0 ? juce::String ("ROM") : "EXs" + juce::String (bank - 1);
+            if ((bankByte & 1) && type != 2) t << " St";
+            t << " " << juce::String (z.ms);
+            if (type == 1) if (auto nm = kronosMsName (bankByte, z.ms); nm.isNotEmpty()) t << " " << nm;
+            return t;
+        }
+        return "ROM MS" + juce::String (z.ms);
     }
     const auto inst = proc.findKronosMultisample (z.uuid, z.ms);
     if (inst.isEmpty()) return "MS" + juce::String (z.ms) + T ("  (nije u biblioteci)");
