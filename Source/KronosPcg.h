@@ -31,6 +31,7 @@ namespace Kronos
         std::array<int, 9> filterEg {};   // start, attack t, attack lvl, decay t, break, slope t, sustain, release t, release lvl
         std::array<int, 8> ampEg {};      // start, attack t, attack lvl, decay t, break, slope t, sustain, release t
         int ampLevel = 127, ampVelocity = 0, pan = 64;
+        int send1 = 127, send2 = 127;     // Send MFX1/MFX2 (vazi kad je Bus Select = L/R)
     };
 
     struct Program
@@ -43,7 +44,8 @@ namespace Kronos
         std::array<std::array<Zone, 8>, 2> osc;
         std::array<OscParams, 2> params;
         bool doubleMode = false, mono = false, legato = false;
-        bool drumKit = false;  // Oscillator Mode: Drums / Double Drums (zona pokazuje na drum kit)
+        bool drumKit = false;
+        bool busLR = false;    // Bus Select L/R (inace ide kroz insert efekat)  // Oscillator Mode: Drums / Double Drums (zona pokazuje na drum kit)
         int priority = 2;      // 0 najniza, 1 najvisa, 2 poslednja
 
         bool usesUser() const;
@@ -71,6 +73,7 @@ namespace Kronos
         int number = 0;
         juce::String name;
         std::array<Timbre, 16> timbres;
+        int return1 = 127, return2 = 127;   // MFX1 / MFX2 Return
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
     };
 

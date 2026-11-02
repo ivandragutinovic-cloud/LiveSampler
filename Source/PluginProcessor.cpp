@@ -586,6 +586,9 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
     const auto& q1 = prog.params[0];
     u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
     u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
+    // send u master efekte: na L/R busu vaze sendovi OSC1; preko insert efekta (IFX) ostaje pun send
+    u.send1 = prog.busLR ? (float) juce::jlimit (0, 127, q1.send1) / 127.0f : 1.0f;
+    u.send2 = prog.busLR ? (float) juce::jlimit (0, 127, q1.send2) / 127.0f : 1.0f;
     u.portaOn = q1.portaOn != 0;
     u.portaFingered = q1.portaFingered != 0;
     u.portaConstRate = q1.portaConstTime == 0;
@@ -616,6 +619,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
 
     auto p = perf;
     p.name = c.name.isNotEmpty() ? c.name : c.id();
+    p.master.reverbLevel = (float) c.return1 / 127.0f;   // MFX1 Return
+    p.master.delayLevel = (float) c.return2 / 127.0f;    // MFX2 Return
     for (int t = 0; t < 16 && t < kNumParts; ++t)
     {
         const auto& tm = c.timbres[(size_t) t];

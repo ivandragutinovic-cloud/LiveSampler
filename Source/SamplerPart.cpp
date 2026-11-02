@@ -758,8 +758,8 @@ void SamplerPart::endBlock (juce::AudioBuffer<float>& mainOut, juce::AudioBuffer
         }
     }
 
-    const float rev = cfg != nullptr ? cfg->part.reverbSend : 0.0f;
-    const float dly = cfg != nullptr ? cfg->part.delaySend : 0.0f;
+    const float rev = cfg != nullptr ? cfg->part.reverbSend * cfg->user.send1 : 0.0f;
+    const float dly = cfg != nullptr ? cfg->part.delaySend * cfg->user.send2 : 0.0f;
 
     auto* pl = partBuffer.getWritePointer (0);
     auto* pr = partBuffer.getWritePointer (1);

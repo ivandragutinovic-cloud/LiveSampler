@@ -61,6 +61,7 @@ namespace Kronos
         auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
         p.doubleMode = (d[2558] & 0x01) != 0;
         p.drumKit    = (d[2558] & 0x02) != 0;
+        p.busLR      = (d[2565] & 0x7f) == 0;
         p.mono       = (d[2558] & 0x80) != 0;
         p.legato     = (d[2559] & 0x10) != 0;
         p.priority   = (d[2559] >> 2) & 3;
@@ -105,6 +106,8 @@ namespace Kronos
             for (int i = 0; i < 8; ++i) q.ampEg[(size_t) i] = b[3151 + i];
             q.ampLevel    = b[3141];
             q.ampVelocity = s8 (b[3142]);
+            q.send1       = b[3196];
+            q.send2       = b[3197];
             q.pan         = b[3193];
         }
     }
@@ -121,6 +124,8 @@ namespace Kronos
     static void readTimbres (Combi& c, const juce::uint8* d)
     {
         auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
+        c.return1 = juce::jlimit (0, 127, (int) d[1048]);
+        c.return2 = juce::jlimit (0, 127, (int) d[1049]);
         for (int t = 0; t < 16; ++t)
         {
             const auto* b = d + timbresOffset + t * timbreSize;

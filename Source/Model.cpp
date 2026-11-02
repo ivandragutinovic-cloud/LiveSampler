@@ -46,6 +46,8 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     e->setAttribute ("portaOn", portaOn);
     e->setAttribute ("portamento", (double) portamento);
     e->setAttribute ("eqLow", (double) eqLowDb);
+    e->setAttribute ("send1", (double) send1);
+    e->setAttribute ("send2", (double) send2);
     e->setAttribute ("eqMid", (double) eqMidDb);
     e->setAttribute ("eqMidFreq", (double) eqMidFreq);
     e->setAttribute ("eqHigh", (double) eqHighDb);
@@ -105,6 +107,8 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     u.fxDepth = f ("fxDepth", u.fxDepth);
     u.fxMix = f ("fxMix", u.fxMix);
     u.eqLowDb = f ("eqLow", 0.0f);
+    u.send1 = f ("send1", 1.0f);
+    u.send2 = f ("send2", 1.0f);
     u.eqMidDb = f ("eqMid", 0.0f);
     u.eqMidFreq = f ("eqMidFreq", 1000.0f);
     u.eqHighDb = f ("eqHigh", 0.0f);

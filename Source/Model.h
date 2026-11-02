@@ -85,6 +85,8 @@ struct UserProgram
     // EQ zvuka (prenosi se u svaki performans; tamo moze dodatno da se dotera)
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;
 
+    float send1 = 1.0f, send2 = 1.0f;   // koliko ovaj zvuk salje u reverb / delay (mnozi send dela)
+
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;
 

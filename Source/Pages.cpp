@@ -773,6 +773,8 @@ void SoundEditor::rebuildKnobs()
                 P ("FX brzina", 0, 1, 0, 0.3, UI::pctText, [] (U& u, int) -> float& { return u.fxRate; }),
                 P ("FX dubina", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxDepth; }),
                 P ("FX mix", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxMix; }),
+                P ("Send reverb", 0, 1, 0, 1, UI::pctText, [] (U& u, int) -> float& { return u.send1; }),
+                P ("Send delay", 0, 1, 0, 1, UI::pctText, [] (U& u, int) -> float& { return u.send2; }),
                 P ("EQ bas", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqLowDb; }),
                 P ("EQ sredina", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqMidDb; }),
                 P ("Sredina Hz", 100, 8000, 1000, 1000, UI::hzText, [] (U& u, int) -> float& { return u.eqMidFreq; }),
@@ -941,8 +943,9 @@ void SoundEditor::resized()
         fxLabel.setBounds (c.removeFromTop (18));
         fxType.setBounds (c.removeFromTop (28));
         row.removeFromLeft (16);
+        const int kw = juce::jmin (90, row.getWidth() / juce::jmax (1, knobs.size()));
         for (auto* k : knobs)
-            k->setBounds (row.removeFromLeft (90));
+            k->setBounds (row.removeFromLeft (kw));
         return;
     }
 
