@@ -349,7 +349,7 @@ void PerformancePage::resized()
 OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int o, std::function<int()> ui)
     : proc (p), editor (e), osc (o), userIndex (std::move (ui))
 {
-    onButton.setButtonText ("OSC " + juce::String (o + 1));
+    onButton.setButtonText ("MS " + juce::String (o + 1));
     onButton.setClickingTogglesState (true);
     onButton.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
     onButton.getProperties().set ("fontSize", 12.0f);
@@ -372,7 +372,7 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int o, std::funct
     addAndMakeVisible (instButton);
 
     blockButton.getProperties().set ("fontSize", 13.0f);
-    blockButton.setTooltip (T ("Zvuk A ili B (svoj filter, envelope i pitch) - klik menja"));
+    blockButton.setTooltip (T ("OSC1 ili OSC2 (svoj filter, envelope i pitch) - klik menja"));
     blockButton.onClick = [this] { edit ([] (OscSettings& s) { s.block = 1 - s.block; }); };
     addAndMakeVisible (blockButton);
 
@@ -428,7 +428,14 @@ void OscRow::refresh()
         instText = T ("⚠ nema: ") + s.instrument;
     instButton.setButtonText (instText);
     mapButton.setEnabled (s.instrument.isNotEmpty());
-    blockButton.setButtonText (s.block == 0 ? "A" : "B");
+    blockButton.setButtonText (s.block == 0 ? "OSC1" : "OSC2");
+    {
+        // kao na Kronosu: multisemplovi se broje posebno za OSC1 i OSC2 (MS1..MS8)
+        int msNumber = 1;
+        for (int k = 0; k < osc; ++k)
+            if (proc.getUser (u).osc[(size_t) k].block == s.block) ++msNumber;
+        onButton.setButtonText ("MS" + juce::String (msNumber));
+    }
     blockButton.setColour (juce::TextButton::buttonColourId, (s.block == 0 ? Pal::accent : Pal::part[1]).withAlpha (0.45f));
     setSliderValue (level, s.levelDb);
     setSliderValue (pan, s.pan);
@@ -458,11 +465,11 @@ void OscRow::resized()
     r.removeFromLeft (6);
     const int boxW = 82;
     juce::Slider* boxes[] = { &level, &pan, &transpose, &fine, &keyLow, &keyHigh, &velLow, &velHigh };
-    const int fixed = boxW * 8 + 56 + 6 + 40;
+    const int fixed = boxW * 8 + 56 + 6 + 52;
     auto instArea = r.removeFromLeft (r.getWidth() - fixed);
     instButton.setBounds (instArea);
     r.removeFromLeft (4);
-    blockButton.setBounds (r.removeFromLeft (38).reduced (2, 0));
+    blockButton.setBounds (r.removeFromLeft (50).reduced (2, 0));
     mapButton.setBounds (r.removeFromLeft (52));
     r.removeFromLeft (2);
     for (auto* b : boxes)
@@ -540,12 +547,12 @@ static juce::String stText (double v)     { return (v > 0 ? "+" : "") + juce::St
 SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     : proc (p), userIndex (std::move (ui))
 {
-    const char* blockNames[] = { "ZVUK A", "ZVUK B" };
+    const char* blockNames[] = { "OSC 1", "OSC 2" };
     for (int b = 0; b < 2; ++b)
     {
         blockButtons[b].setButtonText (blockNames[b]);
         blockButtons[b].setColour (juce::TextButton::buttonOnColourId, b == 0 ? Pal::accent : Pal::part[1]);
-        blockButtons[b].setTooltip (T ("Kao OSC1 / OSC2 na Kronosu. Svaki oscilator gore biraš A ili B."));
+        blockButtons[b].setTooltip (T ("OSC1 / OSC2 kao na Kronosu. Svakom multisemplu gore biraš OSC1 ili OSC2."));
         blockButtons[b].onClick = [this, b] { block = b; rebuildKnobs(); };
         addAndMakeVisible (blockButtons[b]);
     }
@@ -925,7 +932,7 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     nameEdit.onTextChange = [this] { edit ([this] (UserProgram& u) { u.name = nameEdit.getText(); }); };
     addAndMakeVisible (nameEdit);
 
-    const char* headers[] = { "Instrument", "Zvuk", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
+    const char* headers[] = { "Multisempl", "OSC", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
     for (int i = 0; i < 10; ++i)
     {
         styleLabel (headerLabels[i], T (headers[i]), 11.5f);
@@ -1027,7 +1034,7 @@ void UserPage::resized()
     auto header = r.removeFromTop (16).reduced (4, 0);
     header.removeFromLeft (70);
     const int boxW = 82;
-    const int fixed = boxW * 8 + 56 + 6 + 40;
+    const int fixed = boxW * 8 + 56 + 6 + 52;
     headerLabels[0].setBounds (header.removeFromLeft (header.getWidth() - fixed));
     header.removeFromLeft (4);
     headerLabels[1].setBounds (header.removeFromLeft (40));
