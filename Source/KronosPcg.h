@@ -43,6 +43,7 @@ namespace Kronos
         std::array<std::array<Zone, 8>, 2> osc;
         std::array<OscParams, 2> params;
         bool doubleMode = false, mono = false, legato = false;
+        bool drumKit = false;  // Oscillator Mode: Drums / Double Drums (zona pokazuje na drum kit)
         int priority = 2;      // 0 najniza, 1 najvisa, 2 poslednja
 
         bool usesUser() const;
@@ -56,7 +57,6 @@ namespace Kronos
         juce::uint32 programBank = 0xffffffff;   // isti ID kao kod banke programa; 0xffffffff = nepoznata banka
         int programNumber = 0;
         bool play = false;                       // Play / Mute
-        bool external = false;                   // status EXT: salje MIDI napolje, ne svira u Kronosu
         int channel = 0;                         // MIDI kanal 1-16, 0 = Gch (globalni)
         int volume = 127, pan = 64;
         int transpose = 0, detuneCents = 0;

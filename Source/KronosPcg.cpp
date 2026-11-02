@@ -60,6 +60,7 @@ namespace Kronos
     {
         auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
         p.doubleMode = (d[2558] & 0x01) != 0;
+        p.drumKit    = (d[2558] & 0x02) != 0;
         p.mono       = (d[2558] & 0x80) != 0;
         p.legato     = (d[2559] & 0x10) != 0;
         p.priority   = (d[2559] >> 2) & 3;
@@ -134,7 +135,6 @@ namespace Kronos
             tm.send1 = b[15];
             tm.send2 = b[16];
             tm.play = (b[34] & 0x80) == 0;
-            tm.external = (b[29] & 0x10) != 0;
             tm.keyHigh = b[37];
             tm.keyLow = b[38];
             tm.velHigh = juce::jlimit (1, 127, (int) b[40]);
@@ -232,6 +232,14 @@ namespace Kronos
                         if (p.hd1)
                         {
                             readParams (p, item);
+                            if (p.drumKit)
+                            {
+                                // drum kit program: zone ne nose multisempl nego broj drum kita
+                                for (auto& o : p.osc)
+                                    for (auto& z : o) { z.user = false; }
+                                programs.push_back (std::move (p));
+                                continue;
+                            }
                             for (int o = 0; o < 2; ++o)
                             {
                                 const int base = o == 0 ? osc1ZonesOffset : osc2ZonesOffset;

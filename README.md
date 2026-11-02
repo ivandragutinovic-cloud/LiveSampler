@@ -103,7 +103,7 @@ sa semplovima, onako kako ih Kronos sačuva (npr. `Pikaso stage.PCG`, `Pikaso st
 - **KOMBIJI** (dugme gore levo na KRONOS strani): dupli klik učitava kombi kao trenutni performans
   sa 16 delova. Za svaki timbre na Play: program (pravi se user ako ga nema), jačina, pan,
   transpozicija, detune, key i velocity zona, MIDI kanal (Gch = svi kanali), Send1 → reverb,
-  Send2 → delay. Timbre-i sa fabričkim ROM programima i timbre-i na EXT se preskaču. MIDI kanali
+  Send2 → delay. Timbre-i sa fabričkim ROM programima i drum kit programi (još) se preskaču. MIDI kanali
   iz kombija se po defaultu ignorišu (svi delovi sviraju sa tvoje klavijature); uključi "Zadrži MIDI
   kanale" ako sviraš sa više klavijatura. Sačuvaj performans sa SNIMI.
 

@@ -1901,7 +1901,7 @@ juce::String KronosPage::timbreSummary (const Kronos::Combi& c, int& romCount) c
     for (int t = 0; t < 16; ++t)
     {
         const auto& tm = c.timbres[(size_t) t];
-        if (! tm.play || tm.external) continue;
+        if (! tm.play) continue;
         const auto* p = pcg != nullptr ? pcg->findProgram (tm.programBank, tm.programNumber) : nullptr;
         if (p == nullptr || ! p->usesUser()) { ++romCount; continue; }
         parts.add (juce::String (t + 1) + " " + p->name);
@@ -2048,7 +2048,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                 for (auto& tm : cb.timbres)
                 {
                     const auto s = tm.channel == 0 || tm.channel == pcg->globalChannel ? juce::String ("Gch") : juce::String (tm.channel);
-                    if (tm.play && ! tm.external && ! ch.contains (s)) ch.add (s);
+                    if (tm.play && ! ch.contains (s)) ch.add (s);
                 }
                 t = ch.joinIntoString (", ");
                 c = Pal::dim;

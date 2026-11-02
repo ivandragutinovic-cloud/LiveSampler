@@ -621,7 +621,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         const auto& tm = c.timbres[(size_t) t];
         auto& part = p.parts[(size_t) t];
         part = PerfPart();
-        if (! tm.play || tm.external)   // EXT timbre ne svira u Kronosu, samo salje MIDI napolje
+        if (! tm.play)
             continue;
 
         const auto* prog = kronosPcg->findProgram (tm.programBank, tm.programNumber);
@@ -630,7 +630,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         {
             skipped.add ("Timbre " + juce::String (t + 1) + ": "
                          + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
-                         + (prog != nullptr && ! prog->usesUser() ? " (fabrički ROM)" : ""));
+                         + (prog != nullptr && prog->drumKit ? " (drum kit, još nije podržan)"
+                            : prog != nullptr && ! prog->usesUser() ? " (fabrički ROM)" : ""));
             continue;
         }
 
