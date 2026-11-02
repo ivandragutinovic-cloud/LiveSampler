@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -29,3 +32,21 @@ jobs:
         with:
           name: KronosAutosampler-Windows
           path: build/KronosAutosampler_artefacts/Release/*.exe
+
+      # Najnovija verzija uvek na istoj adresi (Release "latest"), za automatsko skidanje na racunar
+      - name: Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "build/LiveSampler_artefacts/Release/Standalone/*.exe","build/LiveSampler_artefacts/Release/VST3" -DestinationPath dist/LiveSampler-Windows.zip -Force
+          Compress-Archive -Path "build/KronosAutosampler_artefacts/Release/*.exe" -DestinationPath dist/KronosAutosampler-Windows.zip -Force
+
+      - name: Publish latest
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>$null
+          $msg = (git log -1 --pretty=%s)
+          gh release create latest dist/LiveSampler-Windows.zip dist/KronosAutosampler-Windows.zip --title "Najnovija verzija" --notes "$msg" --target $env:GITHUB_SHA --latest
