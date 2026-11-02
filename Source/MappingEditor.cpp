@@ -260,8 +260,9 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
 
     for (int i = 0; i < kNumOsc; ++i)
     {
-        oscButtons[i].setButtonText ("OSC " + juce::String (i + 1));
-        oscButtons[i].setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        oscButtons[i].setButtonText ("MS" + juce::String (i % kMsPerOsc + 1));
+        oscButtons[i].setTooltip (juce::String (i < kMsPerOsc ? "OSC1" : "OSC2") + " MS" + juce::String (i % kMsPerOsc + 1));
+        oscButtons[i].setColour (juce::TextButton::buttonOnColourId, i < kMsPerOsc ? Pal::accent : Pal::part[1]);
         oscButtons[i].getProperties().set ("fontSize", 12.0f);
         oscButtons[i].onClick = [this, i] { setOsc (i); };
         addAndMakeVisible (oscButtons[i]);
@@ -789,8 +790,11 @@ void MappingEditor::resized()
 
     auto header = r.removeFromTop (34);
     title.setBounds (header.removeFromLeft (112));
-    for (auto& b : oscButtons)
-        b.setBounds (header.removeFromLeft (62).reduced (2, 0));
+    for (int i = 0; i < kNumOsc; ++i)
+    {
+        if (i == kMsPerOsc) header.removeFromLeft (10);   // razmak izmedju OSC1 i OSC2
+        oscButtons[i].setBounds (header.removeFromLeft (44).reduced (1, 0));
+    }
     header.removeFromLeft (10);
     closeButton.setBounds (header.removeFromRight (80));
     header.removeFromRight (4);

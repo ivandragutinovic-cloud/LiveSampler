@@ -93,8 +93,8 @@ sa semplovima, onako kako ih Kronos sačuva (npr. `Pikaso stage.PCG`, `Pikaso st
 - Multisemplovi iz KSC-a dobijaju broj i ime kao na Kronosu (npr. `MS0000 Kabina pr`).
 - Tabela pokazuje programe koji koriste tvoje semplove; fabrički ROM zvukovi se preskaču.
 - Dupli klik na program: napravi usera i stavi ga na PART 1, da odmah sviraš.
-- Iz programa se prenose: velocity zone (svaka zona postaje jedan oscilator), OSC1 i OSC2
-  (Double → OSC1 i OSC2), raspon tastera, transpozicija, štim, jačina zone i programa, pan,
+- Iz programa se prenose: velocity zone (MS1–MS8, sa crossfade-om), OSC1 i
+  OSC2 (kod Double programa), raspon tastera, transpozicija, štim, jačina zone i programa, pan,
   filter (cutoff, rezonanca, 12/24 dB, filter EG sa intenzitetom), amp EG, LFO vibrato,
   Mono / Legato / prioritet, portamento i pitch bend.
 - Vrednosti (vremena, Hz) su preračunate približno. Uporedi sa Kronosom i doteraj na USER strani.
@@ -122,7 +122,8 @@ USB, klikni "Osveži". Instrumenti dobijaju ime po folderu, npr. `USB/Gudaci/Vio
 
 **USER** = zvuk kao Kronos program: **OSC1 i OSC2**, a u njima do 8 multisemplova (MS1, MS2…).
 Svaki multisempl ima instrument iz biblioteke, jačinu, pan, transpoziciju, fino štimovanje,
-raspon tastera i velocity-ja (sa crossfade-om), i pripada OSC1 ili OSC2. Dugme MAPA otvara editor mapiranja za taj instrument.
+raspon tastera i velocity-ja (sa crossfade-om). Dugmad OSC 1 / OSC 2 (dole) biraju koji se OSC
+prikazuje: gore se vide njegovi MS1–MS8, a dole njegov zvuk. Dugme MAPA otvara editor mapiranja za taj instrument.
 
 Editor zvuka (dole na USER stranici), posebno za OSC1 i OSC2:
 - **PITCH**: pitch envelope sa intenzitetom, vibrato (brzina, dubina, kašnjenje),

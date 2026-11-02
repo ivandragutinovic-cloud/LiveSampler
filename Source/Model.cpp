@@ -145,10 +145,23 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         u.bendUp = u.bendDown = e.getIntAttribute ("bendRange", 2);
     }
 
+    // Starije verzije: 8 oscilatora sa oznakom bloka A/B. Sada: 0..7 = OSC1, 8..15 = OSC2.
+    std::array<bool, kNumOsc> taken {};
     for (auto* x : e.getChildWithTagNameIterator ("Osc"))
     {
-        const int i = x->getIntAttribute ("index", -1);
+        int i = x->getIntAttribute ("index", -1);
+        const int blk = juce::jlimit (0, 1, x->getIntAttribute ("block", i >= kMsPerOsc ? 1 : 0));
         if (i < 0 || i >= kNumOsc) continue;
+        if (i / kMsPerOsc != blk || taken[(size_t) i])
+        {
+            const bool used = x->getBoolAttribute ("on", false) || x->getStringAttribute ("instrument").isNotEmpty();
+            if (! used) continue;
+            i = -1;
+            for (int k = blk * kMsPerOsc; k < (blk + 1) * kMsPerOsc; ++k)
+                if (! taken[(size_t) k]) { i = k; break; }
+            if (i < 0) continue;
+        }
+        taken[(size_t) i] = true;
         auto& o = u.osc[(size_t) i];
         o.on = x->getBoolAttribute ("on", false);
         o.instrument = x->getStringAttribute ("instrument");
@@ -163,8 +176,9 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         o.fadeIn = juce::jlimit (0, 127, x->getIntAttribute ("fadeIn", 0));
         o.fadeOut = juce::jlimit (0, 127, x->getIntAttribute ("fadeOut", 0));
         o.fadeCurve = x->getIntAttribute ("fadeCurve", 0);
-        o.block = juce::jlimit (0, 1, x->getIntAttribute ("block", 0));
     }
+    for (int i = 0; i < kNumOsc; ++i)
+        u.osc[(size_t) i].block = i / kMsPerOsc;
     return u;
 }
 

@@ -346,10 +346,10 @@ void PerformancePage::resized()
 //==============================================================================
 //  OscRow
 //==============================================================================
-OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int o, std::function<int()> ui)
-    : proc (p), editor (e), osc (o), userIndex (std::move (ui))
+OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int r, std::function<int()> ui, std::function<int()> bf)
+    : proc (p), editor (e), row (r), userIndex (std::move (ui)), blockFn (std::move (bf))
 {
-    onButton.setButtonText ("MS " + juce::String (o + 1));
+    onButton.setButtonText ("MS" + juce::String (r + 1));
     onButton.setClickingTogglesState (true);
     onButton.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
     onButton.getProperties().set ("fontSize", 12.0f);
@@ -362,7 +362,7 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int o, std::funct
     {
         const auto& u = proc.getUser (userIndex());
         juce::Component::SafePointer<OscRow> safe (this);
-        UI::showInstrumentMenu (&instButton, proc.getInstrumentList(), u.osc[(size_t) osc].instrument, true,
+        UI::showInstrumentMenu (&instButton, proc.getInstrumentList(), u.osc[(size_t) oscIndex()].instrument, true,
             [safe] (const juce::String& name)
             {
                 if (safe == nullptr) return;
@@ -371,15 +371,10 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int o, std::funct
     };
     addAndMakeVisible (instButton);
 
-    blockButton.getProperties().set ("fontSize", 13.0f);
-    blockButton.setTooltip (T ("OSC1 ili OSC2 (svoj filter, envelope i pitch) - klik menja"));
-    blockButton.onClick = [this] { edit ([] (OscSettings& s) { s.block = 1 - s.block; }); };
-    addAndMakeVisible (blockButton);
-
     mapButton.setButtonText ("MAPA");
     mapButton.getProperties().set ("fontSize", 11.0f);
     mapButton.setTooltip (T ("Otvori editor mapiranja za ovaj instrument"));
-    mapButton.onClick = [this] { editor.editMapping (proc.getUser (userIndex()).name, osc); };
+    mapButton.onClick = [this] { editor.editMapping (proc.getUser (userIndex()).name, oscIndex()); };
     addAndMakeVisible (mapButton);
 
     auto c3 = [this] { return proc.getC3Is60(); };
@@ -410,7 +405,7 @@ void OscRow::edit (std::function<void (OscSettings&)> fn)
     const int u = userIndex();
     if (u < 0 || u >= proc.getNumUsers()) return;
     auto user = proc.getUser (u);
-    fn (user.osc[(size_t) osc]);
+    fn (user.osc[(size_t) oscIndex()]);
     proc.updateUser (u, user);
 }
 
@@ -421,22 +416,14 @@ void OscRow::refresh()
     setEnabled (valid);
     if (! valid) return;
 
-    const auto& s = proc.getUser (u).osc[(size_t) osc];
+    const auto& s = proc.getUser (u).osc[(size_t) oscIndex()];
     onButton.setToggleState (s.on, juce::dontSendNotification);
     auto instText = s.instrument.isEmpty() ? T ("— instrument —") : s.instrument.fromFirstOccurrenceOf ("/", false, false);
     if (s.instrument.isNotEmpty() && ! proc.getInstrumentList().contains (s.instrument))
         instText = T ("⚠ nema: ") + s.instrument;
     instButton.setButtonText (instText);
     mapButton.setEnabled (s.instrument.isNotEmpty());
-    blockButton.setButtonText (s.block == 0 ? "OSC1" : "OSC2");
-    {
-        // kao na Kronosu: multisemplovi se broje posebno za OSC1 i OSC2 (MS1..MS8)
-        int msNumber = 1;
-        for (int k = 0; k < osc; ++k)
-            if (proc.getUser (u).osc[(size_t) k].block == s.block) ++msNumber;
-        onButton.setButtonText ("MS" + juce::String (msNumber));
-    }
-    blockButton.setColour (juce::TextButton::buttonColourId, (s.block == 0 ? Pal::accent : Pal::part[1]).withAlpha (0.45f));
+    onButton.setColour (juce::TextButton::buttonOnColourId, blockFn() == 0 ? Pal::accent : Pal::part[1]);
     setSliderValue (level, s.levelDb);
     setSliderValue (pan, s.pan);
     setSliderValue (transpose, s.transpose);
@@ -454,7 +441,7 @@ void OscRow::refresh()
 
 void OscRow::paint (juce::Graphics& g)
 {
-    g.setColour (osc % 2 == 0 ? Pal::panel : Pal::panel.brighter (0.03f));
+    g.setColour (row % 2 == 0 ? Pal::panel : Pal::panel.brighter (0.03f));
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 5.0f);
 }
 
@@ -465,11 +452,10 @@ void OscRow::resized()
     r.removeFromLeft (6);
     const int boxW = 82;
     juce::Slider* boxes[] = { &level, &pan, &transpose, &fine, &keyLow, &keyHigh, &velLow, &velHigh };
-    const int fixed = boxW * 8 + 56 + 6 + 52;
+    const int fixed = boxW * 8 + 56 + 6;
     auto instArea = r.removeFromLeft (r.getWidth() - fixed);
     instButton.setBounds (instArea);
     r.removeFromLeft (4);
-    blockButton.setBounds (r.removeFromLeft (50).reduced (2, 0));
     mapButton.setBounds (r.removeFromLeft (52));
     r.removeFromLeft (2);
     for (auto* b : boxes)
@@ -552,8 +538,8 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     {
         blockButtons[b].setButtonText (blockNames[b]);
         blockButtons[b].setColour (juce::TextButton::buttonOnColourId, b == 0 ? Pal::accent : Pal::part[1]);
-        blockButtons[b].setTooltip (T ("OSC1 / OSC2 kao na Kronosu. Svakom multisemplu gore biraš OSC1 ili OSC2."));
-        blockButtons[b].onClick = [this, b] { block = b; rebuildKnobs(); };
+        blockButtons[b].setTooltip (T ("OSC1 / OSC2 kao na Kronosu: gore se vide multisemplovi MS1-MS8 izabranog OSC-a, dole njegov zvuk."));
+        blockButtons[b].onClick = [this, b] { block = b; rebuildKnobs(); if (onBlockChanged) onBlockChanged(); };
         addAndMakeVisible (blockButtons[b]);
     }
     const char* secNames[] = { "PITCH", "FILTER", "AMP", "ZAJEDNIČKO", "EFEKAT" };
@@ -709,8 +695,7 @@ void SoundEditor::rebuildKnobs()
     const bool isBlock = section == Pitch || section == Filter || section == Amp;
     for (int b = 0; b < 2; ++b)
     {
-        blockButtons[b].setToggleState (isBlock && b == block, juce::dontSendNotification);
-        blockButtons[b].setEnabled (isBlock);
+        blockButtons[b].setToggleState (b == block, juce::dontSendNotification);
     }
     for (int s = 0; s < NumSections; ++s)
         sectionButtons[s].setToggleState (s == section, juce::dontSendNotification);
@@ -932,15 +917,16 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     nameEdit.onTextChange = [this] { edit ([this] (UserProgram& u) { u.name = nameEdit.getText(); }); };
     addAndMakeVisible (nameEdit);
 
-    const char* headers[] = { "Multisempl", "OSC", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
+    const char* headers[] = { "Multisempl", "", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
     for (int i = 0; i < 10; ++i)
     {
         styleLabel (headerLabels[i], T (headers[i]), 11.5f);
         addAndMakeVisible (headerLabels[i]);
     }
 
-    for (int o = 0; o < kNumOsc; ++o)
-        addAndMakeVisible (rows.add (new OscRow (p, e, o, [this] { return userIndex; })));
+    for (int o = 0; o < kMsPerOsc; ++o)
+        addAndMakeVisible (rows.add (new OscRow (p, e, o, [this] { return userIndex; }, [this] { return sound.getBlock(); })));
+    sound.onBlockChanged = [this] { for (auto* r : rows) r->refresh(); };
     addAndMakeVisible (sound);
 }
 
@@ -1034,10 +1020,9 @@ void UserPage::resized()
     auto header = r.removeFromTop (16).reduced (4, 0);
     header.removeFromLeft (70);
     const int boxW = 82;
-    const int fixed = boxW * 8 + 56 + 6 + 52;
+    const int fixed = boxW * 8 + 56 + 6;
     headerLabels[0].setBounds (header.removeFromLeft (header.getWidth() - fixed));
     header.removeFromLeft (4);
-    headerLabels[1].setBounds (header.removeFromLeft (40));
     headerLabels[2].setBounds (header.removeFromLeft (52));
     header.removeFromLeft (2);
     for (int i = 3; i < 9; ++i)

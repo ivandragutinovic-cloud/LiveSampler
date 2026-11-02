@@ -59,7 +59,8 @@ private:
 class OscRow : public juce::Component
 {
 public:
-    OscRow (LiveSamplerProcessor&, LiveSamplerEditor&, int osc, std::function<int()> userIndex);
+    // row = MS1..MS8; blockFn = trenutno izabran OSC1 (0) ili OSC2 (1)
+    OscRow (LiveSamplerProcessor&, LiveSamplerEditor&, int row, std::function<int()> userIndex, std::function<int()> blockFn);
     void refresh();
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -69,10 +70,11 @@ private:
 
     LiveSamplerProcessor& proc;
     LiveSamplerEditor& editor;
-    const int osc;
-    std::function<int()> userIndex;
+    const int row;
+    std::function<int()> userIndex, blockFn;
+    int oscIndex() const { return blockFn() * kMsPerOsc + row; }
 
-    juce::TextButton onButton, instButton, blockButton, mapButton;
+    juce::TextButton onButton, instButton, mapButton;
     juce::Slider level, pan, transpose, fine, keyLow, keyHigh, velLow, velHigh;
 };
 
@@ -94,6 +96,8 @@ class SoundEditor : public juce::Component
 public:
     SoundEditor (LiveSamplerProcessor&, std::function<int()> userIndex);
     void refresh();
+    int getBlock() const { return block; }
+    std::function<void()> onBlockChanged;
     void resized() override;
     void paint (juce::Graphics&) override;
 

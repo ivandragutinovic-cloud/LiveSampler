@@ -303,7 +303,8 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         if (vp == nullptr)
             return;
         auto& v = *vp;
-        const auto& sb = u.block[(size_t) juce::jlimit (0, 1, o.block)];
+        const int oscBlock = i / kMsPerOsc;
+        const auto& sb = u.block[(size_t) oscBlock];
 
         v.active = true;
         v.id = id;
@@ -312,7 +313,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.held = false;
         v.instrument = inst;
         v.sample = smp;
-        v.block = juce::jlimit (0, 1, o.block);
+        v.block = oscBlock;
         v.oscTranspose = o.transpose;
         v.pos = (double) smp->startOffset;
         v.pitchTarget = (double) oscPitch;

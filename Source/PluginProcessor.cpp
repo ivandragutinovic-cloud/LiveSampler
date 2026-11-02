@@ -475,6 +475,13 @@ namespace
         const float s = std::pow (2.0f, ((float) std::abs (v) - 60.0f) / 15.3f);
         return v < 0 ? -s : s;
     }
+    // LFO: 40 = 1.8 Hz (izmereno na Kronosu: 9 titraja za 5 s), 0 = 0.03 Hz, 99 = 30 Hz
+    float kLfoHz (int v)
+    {
+        const float x = (float) juce::jlimit (0, 99, v);
+        return x <= 40.0f ? 0.03f * std::pow (60.0f, x / 40.0f)
+                          : 1.8f * std::pow (30.0f / 1.8f, (x - 40.0f) / 59.0f);
+    }
     float kLevelDb (int v)   { return v <= 0 ? -60.0f : 40.0f * std::log10 ((float) v / 127.0f); }
 
     EnvSettings kAmpEg (const std::array<int, 8>& e)
@@ -518,7 +525,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         sb.resonance = (float) juce::jlimit (0, 99, q.resonance) / 99.0f;
         sb.filterEgInt = (float) q.filterEgInt / 99.0f * 5.0f;
         sb.filterEg = kFilterEg (q.filterEg);
-        sb.vibRate = kHz (q.lfo1Freq, 0.03f, 1000.0f);
+        sb.vibRate = kLfoHz (q.lfo1Freq);
         sb.vibDepth = kSemis (q.pitchLfo1Int) * 100.0f;
         sb.vibDelay = 0.0f;
         // pitch EG: nivoi jos nisu nadjeni u PCG-u, pa intenzitet ostaje 0 da ne pokvari visinu
@@ -526,7 +533,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje.
         // Xfade range ide od donje granice zone navise: gornja zona se tu pojacava,
         // donja se utisava (Linear/Power) ili svira punom jacinom (Layer).
-        int top = 127, prevRange = 0, prevCurve = 0;
+        int top = 127, prevRange = 0, prevCurve = 0, ms = 0;
         for (int z = 0; z < 8 && top >= 1; ++z)
         {
             const auto& zone = prog.osc[(size_t) o][(size_t) z];
@@ -542,12 +549,13 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             top = bottom - 1 + (lowerExists ? range : 0);
             prevRange = lowerExists ? range : 0;
             prevCurve = curve;
-            if (! zone.user || lo > hi || n >= kNumOsc) continue;
+            if (! zone.user || lo > hi || ms >= kMsPerOsc) continue;
 
             const auto inst = library.findKronosMultisample (zone.uuid, zone.ms);
             if (inst.isEmpty()) continue;
 
-            auto& os = u.osc[(size_t) n++];
+            auto& os = u.osc[(size_t) (o * kMsPerOsc + ms++)];
+            ++n;
             os.on = true;
             os.instrument = inst;
             os.block = o;

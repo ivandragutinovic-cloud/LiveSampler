@@ -4,7 +4,8 @@
 
 // Podaci koje korisnik pravi i cuva: User (zvuk od 8 oscilatora), Performans (8 delova), Terce.
 
-constexpr int kNumOsc = 8;
+constexpr int kMsPerOsc = 8;                 // MS1..MS8 u OSC1 i u OSC2 (kao Kronos)
+constexpr int kNumOsc = 2 * kMsPerOsc;       // 0..7 = OSC1, 8..15 = OSC2
 constexpr int kNumParts = 8;
 constexpr int kNumPerfBanks = 4;
 constexpr int kPerfPerBank = 16;
@@ -20,7 +21,7 @@ struct OscSettings
     float fineCents = 0.0f;
     int keyLow = 0, keyHigh = 127;
     int velLow = 1, velHigh = 127;
-    int block = 0;                      // 0 = Zvuk A, 1 = Zvuk B (kao OSC1/OSC2 na Kronosu)
+    int block = 0;                      // 0 = OSC1, 1 = OSC2 (uvek index / kMsPerOsc)
     int fadeIn = 0, fadeOut = 0;        // velocity crossfade (koliko koraka od donje / gornje granice)
     int fadeCurve = 0;                  // 0 linearno, 1 power
 };
