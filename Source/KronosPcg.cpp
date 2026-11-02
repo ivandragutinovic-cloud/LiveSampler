@@ -177,7 +177,11 @@ namespace Kronos
                 if (content + size > end || size == 0)
                     break;
 
-                if (id == "PCG1" || id == "PRG1" || id == "CMB1" || id == "DKT1")
+                if (id == "GLB1" && size > 4)
+                {
+                    globalChannel = (d[content + 2] & 0x0f) + 1;
+                }
+                else if (id == "PCG1" || id == "PRG1" || id == "CMB1" || id == "DKT1")
                 {
                     walk (content, content + size);
                 }

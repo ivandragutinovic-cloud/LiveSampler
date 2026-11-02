@@ -152,8 +152,8 @@ private:
     MasterEffects master;
     juce::AudioBuffer<float> mainBuf, reverbBuf, delayBuf;
     int maxBlock = 512;
-    juce::uint8 routed[16][128] {};
-    juce::uint8 harmonized[16][128] {};
+    juce::uint16 routed[16][128] {};       // bit = deo (16 delova)
+    juce::uint16 harmonized[16][128] {};
     int heldCount[128] {};
     bool tercaCapturing = false, recognizedInCapture = false;
     int capturedMask = 0;

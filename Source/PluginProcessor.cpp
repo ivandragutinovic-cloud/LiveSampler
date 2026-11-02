@@ -641,7 +641,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c)
         part.keyHigh = juce::jmax (tm.keyLow, tm.keyHigh);
         part.velLow = juce::jmin (tm.velLow, tm.velHigh);
         part.velHigh = juce::jmax (tm.velLow, tm.velHigh);
-        part.midiChannel = tm.channel;
+        // timbre na globalnom kanalu Kronosa svira sa klavijature kao Gch -> svi kanali
+        part.midiChannel = tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
         part.reverbSend = (float) tm.send1 / 127.0f;
         part.delaySend = (float) tm.send2 / 127.0f;
     }
@@ -910,7 +911,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
     const bool tOn = tercaOn.load();
     const int root = tercaRoot.load(), scale = tercaScale.load();
 
-    juce::uint8 used = 0, harm = 0;
+    juce::uint16 used = 0, harm = 0;
     for (int p = 0; p < kNumParts; ++p)
     {
         const auto& pr = c.parts[(size_t) p];
@@ -924,7 +925,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
 
         const int shift = part.transpose + part.octave * 12;
         parts[p].noteOn (note, note + shift, vel);
-        used |= (juce::uint8) (1 << p);
+        used |= (juce::uint16) (1 << p);
 
         if (tOn && part.terca && ! tercaCapturing)
         {
@@ -943,7 +944,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
                             if (harmonized[cc][n] & (1 << p))
                             {
                                 parts[p].noteOff (128 + n);
-                                harmonized[cc][n] &= (juce::uint8) ~(1 << p);
+                                harmonized[cc][n] &= (juce::uint16) ~(1 << p);
                             }
 
                 int hn[2];
@@ -952,7 +953,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
                 for (int k = 0; k < count; ++k)
                     parts[p].noteOn (128 + note, hn[k] + shift, hv, k > 0);
                 if (count > 0)
-                    harm |= (juce::uint8) (1 << p);
+                    harm |= (juce::uint16) (1 << p);
             }
         }
     }

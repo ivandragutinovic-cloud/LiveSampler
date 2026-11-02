@@ -1954,7 +1954,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                 juce::StringArray ch;
                 for (auto& tm : cb.timbres)
                 {
-                    const auto s = tm.channel == 0 ? juce::String ("Gch") : juce::String (tm.channel);
+                    const auto s = tm.channel == 0 || tm.channel == pcg->globalChannel ? juce::String ("Gch") : juce::String (tm.channel);
                     if (tm.play && ! ch.contains (s)) ch.add (s);
                 }
                 t = ch.joinIntoString (", ");

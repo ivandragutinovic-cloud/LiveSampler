@@ -77,6 +77,7 @@ namespace Kronos
         std::vector<Program> programs;
         std::vector<Combi> combis;
         int drumKits = 0;
+        int globalChannel = 1;   // Kronos GLOBAL MIDI kanal (iz GLB1)
         bool load (const juce::File& f, juce::String& error);
         const Program* findProgram (juce::uint32 bankId, int number) const;
     };
