@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "KronosPcg.h"
 #include "RomNames.h"
+#include "AutoLoop.h"
 #include <optional>
 
 namespace
@@ -254,6 +255,22 @@ public:
         midiLabel.setColour (juce::Label::textColourId, dim);
         addAndMakeVisible (midiLabel);
 
+        autoLoopToggle.setButtonText (juce::String::fromUTF8 ("Auto loop (za zvuke koji drže)"));
+        autoLoopToggle.setToggleState (true, juce::dontSendNotification);
+        addAndMakeVisible (autoLoopToggle);
+        for (auto [s, l, name, lo, hi, def] : { std::tuple<juce::Slider*, juce::Label*, const char*, double, double, double> { &xfadeMs, &xfadeLabel, "Crossfade (ms)", 0, 1000, 80 },
+                                                { &minLoopMs, &minLoopLabel, "Min loop (ms)", 30, 5000, 300 } })
+        {
+            l->setText (name, juce::dontSendNotification);
+            l->setColour (juce::Label::textColourId, dim);
+            addAndMakeVisible (l);
+            s->setRange (lo, hi, 1);
+            s->setValue (def);
+            s->setSliderStyle (juce::Slider::IncDecButtons);
+            s->setTextBoxStyle (juce::Slider::TextBoxLeft, false, 56, 24);
+            addAndMakeVisible (s);
+        }
+
         folderButton.setButtonText (juce::String::fromUTF8 ("Folder za semplove..."));
         folderButton.onClick = [this] { chooseFolder(); };
         addAndMakeVisible (folderButton);
@@ -286,7 +303,7 @@ public:
 
         startTimerHz (10);
         updateInfo();
-        setSize (1180, 820);
+        setSize (1180, 880);
         juce::Logger::writeToLog ("MainComponent: gotovo");
     }
 
@@ -430,6 +447,14 @@ public:
             }
             c.removeFromTop (4);
         }
+        auto rl = c.removeFromTop (30);
+        autoLoopToggle.setBounds (rl.removeFromLeft (240));
+        xfadeLabel.setBounds (rl.removeFromLeft (110));
+        xfadeMs.setBounds (rl.removeFromLeft (110).reduced (0, 2));
+        rl.removeFromLeft (10);
+        minLoopLabel.setBounds (rl.removeFromLeft (110));
+        minLoopMs.setBounds (rl.removeFromLeft (110).reduced (0, 2));
+        c.removeFromTop (4);
         auto r3 = c.removeFromTop (32);
         folderButton.setBounds (r3.removeFromLeft (180));
         r3.removeFromLeft (10);
@@ -959,12 +984,16 @@ private:
         settings.velocity = (int) velocity.getValue();
         settings.hold = hold.getValue();
         settings.release = release.getValue();
+        settings.autoLoop = autoLoopToggle.getToggleState();
+        settings.xfadeMs = xfadeMs.getValue();
+        settings.minLoopMs = minLoopMs.getValue();
         outFolder.createDirectory();
         startButton.setButtonText ("STOP");
         startThread();
     }
 
-    struct Settings { int channel = 1, low = 24, high = 108, step = 3, velocity = 127; double hold = 6, release = 3; } settings;
+    struct Settings { int channel = 1, low = 24, high = 108, step = 3, velocity = 127; double hold = 6, release = 3;
+                      bool autoLoop = true; double xfadeMs = 80, minLoopMs = 300; } settings;
 
     void setStatus (const juce::String& s)
     {
@@ -1060,7 +1089,27 @@ private:
         file.deleteFile();
         std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (file);
         juce::WavAudioFormat wav;
-        auto writer = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (2).withBitsPerSample (24));
+        // auto loop: nadji loop u delu koji drzi, upisi crossfade u sempl i loop tacke u WAV (smpl)
+        std::unordered_map<juce::String, juce::String> meta;
+        meta["MidiUnityNote"] = juce::String (note);
+        if (settings.autoLoop)
+        {
+            AutoLoop::Settings ls;
+            ls.crossfadeSec = settings.xfadeMs * 0.001;
+            ls.minLoopSec = settings.minLoopMs * 0.001;
+            ls.maxLoopSec = juce::jmax (ls.minLoopSec + 0.1, settings.hold * 0.6);
+            const auto lr = AutoLoop::find (outBuf, outLen, sr, ls);
+            if (lr.found)
+            {
+                AutoLoop::bakeCrossfade (outBuf, lr.start, lr.end, lr.crossfade);
+                meta["NumSampleLoops"] = "1";
+                meta["Loop0Type"] = "0";
+                meta["Loop0Start"] = juce::String (lr.start);
+                meta["Loop0End"] = juce::String (lr.end - 1);
+            }
+        }
+        auto writer = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (2).withBitsPerSample (24)
+                                                   .withMetadataValues (meta));
         if (writer == nullptr) return false;
         writer->writeFromAudioSampleBuffer (outBuf, 0, outLen);
         return true;
@@ -1100,7 +1149,9 @@ private:
     juce::TextEditor search;
     juce::ListBox sourceList, neededList;
     juce::ComboBox templateBox, bankBox, midiOut, midiInBox;
-    juce::ToggleButton sysexMode;
+    juce::ToggleButton sysexMode, autoLoopToggle;
+    juce::Slider xfadeMs, minLoopMs;
+    juce::Label xfadeLabel, minLoopLabel;
     juce::TextButton readTemplateButton;
     juce::Label templateInfo, midiInLabel;
     std::unique_ptr<juce::MidiInput> midiIn;

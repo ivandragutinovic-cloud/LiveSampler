@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "AutoLoop.h"
 
 //==============================================================================
 // Grafik: tasteri levo-desno, jacina udarca dole-gore. Zone se prevlace misem.
@@ -52,12 +53,15 @@ class WaveEditor : public juce::Component
 public:
     WaveEditor();
 
-    struct Points { int start = 0, loopStart = 0, end = 0; bool loop = false; };
+    struct Points { int start = 0, loopStart = 0, end = 0; bool loop = false; int xfade = 0; };
     void setSample (SamplePtr s, const Points& p);
     void clear();
 
     // finished = pusten mis / upisana vrednost (za undo)
     std::function<void (const Points&, bool finished)> onChange;
+    std::function<void()> onAutoAll;        // auto loop za sve zone instrumenta
+    AutoLoop::Settings autoSettings() const;
+    void runAutoLoop();
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -88,7 +92,9 @@ private:
     double panStartView = 0.0;
     float panStartX = 0.0f;
 
-    juce::TextButton sampleMode, loopMode, fitButton;
+    juce::TextButton sampleMode, loopMode, fitButton, autoButton, autoAllButton;
+    juce::Slider xfadeMs, minLoopMs, maxLoopMs;
+    juce::Label xfadeLabel, minLabel, maxLabel, autoInfo;
     juce::ToggleButton loopToggle, zeroToggle;
     juce::Label labels[3];
     juce::Slider boxes[3];

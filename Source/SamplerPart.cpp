@@ -328,12 +328,14 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             v.loop = zone->loop;
             v.loopStart = zone->loopStart;
             v.loopEnd = zone->loopEnd;
+            v.loopXfade = juce::jlimit (0, juce::jmin (zone->loopStart, (zone->loopEnd - zone->loopStart) / 2), zone->loopXfade);
         }
         else
         {
             v.loop = smp->hasLoop && zone->loop;
             v.loopStart = smp->loopStart;
             v.loopEnd = smp->loopEnd;
+            v.loopXfade = 0;
         }
         if (keyOff)
             v.loop = false;   // keyoff sempl se odsvira jednom
@@ -793,10 +795,18 @@ void SamplerPart::renderVoices (int start, int num)
         const int loopLen = loopEnd - loopStart;
         const int endPos = loop ? len : juce::jlimit (1, len, v.endPos > 0 ? v.endPos : len);
 
+        const int xf = loop ? v.loopXfade : 0;
+        const int xfStart = loopEnd - xf;
         auto fetch = [&] (const float* d, int idx) -> float
         {
             if (loop && idx >= loopEnd) idx -= loopLen;
             if (idx < 0) idx = 0;
+            if (xf > 0 && idx >= xfStart && idx < loopEnd)
+            {
+                // crossfade loop: kraj se pretapa u ono sto je pred pocetkom loop-a
+                const float w = (float) (idx - xfStart) / (float) xf;
+                return d[idx] * (1.0f - w) + d[idx - loopLen] * w;
+            }
             return idx < endPos ? d[idx] : 0.0f;
         };
 

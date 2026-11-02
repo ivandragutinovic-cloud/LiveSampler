@@ -35,6 +35,7 @@ struct Zone
     int sampleStart = 0;               // > 0: pocetak sempla (inace automatski bez tisine)
     int loopStart = -1, loopEnd = -1;  // loop zone (Kontakt / editor), ima prednost nad loop-om sempla
     int sampleEnd = -1;                // > 0: kraj sempla kad nema loop-a (editor)
+    int loopXfade = 0;                 // crossfade pred krajem loop-a (semplovi)
 
     bool hasOwnLoop() const noexcept   { return loopStart >= 0 && loopEnd > loopStart + 16; }
 

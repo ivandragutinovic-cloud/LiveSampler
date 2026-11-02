@@ -287,6 +287,43 @@ WaveEditor::WaveEditor()
     zeroToggle.setToggleState (true, juce::dontSendNotification);
     addAndMakeVisible (zeroToggle);
 
+    autoButton.setButtonText ("AUTO LOOP");
+    autoButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
+    autoButton.setTooltip (T ("Sam nađe loop u delu koji drži i podesi crossfade"));
+    autoButton.onClick = [this] { runAutoLoop(); };
+    autoAllButton.setButtonText (T ("AUTO LOOP SVE ZONE"));
+    autoAllButton.setTooltip (T ("Auto loop za sve zone ovog instrumenta (zvuci koji ne drže ostaju bez loop-a)"));
+    autoAllButton.onClick = [this] { if (onAutoAll) onAutoAll(); };
+    for (auto* b : { &autoButton, &autoAllButton }) { b->getProperties().set ("fontSize", 12.0f); addAndMakeVisible (b); }
+
+    auto setupMs = [this] (juce::Slider& s, juce::Label& l, const juce::String& name, double lo, double hi, double def)
+    {
+        s.setSliderStyle (juce::Slider::IncDecButtons);
+        s.setRange (lo, hi, 1);
+        s.setValue (def, juce::dontSendNotification);
+        s.setTextValueSuffix (" ms");
+        s.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 22);
+        l.setText (name, juce::dontSendNotification);
+        l.setFont (juce::FontOptions (12.0f));
+        l.setColour (juce::Label::textColourId, Pal::dim);
+        l.setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (s);
+        addAndMakeVisible (l);
+    };
+    setupMs (xfadeMs, xfadeLabel, "Crossfade", 0, 1000, 80);
+    setupMs (minLoopMs, minLabel, "Min loop", 30, 5000, 300);
+    setupMs (maxLoopMs, maxLabel, "Max loop", 100, 20000, 3000);
+    xfadeMs.onValueChange = [this]
+    {
+        if (updating || sample == nullptr) return;
+        auto np = pts;
+        np.xfade = (int) (xfadeMs.getValue() * 0.001 * sample->sampleRate);
+        apply (np, true);
+    };
+    autoInfo.setFont (juce::FontOptions (12.0f));
+    autoInfo.setColour (juce::Label::textColourId, Pal::lcdText);
+    addAndMakeVisible (autoInfo);
+
     const char* names[] = { "Start", "Loop start", "End" };
     for (int i = 0; i < 3; ++i)
     {
@@ -309,6 +346,38 @@ WaveEditor::WaveEditor()
         addAndMakeVisible (boxes[i]);
     }
     clear();
+}
+
+AutoLoop::Settings WaveEditor::autoSettings() const
+{
+    AutoLoop::Settings s;
+    s.crossfadeSec = xfadeMs.getValue() * 0.001;
+    s.minLoopSec = minLoopMs.getValue() * 0.001;
+    s.maxLoopSec = juce::jmax (s.minLoopSec + 0.05, maxLoopMs.getValue() * 0.001);
+    return s;
+}
+
+void WaveEditor::runAutoLoop()
+{
+    if (sample == nullptr) return;
+    const auto r = AutoLoop::find (sample->buffer, pts.end > 0 ? juce::jmax (pts.end, sample->buffer.getNumSamples()) : sample->buffer.getNumSamples(),
+                                   sample->sampleRate, autoSettings());
+    if (! r.found)
+    {
+        autoInfo.setText (T ("Loop nije nađen: ") + r.reason, juce::dontSendNotification);
+        return;
+    }
+    auto np = pts;
+    np.loop = true;
+    np.loopStart = r.start;
+    np.end = r.end;
+    np.xfade = r.crossfade;
+    np.start = juce::jmin (np.start, r.start);
+    autoInfo.setText (T ("Loop nađen, poklapanje ") + juce::String (juce::roundToInt (r.quality * 100)) + " %", juce::dontSendNotification);
+    loopView = true;
+    sampleMode.setToggleState (false, juce::dontSendNotification);
+    loopMode.setToggleState (true, juce::dontSendNotification);
+    apply (np, true);
 }
 
 void WaveEditor::clear()
@@ -341,6 +410,8 @@ void WaveEditor::updateBoxes()
     boxes[1].setValue (pts.loopStart, juce::dontSendNotification);
     boxes[2].setValue (pts.end, juce::dontSendNotification);
     boxes[1].setEnabled (sample != nullptr && pts.loop);
+    xfadeMs.setValue (sample != nullptr ? pts.xfade * 1000.0 / sample->sampleRate : 0.0, juce::dontSendNotification);
+    xfadeMs.setEnabled (sample != nullptr && pts.loop);
     labels[1].setAlpha (pts.loop ? 1.0f : 0.4f);
     loopToggle.setToggleState (pts.loop, juce::dontSendNotification);
 }
@@ -373,6 +444,7 @@ void WaveEditor::apply (Points np, bool finished)
     np.end = juce::jlimit (32, len, np.end);
     np.start = juce::jlimit (0, np.end - 16, np.start);
     np.loopStart = juce::jlimit (np.start, np.end - 16, np.loopStart);
+    np.xfade = juce::jlimit (0, juce::jmin (np.loopStart, (np.end - np.loopStart) / 2), np.xfade);
     pts = np;
     updateBoxes();
     repaint();
@@ -381,7 +453,7 @@ void WaveEditor::apply (Points np, bool finished)
 
 juce::Rectangle<int> WaveEditor::waveArea() const
 {
-    return getLocalBounds().withTrimmedTop (32).reduced (2);
+    return getLocalBounds().withTrimmedTop (62).reduced (2);
 }
 
 double WaveEditor::xToSample (float x) const
@@ -488,6 +560,12 @@ void WaveEditor::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xffffd23d).withAlpha (0.12f));
         const float xl = sampleToX (pts.loopStart);
         g.fillRect (juce::Rectangle<float> (xl, (float) a.getY(), juce::jmax (0.0f, xe - xl), (float) a.getHeight()));
+        if (pts.xfade > 0)
+        {
+            const float xx = sampleToX (pts.end - pts.xfade);
+            g.setColour (juce::Colour (0xffff8a3d).withAlpha (0.18f));
+            g.fillRect (juce::Rectangle<float> (xx, (float) a.getY(), juce::jmax (0.0f, xe - xx), (float) a.getHeight()));
+        }
     }
     g.setColour (Pal::panelHi);
     g.drawHorizontalLine ((int) cy, (float) a.getX(), (float) a.getRight());
@@ -527,6 +605,16 @@ void WaveEditor::resized()
         labels[i].setBounds (top.removeFromLeft (i == 1 ? 70 : 42));
         boxes[i].setBounds (top.removeFromLeft (150).reduced (2, 2));
     }
+    auto row2 = getLocalBounds().withTrimmedTop (31).removeFromTop (28);
+    autoButton.setBounds (row2.removeFromLeft (100).reduced (1, 2));
+    autoAllButton.setBounds (row2.removeFromLeft (150).reduced (1, 2));
+    row2.removeFromLeft (6);
+    for (auto [l, s] : { std::pair<juce::Label*, juce::Slider*> { &xfadeLabel, &xfadeMs }, { &minLabel, &minLoopMs }, { &maxLabel, &maxLoopMs } })
+    {
+        l->setBounds (row2.removeFromLeft (70));
+        s->setBounds (row2.removeFromLeft (150).reduced (2, 2));
+    }
+    autoInfo.setBounds (row2.reduced (6, 0));
 }
 
 void WaveEditor::mouseDown (const juce::MouseEvent& e)
@@ -614,6 +702,29 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     }
     viewButtons[0].setToggleState (true, juce::dontSendNotification);
     addChildComponent (waveEditor);
+    waveEditor.onAutoAll = [this]
+    {
+        if (inst == nullptr) return;
+        auto z = zones;
+        int found = 0, total = 0;
+        for (auto& zz : z)
+        {
+            if (zz.sample < 0 || zz.sample >= (int) inst->samples.size()) continue;
+            ++total;
+            const auto& s = *inst->samples[(size_t) zz.sample];
+            const auto r = AutoLoop::find (s.buffer, s.buffer.getNumSamples(), s.sampleRate, waveEditor.autoSettings());
+            if (! r.found) continue;
+            zz.loop = true;
+            zz.loopStart = r.start;
+            zz.loopEnd = r.end;
+            zz.loopXfade = r.crossfade;
+            if (zz.sampleStart > r.start) zz.sampleStart = 0;
+            ++found;
+        }
+        commit (z, true);
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto loop",
+            T ("Loop nađen za ") + juce::String (found) + T (" od ") + juce::String (total) + T (" zona. Sačuvaj mapu dugmetom Sačuvaj."));
+    };
     waveEditor.onChange = [this] (const WaveEditor::Points& p, bool)
     {
         editSelected ([p] (Zone& z)
@@ -625,6 +736,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
             {
                 z.loopStart = p.loopStart;
                 z.loopEnd = p.end;
+                z.loopXfade = p.xfade;
             }
         }, true);
     };
@@ -1105,6 +1217,7 @@ void MappingEditor::updateWave()
     p.loopStart = z.hasOwnLoop() ? z.loopStart : (s->hasLoop ? s->loopStart : p.start);
     p.end = p.loop ? (z.hasOwnLoop() ? z.loopEnd : s->loopEnd) : (z.sampleEnd > 0 ? z.sampleEnd : endDefault);
     p.end = juce::jlimit (32, len, p.end);
+    p.xfade = z.hasOwnLoop() ? z.loopXfade : 0;
     waveEditor.setSample (s, p);
 }
 
@@ -1279,7 +1392,7 @@ void MappingEditor::resized()
         viewButtons[1].setBounds (vb.removeFromLeft (170).reduced (1, 0));
         r.removeFromTop (4);
     }
-    if (waveView) waveEditor.setBounds (r.removeFromTop (250));
+    if (waveView) waveEditor.setBounds (r.removeFromTop (290));
     else          mapView.setBounds (r.removeFromTop (172));
     r.removeFromTop (10);
 

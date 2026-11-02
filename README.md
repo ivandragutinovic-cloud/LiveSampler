@@ -117,6 +117,10 @@ Stranica **MAPIRANJE** (ili dugme MAPA kod oscilatora na stranici USER) otvara e
 - **SAMPLE / LOOP EDIT** (dugme iznad grafika): oblik talasa izabrane zone. Start (S), Loop start i
   End (E) se vuku mišem ili upisuju; Loop uključuje/isključuje loop; "Na nulu" pomera tačke na prolaz
   kroz nulu. LOOP EDIT pokazuje spoj kraja i početka loop-a. Točkić zumira, prevlačenje pomera prikaz.
+- **AUTO LOOP** (u SAMPLE / LOOP EDIT): sam nađe loop u delu zvuka koji drži i podesi crossfade
+  (pretapanje pred krajem loop-a, čuje se odmah, fajl se ne menja). **AUTO LOOP SVE ZONE** radi isto za
+  ceo instrument; zvuci koji opadaju (klavir, gitara) ostaju bez loop-a. Podešavanja: Crossfade, Min i
+  Max dužina loop-a.
 - **Sve − / + oktava**: kad ceo instrument svira oktavu pogrešno.
 - **Rasponi po root**: ponovo deli tastere između zona prema root notama.
 - Sve promene se čuju odmah dok sviraš. **Poništi** (Ctrl+Z) vraća korak nazad.
@@ -228,6 +232,7 @@ multisemplove koje koriste tvoji programi i kombiji, da bi ih Live Sampler svira
    učitaj samo u tu banku.
 3. **Audio ulaz**: Kronos USB audio. **MIDI izlaz**: Kronos. Podesi **Bank CC0 / CC32** tako da
    **Test** na Kronosu izabere prvi novi program. Zatim **START**.
+   - **Auto loop**: za zvuke koji drže sam nađe loop, upiše crossfade u sempl i loop u WAV.
    - Snima se svaki treći ton (podesivo) punom jačinom; u Live Sampleru svaki sempl pokriva i polustepen
      ispod i iznad.
    - Postojeći snimci se preskaču, pa snimanje može da se prekine i nastavi.

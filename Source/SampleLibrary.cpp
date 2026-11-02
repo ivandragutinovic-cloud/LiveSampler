@@ -75,6 +75,7 @@ bool Instrument::saveMap() const
         e->setAttribute ("fixedPitch", z.fixedPitch ? 1 : 0);
         if (z.sampleStart > 0) e->setAttribute ("sampleStart", z.sampleStart);
         if (z.sampleEnd > 0) e->setAttribute ("sampleEnd", z.sampleEnd);
+        if (z.loopXfade > 0) e->setAttribute ("loopXfade", z.loopXfade);
         if (z.hasOwnLoop())
         {
             e->setAttribute ("loopStart", z.loopStart);
@@ -1358,6 +1359,7 @@ bool SampleLibrary::applyMapFile (Instrument& inst)
         z.loopStart = e->getIntAttribute ("loopStart", -1);
         z.loopEnd = e->getIntAttribute ("loopEnd", -1);
         z.sampleEnd = e->getIntAttribute ("sampleEnd", -1);
+        z.loopXfade = juce::jmax (0, e->getIntAttribute ("loopXfade", 0));
         zones.push_back (z);
         used.insert (z.sample);
     }
