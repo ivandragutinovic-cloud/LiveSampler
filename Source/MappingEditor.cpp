@@ -634,14 +634,21 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     title.setColour (juce::Label::textColourId, Pal::master);
     addAndMakeVisible (title);
 
-    for (int i = 0; i < kNumOsc; ++i)
+    for (int b = 0; b < kNumBlocks; ++b)
     {
-        oscButtons[i].setButtonText ("MS" + juce::String (i % kMsPerOsc + 1));
-        oscButtons[i].setTooltip (juce::String (i < kMsPerOsc ? "OSC1" : "OSC2") + " MS" + juce::String (i % kMsPerOsc + 1));
-        oscButtons[i].setColour (juce::TextButton::buttonOnColourId, i < kMsPerOsc ? Pal::accent : Pal::part[1]);
-        oscButtons[i].getProperties().set ("fontSize", 12.0f);
-        oscButtons[i].onClick = [this, i] { setOsc (i); };
-        addAndMakeVisible (oscButtons[i]);
+        blockSel[b].setButtonText ("OSC" + juce::String (b + 1));
+        blockSel[b].setColour (juce::TextButton::buttonOnColourId, Pal::part[b]);
+        blockSel[b].getProperties().set ("fontSize", 10.5f);
+        blockSel[b].onClick = [this, b] { setOsc (b * kMsPerOsc + osc % kMsPerOsc); };
+        addAndMakeVisible (blockSel[b]);
+    }
+    for (int m = 0; m < kMsPerOsc; ++m)
+    {
+        msSel[m].setButtonText ("MS" + juce::String (m + 1));
+        msSel[m].setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        msSel[m].getProperties().set ("fontSize", 10.5f);
+        msSel[m].onClick = [this, m] { setOsc ((osc / kMsPerOsc) * kMsPerOsc + m); };
+        addAndMakeVisible (msSel[m]);
     }
     userLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     userLabel.setColour (juce::Label::textColourId, Pal::dim);
@@ -903,8 +910,13 @@ void MappingEditor::setUserOsc (int userIndex, int o)
 {
     userIdx = userIndex;
     osc = juce::jlimit (0, kNumOsc - 1, o);
-    for (int i = 0; i < kNumOsc; ++i)
-        oscButtons[i].setToggleState (i == osc, juce::dontSendNotification);
+    for (int b = 0; b < kNumBlocks; ++b)
+        blockSel[b].setToggleState (b == osc / kMsPerOsc, juce::dontSendNotification);
+    for (int m = 0; m < kMsPerOsc; ++m)
+    {
+        msSel[m].setToggleState (m == osc % kMsPerOsc, juce::dontSendNotification);
+        msSel[m].setColour (juce::TextButton::buttonOnColourId, Pal::part[osc / kMsPerOsc]);
+    }
     refresh();
 }
 
@@ -916,8 +928,14 @@ void MappingEditor::refresh()
         const auto& u = proc.getUser (userIdx);
         name = u.osc[(size_t) osc].instrument;
         userLabel.setText ("USER: " + u.name, juce::dontSendNotification);
-        for (int i = 0; i < kNumOsc; ++i)
-            oscButtons[i].setAlpha (u.osc[(size_t) i].instrument.isNotEmpty() ? 1.0f : 0.4f);
+        for (int b = 0; b < kNumBlocks; ++b)
+        {
+            bool any = false;
+            for (int m = 0; m < kMsPerOsc; ++m) any = any || u.osc[(size_t) (b * kMsPerOsc + m)].instrument.isNotEmpty();
+            blockSel[b].setAlpha (any ? 1.0f : 0.4f);
+        }
+        for (int m = 0; m < kMsPerOsc; ++m)
+            msSel[m].setAlpha (u.osc[(size_t) ((osc / kMsPerOsc) * kMsPerOsc + m)].instrument.isNotEmpty() ? 1.0f : 0.4f);
         if (name.isNotEmpty() && proc.getLoadedInstrument (name) == nullptr)
             proc.ensureLoaded (name);   // ucitaj i instrumente koji nisu u performansu
     }
@@ -1219,11 +1237,11 @@ void MappingEditor::resized()
 
     auto header = r.removeFromTop (34);
     title.setBounds (header.removeFromLeft (112));
-    for (int i = 0; i < kNumOsc; ++i)
-    {
-        if (i == kMsPerOsc) header.removeFromLeft (10);   // razmak izmedju OSC1 i OSC2
-        oscButtons[i].setBounds (header.removeFromLeft (44).reduced (1, 0));
-    }
+    for (auto& b : blockSel)
+        b.setBounds (header.removeFromLeft (38).reduced (1, 0));
+    header.removeFromLeft (10);
+    for (auto& b : msSel)
+        b.setBounds (header.removeFromLeft (36).reduced (1, 0));
     header.removeFromLeft (10);
     closeButton.setBounds (header.removeFromRight (80));
     header.removeFromRight (4);

@@ -4,11 +4,14 @@
 
 // Podaci koje korisnik pravi i cuva: User (zvuk od 8 oscilatora), Performans (8 delova), Terce.
 
-constexpr int kMsPerOsc = 8;                 // MS1..MS8 u OSC1 i u OSC2 (kao Kronos)
-constexpr int kNumOsc = 2 * kMsPerOsc;       // 0..7 = OSC1, 8..15 = OSC2
+constexpr int kMsPerOsc = 8;                 // MS1..MS8 u svakom OSC-u (kao Kronos)
+constexpr int kNumBlocks = 8;                // OSC1..OSC8 (Kronos koristi OSC1 i OSC2)
+constexpr int kNumOsc = kNumBlocks * kMsPerOsc;   // index = OSC * 8 + MS
 constexpr int kNumParts = 16;               // kao 16 timbre-a u Kronos kombiju
-constexpr int kNumPerfBanks = 4;
-constexpr int kPerfPerBank = 16;
+constexpr int kNumPerfBanks = 16;            // 16 lista ...
+constexpr int kPerfPerBank = 128;            // ... po 128 performansa (kao Kronos)
+constexpr int kNumSetLists = 16;
+constexpr int kSetListSlots = 128;
 constexpr int kNumPerfSlots = kNumPerfBanks * kPerfPerBank;
 
 //==============================================================================
@@ -24,6 +27,10 @@ struct OscSettings
     int block = 0;                      // 0 = OSC1, 1 = OSC2 (uvek index / kMsPerOsc)
     int fadeIn = 0, fadeOut = 0;        // velocity crossfade (koliko koraka od donje / gornje granice)
     int fadeCurve = 0;                  // 0 linearno, 1 power
+    bool keyOff = false;                // svira kad se pusti taster (release / keyoff sempl)
+    float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;   // EQ ovog MS-a
+
+    bool hasEq() const { return std::abs (eqLowDb) > 0.05f || std::abs (eqMidDb) > 0.05f || std::abs (eqHighDb) > 0.05f; }
 };
 
 // Envelope kao na Kronosu: start -> attack nivo -> break nivo -> sustain -> release nivo
@@ -59,6 +66,15 @@ struct SoundBlock
     float filterLfoRate = 2.0f, filterLfoDepth = 0.0f;        // Hz, oktave
     float mwToCutoff = 0.0f, atToCutoff = 0.0f;               // oktave
 
+    // mono: samo tasteri u ovom opsegu sviraju mono/legato/portamento, ostali poly bez portamenta
+    int monoLow = 0, monoHigh = 127;
+
+    // prelaz (kao zica preko pragova): kad se drzi ton i odsvira sledeci, interval bira OSC.
+    // Ukljuceni OSC-ovi cine grupu; OSC bez intervala je osnovni (prvi ton), ostali se pale na svoje intervale.
+    bool articOn = false;
+    int articMask = 0;                  // bit k = interval od k+1 polustepena (1..24)
+    int articDir = 0;                   // 0 gore i dole, 1 samo gore, 2 samo dole
+
     // amp
     EnvSettings ampEg { 0.0f, 0.001f, 1.0f, 0.5f, 1.0f, 0.5f, 1.0f, 0.3f, 0.0f };
     float velSens = 0.8f, velCurve = 1.6f;
@@ -72,7 +88,7 @@ struct UserProgram
 {
     juce::String name { "Novi user" };
     std::array<OscSettings, kNumOsc> osc;
-    std::array<SoundBlock, 2> block;
+    std::array<SoundBlock, kNumBlocks> block;
 
     int voiceMode = VoiceMode::Poly;
     int priority = Priority::Last;
@@ -112,6 +128,19 @@ struct PerfPart
     float reverbSend = 0.2f, delaySend = 0.0f;
     bool terca = false;                 // ovaj deo dobija terce
     bool sustainPedal = true;
+};
+
+struct SetListSlot
+{
+    int perf = -1;                      // performans (lista * 128 + broj), -1 = prazno
+    juce::String label;                 // tekst na dugmetu (prazno = ime performansa)
+    int colour = 0;
+};
+
+struct SetList
+{
+    juce::String name;
+    std::array<SetListSlot, kSetListSlots> slots;
 };
 
 struct Performance

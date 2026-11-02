@@ -24,7 +24,8 @@ private:
     const juce::Colour colour;
 
     void showEq();
-    juce::TextButton onButton, userButton, editButton, eqButton, tercaButton, sustainButton;
+    void showPartMenu();
+    juce::TextButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton;
     ValueKnob volume, pan, reverb, delay;
     juce::Slider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
     juce::Label labels[7];
@@ -77,7 +78,9 @@ private:
     std::function<int()> userIndex, blockFn;
     int oscIndex() const { return blockFn() * kMsPerOsc + row; }
 
-    juce::TextButton onButton, instButton, mapButton;
+    void showMenu();
+    void showEq();
+    juce::TextButton onButton, menuButton, instButton, mapButton, keyOffButton, eqButton;
     juce::Slider level, pan, transpose, fine, keyLow, keyHigh, velLow, velHigh;
 };
 
@@ -104,7 +107,7 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
 
-    enum Section { Pitch = 0, Filter, Amp, Common, Effect, NumSections };
+    enum Section { Pitch = 0, Filter, Amp, MonoArtic, Common, Effect, NumSections };
 
     struct Param
     {
@@ -124,7 +127,13 @@ private:
     std::function<int()> userIndex;
     int section = Filter, block = 0;
 
-    juce::TextButton blockButtons[2], sectionButtons[NumSections];
+    juce::TextButton blockButtons[kNumBlocks], blockMenu, sectionButtons[NumSections];
+    void showBlockMenu();
+    // mono opseg i prelaz (za izabrani OSC)
+    juce::Label monoLabel, articLabel, articHelp;
+    juce::Slider monoLow, monoHigh;
+    juce::TextButton articOn, intervalButtons[24];
+    juce::ComboBox articDir;
     std::vector<std::vector<Param>> rows;
     juce::OwnedArray<ValueKnob> knobs;
     EnvelopeView envView;

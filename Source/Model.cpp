@@ -60,12 +60,17 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     e->setAttribute ("fxDepth", (double) fxDepth);
     e->setAttribute ("fxMix", (double) fxMix);
 
-    for (int b = 0; b < 2; ++b)
+    for (int b = 0; b < kNumBlocks; ++b)
     {
         const auto& sb = block[(size_t) b];
         auto* x = e->createNewChildElement ("Block");
         x->setAttribute ("index", b);
         x->setAttribute ("filterType", sb.filterType);
+        x->setAttribute ("monoLow", sb.monoLow);
+        x->setAttribute ("monoHigh", sb.monoHigh);
+        x->setAttribute ("articOn", sb.articOn);
+        x->setAttribute ("articMask", sb.articMask);
+        x->setAttribute ("articDir", sb.articDir);
        #define WRITE_F(n) x->setAttribute (#n, (double) sb.n);
         BLOCK_FLOATS (WRITE_F)
        #undef WRITE_F
@@ -77,6 +82,8 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     for (int i = 0; i < kNumOsc; ++i)
     {
         const auto& o = osc[(size_t) i];
+        if (! o.on && o.instrument.isEmpty())
+            continue;
         auto* x = e->createNewChildElement ("Osc");
         x->setAttribute ("index", i);
         x->setAttribute ("on", o.on);
@@ -93,6 +100,11 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
         x->setAttribute ("fadeOut", o.fadeOut);
         x->setAttribute ("fadeCurve", o.fadeCurve);
         x->setAttribute ("block", o.block);
+        x->setAttribute ("keyOff", o.keyOff);
+        x->setAttribute ("eqLow", (double) o.eqLowDb);
+        x->setAttribute ("eqMid", (double) o.eqMidDb);
+        x->setAttribute ("eqMidFreq", (double) o.eqMidFreq);
+        x->setAttribute ("eqHigh", (double) o.eqHighDb);
     }
     return e;
 }
@@ -127,9 +139,14 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         for (auto* x : e.getChildWithTagNameIterator ("Block"))
         {
             const int b = x->getIntAttribute ("index", -1);
-            if (b < 0 || b > 1) continue;
+            if (b < 0 || b >= kNumBlocks) continue;
             auto& sb = u.block[(size_t) b];
             sb.filterType = juce::jlimit (0, FilterType::Num - 1, x->getIntAttribute ("filterType", sb.filterType));
+            sb.monoLow = juce::jlimit (0, 127, x->getIntAttribute ("monoLow", 0));
+            sb.monoHigh = juce::jlimit (0, 127, x->getIntAttribute ("monoHigh", 127));
+            sb.articOn = x->getBoolAttribute ("articOn", false);
+            sb.articMask = x->getIntAttribute ("articMask", 0);
+            sb.articDir = juce::jlimit (0, 2, x->getIntAttribute ("articDir", 0));
            #define READ_F(n) sb.n = (float) x->getDoubleAttribute (#n, sb.n);
             BLOCK_FLOATS (READ_F)
            #undef READ_F
@@ -162,7 +179,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     for (auto* x : e.getChildWithTagNameIterator ("Osc"))
     {
         int i = x->getIntAttribute ("index", -1);
-        const int blk = juce::jlimit (0, 1, x->getIntAttribute ("block", i >= kMsPerOsc ? 1 : 0));
+        const int blk = juce::jlimit (0, kNumBlocks - 1, x->getIntAttribute ("block", i / kMsPerOsc));
         if (i < 0 || i >= kNumOsc) continue;
         if (i / kMsPerOsc != blk || taken[(size_t) i])
         {
@@ -188,6 +205,11 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         o.fadeIn = juce::jlimit (0, 127, x->getIntAttribute ("fadeIn", 0));
         o.fadeOut = juce::jlimit (0, 127, x->getIntAttribute ("fadeOut", 0));
         o.fadeCurve = x->getIntAttribute ("fadeCurve", 0);
+        o.keyOff = x->getBoolAttribute ("keyOff", false);
+        o.eqLowDb = (float) x->getDoubleAttribute ("eqLow", 0.0);
+        o.eqMidDb = (float) x->getDoubleAttribute ("eqMid", 0.0);
+        o.eqMidFreq = (float) x->getDoubleAttribute ("eqMidFreq", 1000.0);
+        o.eqHighDb = (float) x->getDoubleAttribute ("eqHigh", 0.0);
     }
     for (int i = 0; i < kNumOsc; ++i)
         u.osc[(size_t) i].block = i / kMsPerOsc;

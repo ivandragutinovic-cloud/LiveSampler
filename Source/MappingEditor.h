@@ -140,7 +140,7 @@ private:
     bool updatingUI = false;
 
     juce::Label title, instLabel, stateLabel, sampleInfo, hint;
-    juce::TextButton oscButtons[kNumOsc];
+    juce::TextButton blockSel[kNumBlocks], msSel[kMsPerOsc];   // izbor OSC-a i MS-a
     juce::Label userLabel;
     juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton;
 

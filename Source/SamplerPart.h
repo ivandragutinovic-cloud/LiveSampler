@@ -75,7 +75,8 @@ public:
 
     // audio nit
     void beginBlock (const PartRuntime* runtime, int numSamples);
-    void noteOn (int id, int pitch, int velocity, bool additive = false);   // id: 0-127 taster, 128+ terca
+    // id: 0-127 taster, 128-255 terca (prvi glas), additive = drugi glas terce (interno 256-383)
+    void noteOn (int id, int pitch, int velocity, bool additive = false);
     void noteOff (int id);
     void setSustain (bool down);
     void setPitchBend (float minus1to1) { bend = minus1to1; }
@@ -87,7 +88,7 @@ public:
                    juce::AudioBuffer<float>& delaySend, int numSamples);
 
     int getNumActiveVoices() const;
-    static constexpr int numIds = 256;
+    static constexpr int numIds = 384;
     static constexpr int controlRate = 16;   // modulacija se racuna na svakih 16 semplova
 
 private:
@@ -100,6 +101,9 @@ private:
         InstrumentPtr instrument;
         const SampleData* sample = nullptr;
         int block = 0;
+        int lane = -1, slot = 0;             // mono traka (-1 = poly)
+        bool eqOn = false;
+        Biquad eq[3];
         int oscTranspose = 0;
         double pos = 0.0, inc = 1.0;
         double pitch = 60.0, pitchTarget = 60.0, glideCoef16 = 0.0;
@@ -118,12 +122,30 @@ private:
     };
 
     Voice* findFreeVoice();
-    void startVoices (int id, int pitch, int velocity, double startPitch, bool glide);
+    // blockMask: koji OSC-ovi sviraju; keyOff: samo keyoff MS-ovi
+    void startVoices (int id, int pitch, int velocity, double startPitch, bool glide,
+                      juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff = false);
     void releaseVoice (Voice& v);
     void updateModulation (Voice& v);
     void setGlide (Voice& v, double fromPitch, bool glide);
-    int chooseMonoKey() const;
-    void soundMono (int id, bool transition);
+    struct MonoLane
+    {
+        std::vector<int> held;
+        int key = -1;
+        juce::uint32 serial = 0;
+        double lastPitch = -1.0;
+        int artic = -1;                      // OSC koji trenutno svira u grupi prelaza
+    };
+    static constexpr int numLanes = kNumBlocks + 1;   // svaki OSC + grupa prelaza
+    static constexpr int articLane = kNumBlocks;
+
+    int chooseMonoKey (const MonoLane&) const;
+    void laneNoteOn (int lane, int slot, int id);
+    void laneNoteOff (int lane, int slot, int id, bool sustainOn);
+    void soundMono (int lane, int slot, int id, bool transition);
+    int articDefault() const;
+    bool laneHasRange (int lane, int pitch) const;
+    void noteOffInternal (int id);
 
     static constexpr int maxVoices = 128;
     std::array<Voice, maxVoices> voices;
@@ -131,13 +153,13 @@ private:
     const PartRuntime* cfg = nullptr;
     double sampleRate = 44100.0;
     juce::uint64 ageCounter = 0;
-    juce::uint32 serialCounter = 0, monoSerial = 0;
-    int monoKey = -1;
+    juce::uint32 serialCounter = 0;
+    MonoLane lanes[numLanes][3];
+    std::array<juce::uint32, numIds> polyMaskOf {};    // koji OSC-ovi su svirali poly za ovaj id
     bool sustainDown = false;
     float bend = 0.0f, modWheel = 0.0f, aftertouch = 0.0f;
     double lastPitch = -1.0;
     int polyHeld = 0;
-    std::vector<int> heldKeys;                 // mono
     std::array<int, numIds> idPitch {}, idVel {};
 
     juce::AudioBuffer<float> partBuffer;

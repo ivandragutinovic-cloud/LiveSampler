@@ -213,11 +213,11 @@ void SamplerPart::prepare (double newSampleRate, int maxBlock)
 
     gainL.reset (sampleRate, 0.03);
     gainR.reset (sampleRate, 0.03);
-    heldKeys.clear();
-    heldKeys.reserve (numIds);
+    for (auto& row : lanes)
+        for (auto& L : row) { L.held.clear(); L.held.reserve (128); L.key = -1; L.artic = -1; }
+    polyMaskOf.fill (0);
     idPitch.fill (60);
     idVel.fill (100);
-    monoKey = -1;
     polyHeld = 0;
 }
 
@@ -275,20 +275,17 @@ void SamplerPart::setGlide (Voice& v, double fromPitch, bool glide)
     v.glideCoef16 = std::pow (coef, (double) controlRate);
 }
 
-void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitch, bool glide)
+void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitch, bool glide,
+                               juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff)
 {
     const auto& u = cfg->user;
-    const juce::uint32 serial = ++serialCounter;
-    if (id < 128)
-        monoSerial = serial;
-
     const float vel01 = (float) velocity / 127.0f;
 
     for (int i = 0; i < kNumOsc; ++i)
     {
         const auto& o = u.osc[(size_t) i];
         const auto& inst = cfg->inst[(size_t) i];
-        if (! o.on || inst == nullptr)
+        if (! o.on || inst == nullptr || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
             continue;
         if (pitch < o.keyLow || pitch > o.keyHigh || velocity < o.velLow || velocity > o.velHigh)
             continue;
@@ -307,9 +304,11 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         const auto& sb = u.block[(size_t) oscBlock];
 
         v.active = true;
-        v.id = id;
+        v.id = keyOff ? -1 : id;
         v.serial = serial;
-        v.keyDown = true;
+        v.lane = lane;
+        v.slot = slot;
+        v.keyDown = ! keyOff;
         v.held = false;
         v.instrument = inst;
         v.sample = smp;
@@ -336,6 +335,8 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             v.loopStart = smp->loopStart;
             v.loopEnd = smp->loopEnd;
         }
+        if (keyOff)
+            v.loop = false;   // keyoff sempl se odsvira jednom
         if (zone->sampleStart > 0 && zone->sampleStart < v.endPos - 16)
             v.pos = v.loop ? juce::jmin ((double) zone->sampleStart, (double) v.loopStart) : (double) zone->sampleStart;
 
@@ -378,6 +379,15 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.filter2.setType (FT::lowpass);
         v.filter.reset();
         v.filter2.reset();
+
+        v.eqOn = o.hasEq();
+        if (v.eqOn)
+        {
+            v.eq[0].set (Biquad::LowShelf, sampleRate, 150.0, 0.707, o.eqLowDb);
+            v.eq[1].set (Biquad::Peak, sampleRate, juce::jlimit (100.0, 8000.0, (double) o.eqMidFreq), 0.9, o.eqMidDb);
+            v.eq[2].set (Biquad::HighShelf, sampleRate, 6000.0, 0.707, o.eqHighDb);
+            for (auto& q : v.eq) q.reset();
+        }
         updateModulation (v);
     }
 }
@@ -453,52 +463,106 @@ void SamplerPart::releaseVoice (Voice& v)
     v.filterEnv.release();
 }
 
-int SamplerPart::chooseMonoKey() const
+int SamplerPart::chooseMonoKey (const MonoLane& L) const
 {
-    if (heldKeys.empty())
+    if (L.held.empty())
         return -1;
     switch (cfg != nullptr ? cfg->user.priority : Priority::Last)
     {
         case Priority::High:
         {
-            int best = heldKeys.front();
-            for (int k : heldKeys) if (idPitch[(size_t) k] > idPitch[(size_t) best]) best = k;
+            int best = L.held.front();
+            for (int k : L.held) if (idPitch[(size_t) k] > idPitch[(size_t) best]) best = k;
             return best;
         }
         case Priority::Low:
         {
-            int best = heldKeys.front();
-            for (int k : heldKeys) if (idPitch[(size_t) k] < idPitch[(size_t) best]) best = k;
+            int best = L.held.front();
+            for (int k : L.held) if (idPitch[(size_t) k] < idPitch[(size_t) best]) best = k;
             return best;
         }
         default:
-            return heldKeys.back();
+            return L.held.back();
     }
 }
 
-void SamplerPart::soundMono (int id, bool transition)
+// osnovni OSC grupe prelaza: ukljucen prelaz, bez intervala (ako takvog nema, prvi iz grupe)
+int SamplerPart::articDefault() const
 {
     const auto& u = cfg->user;
+    int first = -1;
+    for (int b = 0; b < kNumBlocks; ++b)
+    {
+        if (! u.block[(size_t) b].articOn) continue;
+        if (u.block[(size_t) b].articMask == 0) return b;
+        if (first < 0) first = b;
+    }
+    return first;
+}
+
+bool SamplerPart::laneHasRange (int lane, int pitch) const
+{
+    const auto& u = cfg->user;
+    int b = lane;
+    if (lane == articLane)
+    {
+        b = articDefault();
+        if (b < 0) return false;
+    }
+    const auto& sb = u.block[(size_t) b];
+    return pitch >= sb.monoLow && pitch <= sb.monoHigh;
+}
+
+void SamplerPart::soundMono (int lane, int slot, int id, bool transition)
+{
+    const auto& u = cfg->user;
+    auto& L = lanes[lane][slot];
     const int pitch = idPitch[(size_t) id];
 
     bool haveCurrent = false;
     double currentPitch = -1.0;
     for (auto& v : voices)
-        if (v.active && ! v.fadingOut && v.id < 128 && v.serial == monoSerial && (v.keyDown || v.held))
+        if (v.active && ! v.fadingOut && v.lane == lane && v.slot == slot && v.serial == L.serial && (v.keyDown || v.held))
         {
             if (! haveCurrent) currentPitch = v.pitch - v.oscTranspose;
             haveCurrent = true;
         }
 
+    // koji OSC svira
+    juce::uint32 mask = 1u << lane;
+    bool switching = false;
+    int chosen = lane;
+    if (lane == articLane)
+    {
+        chosen = articDefault();
+        if (transition && L.key >= 0 && L.artic >= 0)
+        {
+            const int interval = pitch - idPitch[(size_t) L.key];
+            const int dist = std::abs (interval);
+            chosen = L.artic;   // bez pogodjenog intervala ostaje OSC koji vec svira (legato)
+            for (int b = 0; b < kNumBlocks && dist >= 1 && dist <= 24; ++b)
+            {
+                const auto& sb = u.block[(size_t) b];
+                if (! sb.articOn || (sb.articMask & (1 << (dist - 1))) == 0) continue;
+                if ((sb.articDir == 1 && interval < 0) || (sb.articDir == 2 && interval > 0)) continue;
+                chosen = b;
+                break;
+            }
+            switching = chosen != L.artic;
+        }
+        if (chosen < 0) return;
+        mask = 1u << chosen;
+    }
+
     const bool glide = u.portaOn && (! u.portaFingered || transition);
-    const bool legato = u.voiceMode == VoiceMode::MonoLegato && transition && haveCurrent;
+    const bool legato = u.voiceMode == VoiceMode::MonoLegato && transition && haveCurrent && ! switching;
 
     if (legato)
     {
         // legato: ista nota nastavlja, menja se samo visina (bez novog attack-a)
         for (auto& v : voices)
         {
-            if (! v.active || v.fadingOut || v.id >= 128 || v.serial != monoSerial)
+            if (! v.active || v.fadingOut || v.lane != lane || v.slot != slot || v.serial != L.serial)
                 continue;
             const double from = v.pitch;
             v.id = id;
@@ -510,96 +574,166 @@ void SamplerPart::soundMono (int id, bool transition)
     }
     else
     {
-        const double from = haveCurrent ? currentPitch : lastPitch;
+        const double from = haveCurrent ? currentPitch : L.lastPitch;
         for (auto& v : voices)
-            if (v.active && ! v.fadingOut && v.id < 128 && v.serial == monoSerial)
-                v.fadingOut = true;
-        startVoices (id, pitch, idVel[(size_t) id], glide ? from : -1.0, glide);
+            if (v.active && ! v.fadingOut && v.lane == lane && v.slot == slot && v.serial == L.serial)
+            {
+                if (switching) releaseVoice (v);   // prelaz: prethodni MS se gasi svojim release-om
+                else v.fadingOut = true;
+            }
+        L.serial = ++serialCounter;
+        startVoices (id, pitch, idVel[(size_t) id], glide ? from : -1.0, glide, mask, L.serial, lane, slot);
     }
 
-    monoKey = id;
-    lastPitch = pitch;
+    if (lane == articLane) L.artic = chosen;
+    L.key = id;
+    L.lastPitch = pitch;
+}
+
+void SamplerPart::laneNoteOn (int lane, int slot, int id)
+{
+    auto& L = lanes[lane][slot];
+    const bool transition = ! L.held.empty();
+    L.held.erase (std::remove (L.held.begin(), L.held.end(), id), L.held.end());
+    L.held.push_back (id);
+    const int target = chooseMonoKey (L);
+    if (target == id && (target != L.key || ! transition))
+        soundMono (lane, slot, id, transition);
+}
+
+void SamplerPart::laneNoteOff (int lane, int slot, int id, bool sustainOn)
+{
+    auto& L = lanes[lane][slot];
+    const auto it = std::find (L.held.begin(), L.held.end(), id);
+    if (it == L.held.end())
+        return;
+    L.held.erase (it);
+    if (id != L.key)
+        return;
+
+    if (! L.held.empty())
+    {
+        soundMono (lane, slot, chooseMonoKey (L), true);   // vrati se na drzani taster
+        return;
+    }
+
+    for (auto& v : voices)
+    {
+        if (! v.active || v.fadingOut || v.lane != lane || v.slot != slot || v.serial != L.serial || ! v.keyDown)
+            continue;
+        v.keyDown = false;
+        if (sustainOn) v.held = true;
+        else releaseVoice (v);
+    }
+
+    // keyoff sempl za OSC koji je svirao
+    const int b = lane == articLane ? L.artic : lane;
+    if (b >= 0 && slot == 0)
+        startVoices (-1, idPitch[(size_t) id], idVel[(size_t) id], -1.0, false, 1u << b, ++serialCounter, -1, 0, true);
+
+    L.key = -1;
+    L.artic = -1;
 }
 
 void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
 {
-    if (cfg == nullptr || ! cfg->active || velocity <= 0 || id < 0 || id >= numIds)
+    if (cfg == nullptr || ! cfg->active || velocity <= 0 || id < 0 || id >= 256)
         return;
+
+    // drugi glas terce ima svoj id (256+), da bi mono terca imala dve nezavisne trake
+    if (additive && id >= 128)
+        id += 128;
+    const int slot = id / 128;
 
     const auto& u = cfg->user;
     pitch = juce::jlimit (0, 127, pitch);
     idPitch[(size_t) id] = pitch;
     idVel[(size_t) id] = velocity;
 
-    if (u.isMono() && id < 128)
-    {
-        const bool transition = ! heldKeys.empty();
-        heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), id), heldKeys.end());
-        heldKeys.push_back (id);
-        const int target = chooseMonoKey();
-        if (target == id && (target != monoKey || ! transition))
-            soundMono (id, transition);
-        return;
-    }
+    // koji OSC-ovi postoje
+    juce::uint32 present = 0;
+    for (int i = 0; i < kNumOsc; ++i)
+        if (u.osc[(size_t) i].on && cfg->inst[(size_t) i] != nullptr)
+            present |= 1u << (i / kMsPerOsc);
 
-    if (! additive)
+    juce::uint32 polyMask = 0;
+    bool articMono = false;
+    const int articDef = articDefault();
+    for (int b = 0; b < kNumBlocks; ++b)
+    {
+        if ((present & (1u << b)) == 0) continue;
+        const auto& sb = u.block[(size_t) b];
+        if (sb.articOn)
+        {
+            if (u.isMono() && laneHasRange (articLane, pitch)) articMono = true;
+            else if (b == articDef) polyMask |= 1u << b;   // van mono opsega svira samo osnovni OSC
+            continue;
+        }
+        if (u.isMono() && pitch >= sb.monoLow && pitch <= sb.monoHigh)
+            laneNoteOn (b, slot, id);
+        else
+            polyMask |= 1u << b;
+    }
+    if (articMono)
+        laneNoteOn (articLane, slot, id);
+
+    if (polyMask != 0)
+    {
         for (auto& v : voices)
-            if (v.active && v.id == id && ! v.fadingOut)
+            if (v.active && v.id == id && v.lane < 0 && ! v.fadingOut)
                 releaseVoice (v);
 
-    const bool glide = u.portaOn && id < 128 && lastPitch >= 0.0 && (! u.portaFingered || polyHeld > 0);
-    startVoices (id, pitch, velocity, glide ? lastPitch : -1.0, glide);
-
-    if (id < 128)
+        // portamento samo kad je ceo user poly (mono user van opsega svira poly bez portamenta)
+        const bool glide = ! u.isMono() && u.portaOn && id < 128 && lastPitch >= 0.0 && (! u.portaFingered || polyHeld > 0);
+        startVoices (id, pitch, velocity, glide ? lastPitch : -1.0, glide, polyMask, ++serialCounter, -1, slot);
+        polyMaskOf[(size_t) id] = polyMask;
+        if (id < 128)
+        {
+            lastPitch = pitch;
+            ++polyHeld;
+        }
+    }
+    else
     {
-        lastPitch = pitch;
-        ++polyHeld;
+        polyMaskOf[(size_t) id] = 0;
     }
 }
 
 void SamplerPart::noteOff (int id)
 {
-    if (id < 0 || id >= numIds)
+    if (id < 0 || id >= 256)
         return;
+    noteOffInternal (id);
+    if (id >= 128)
+        noteOffInternal (id + 128);   // drugi glas terce
+}
 
+void SamplerPart::noteOffInternal (int id)
+{
     const bool sustainOn = sustainDown && (cfg == nullptr || cfg->part.sustainPedal);
+    const int slot = id / 128;
 
-    if (cfg != nullptr && cfg->user.isMono() && id < 128)
-    {
-        heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), id), heldKeys.end());
-        if (id != monoKey)
-            return;
+    for (int lane = 0; lane < numLanes; ++lane)
+        laneNoteOff (lane, slot, id, sustainOn);
 
-        if (! heldKeys.empty())
-        {
-            soundMono (chooseMonoKey(), true);   // vrati se na drzani taster
-            return;
-        }
-
-        for (auto& v : voices)
-        {
-            if (! v.active || v.fadingOut || v.id != id || ! v.keyDown)
-                continue;
-            v.keyDown = false;
-            if (sustainOn) v.held = true;
-            else releaseVoice (v);
-        }
-        monoKey = -1;
+    const auto mask = polyMaskOf[(size_t) id];
+    if (mask == 0)
         return;
-    }
-
+    polyMaskOf[(size_t) id] = 0;
     if (id < 128 && polyHeld > 0)
         --polyHeld;
 
     for (auto& v : voices)
     {
-        if (v.active && v.id == id && v.keyDown && ! v.fadingOut)
+        if (v.active && v.id == id && v.lane < 0 && v.keyDown && ! v.fadingOut)
         {
             v.keyDown = false;
             if (sustainOn) v.held = true;
             else releaseVoice (v);
         }
     }
+    if (cfg != nullptr && cfg->active && slot == 0)
+        startVoices (-1, idPitch[(size_t) id], idVel[(size_t) id], -1.0, false, mask, ++serialCounter, -1, 0, true);
 }
 
 void SamplerPart::setSustain (bool down)
@@ -613,8 +747,9 @@ void SamplerPart::setSustain (bool down)
 
 void SamplerPart::allNotesOff (bool immediate)
 {
-    heldKeys.clear();
-    monoKey = -1;
+    for (auto& row : lanes)
+        for (auto& L : row) { L.held.clear(); L.key = -1; L.artic = -1; }
+    polyMaskOf.fill (0);
     polyHeld = 0;
     for (auto& v : voices)
     {
@@ -701,6 +836,11 @@ void SamplerPart::renderVoices (int start, int num)
                     l = v.filter2.processSample (0, l);
                     r = v.filter2.processSample (1, r);
                 }
+            }
+            if (v.eqOn)
+            {
+                l = v.eq[2].process (0, v.eq[1].process (0, v.eq[0].process (0, l)));
+                r = v.eq[2].process (1, v.eq[1].process (1, v.eq[0].process (1, r)));
             }
             outL[i] += l;
             outR[i] += r;
