@@ -5,6 +5,7 @@
 // 4) cuva WAV fajlove + kronos-ms.txt, pa ih Live Sampler koristi umesto ROM zvuka.
 #include <JuceHeader.h>
 #include "KronosPcg.h"
+#include "RomNames.h"
 
 namespace
 {
@@ -54,8 +55,10 @@ namespace
         juce::String label() const
         {
             const int type = zone[0], bank = zone[16], index = zone[18] | (zone[19] << 8);
-            juce::String s = bank == 0 ? "ROM" : "EXs" + juce::String (bank);
-            s << (type == 2 ? " Stereo " : " ") << juce::String (index).paddedLeft ('0', 4);
+            juce::String s = bank == 0 && type == 1 ? "ROM" : "EXs-" + juce::String (bank) + (type != 1 ? "-" + juce::String (type) : juce::String());
+            s << " " << juce::String (index).paddedLeft ('0', 4);
+            if (bank == 0 && type == 1 && index < kNumRomMsNames && kRomMsNames[index][0] != 0)
+                s << " " << kRomMsNames[index];
             return s;
         }
     };
