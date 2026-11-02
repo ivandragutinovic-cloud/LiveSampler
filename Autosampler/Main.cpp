@@ -56,7 +56,7 @@ namespace
         juce::String label() const
         {
             const int type = zone[0], bank = zone[16], index = zone[18] | (zone[19] << 8);
-            juce::String s = bank == 0 && type == 1 ? "ROM" : "EXs-" + juce::String (bank) + (type != 1 ? "-" + juce::String (type) : juce::String());
+            juce::String s = type == 2 ? "WaveSeq-" + juce::String (bank) : (bank == 0 ? "ROM" : "EXs-" + juce::String (bank));
             s << " " << juce::String (index).paddedLeft ('0', 4);
             if (bank == 0 && type == 1 && index < kNumRomMsNames && kRomMsNames[index][0] != 0)
                 s << " " << kRomMsNames[index];
@@ -144,6 +144,8 @@ public:
         showCombis.onClick = [this] { rebuildSource(); };
         addAndMakeVisible (showCombis);
 
+        sourceModel.owner = this;
+        neededModel.owner = this;
         sourceList.setModel (&sourceModel);
         sourceList.setMultipleSelectionEnabled (true);
         sourceList.setColour (juce::ListBox::backgroundColourId, bg);
@@ -699,6 +701,8 @@ private:
         return nullptr;
     }
 
+    static constexpr int hd1DumpSize = 3706;   // Prog_HD-1.txt (Korg MIDI implementation)
+
     juce::uint8 sysexChannelByte() const { return (juce::uint8) (0x30 | ((int) channel.getValue() - 1)); }
 
     void handleIncomingSysex (const juce::MidiMessage& m)
@@ -750,50 +754,18 @@ private:
                 juce::String::fromUTF8 ("Kronos nije odgovorio. Proveri MIDI kanal (Global MIDI kanal Kronosa), da je Kronos u PROGRAM modu i da je u GLOBAL > MIDI uključeno primanje/slanje Exclusive poruka."));
             return;
         }
-        // nadji gde pocinju podaci: ime programa (24 ASCII bajta) je na pocetku programa
+        // Korg: 42 3g 68 75 obj version data... (podaci od bajta 6, 7-bitno pakovani);
+        // HD-1 program ima 3706 bajtova, raspored isti kao pocetak programa u PCG-u
         const auto& r = *reply;
-        int best = -1, bestShift = 0;
-        for (int start = 4; start <= 12 && best < 0; ++start)
+        const int best = 6, bestShift = 0;
+        auto dec = unpack7 (r.data() + best, (int) r.size() - best);
+        if (r.size() < 8 || r[4] != 0x00 || (int) dec.size() < hd1DumpSize)
         {
-            auto dec = unpack7 (r.data() + start, (int) r.size() - start);
-            for (int shift = 0; shift + 24 < (int) dec.size() && shift < 64; ++shift)
-            {
-                int printable = 0;
-                for (int k = 0; k < 12; ++k) if (dec[(size_t) (shift + k)] >= 32 && dec[(size_t) (shift + k)] < 127) ++printable;
-                if (printable >= 3 && dec[(size_t) shift] >= 32 && (int) dec.size() - shift >= Kronos::programSize)
-                {
-                    // potvrdi poredjenjem sa PCG programom istog imena, ako postoji
-                    if (pcg != nullptr)
-                    {
-                        juce::String nm;
-                        for (int k = 0; k < 24 && dec[(size_t) (shift + k)] != 0; ++k) nm << (juce::juce_wchar) dec[(size_t) (shift + k)];
-                        // isti raspored kao u PCG-u? (vecina bajtova mora da se poklopi)
-                        int bestMatch = 0;
-                        for (auto& p : pcg->programs)
-                        {
-                            if (p.name != nm.trim() || ! p.hd1) continue;
-                            if (auto* raw = rawProgram (p))
-                            {
-                                int same = 0;
-                                for (int k = 0; k < Kronos::programSize; ++k) if (raw[k] == dec[(size_t) (shift + k)]) ++same;
-                                bestMatch = juce::jmax (bestMatch, same);
-                            }
-                        }
-                        if (bestMatch < Kronos::programSize * 9 / 10) continue;
-                    }
-                    best = start; bestShift = shift;
-                    break;
-                }
-            }
-        }
-        if (best < 0)
-        {
-            sxStart = 7; sxShift = 0;
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
-                juce::String::fromUTF8 ("Primio sam program (") + juce::String ((int) r.size()) + juce::String::fromUTF8 (" bajtova), ali raspored nije isti kao u PCG-u (ili taj program nije u učitanom PCG-u). "
-                "Na Kronosu izaberi program koji postoji u učitanom PCG-u (npr. USER-FF 006 Init Program) i probaj ponovo. Ako i dalje ne ide, pošalji mi fajl Kronos-program.syx iz foldera za semplove."));
             outFolder.createDirectory();
             outFolder.getChildFile ("Kronos-program.syx").replaceWithData (r.data(), r.size());
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
+                juce::String::fromUTF8 ("Trenutni program nije HD-1 program (") + juce::String ((int) dec.size())
+                + juce::String::fromUTF8 (" bajtova). Na Kronosu izaberi Init Program (HD-1, npr. USER-FF 006) i probaj ponovo."));
             return;
         }
         sxStart = best;
