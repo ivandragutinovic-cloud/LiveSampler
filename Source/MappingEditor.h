@@ -104,6 +104,8 @@ public:
 
     void setUserOsc (int userIndex, int oscIndex);
     void setOsc (int oscIndex) { setUserOsc (userIdx, oscIndex); }
+    int getUserIndex() const { return userIdx; }
+    int getOsc() const { return osc; }
     void refresh();                      // pozvati kad se procesor promeni
     std::function<void()> onClose;
 
@@ -142,6 +144,8 @@ private:
     juce::Label title, instLabel, stateLabel, sampleInfo, hint;
     juce::TextButton blockSel[kNumBlocks], msSel[kMsPerOsc];   // izbor OSC-a i MS-a
     juce::Label userLabel;
+    juce::ComboBox userBox;          // koji user se mapira
+    juce::StringArray shownUsers;
     juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton;
 
     ZoneMapView mapView;

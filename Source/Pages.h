@@ -160,6 +160,7 @@ public:
     void refresh();
     void selectUser (int index);
     int getUserIndex() const { return userIndex; }
+    int getSoundBlock() const { return sound.getBlock(); }
     void resized() override;
     void paint (juce::Graphics&) override;
 

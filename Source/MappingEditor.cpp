@@ -652,7 +652,11 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     }
     userLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     userLabel.setColour (juce::Label::textColourId, Pal::dim);
+    userLabel.setText ("USER:", juce::dontSendNotification);
     addAndMakeVisible (userLabel);
+    userBox.setTooltip (T ("Izaberi usera; dugmad OSC1-8 i MS1-8 biraju koji njegov multisempl mapiraš"));
+    userBox.onChange = [this] { const int i = userBox.getSelectedItemIndex(); if (i >= 0 && i != userIdx) setUserOsc (i, 0); };
+    addAndMakeVisible (userBox);
 
     instLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
     addAndMakeVisible (instLabel);
@@ -927,7 +931,14 @@ void MappingEditor::refresh()
     {
         const auto& u = proc.getUser (userIdx);
         name = u.osc[(size_t) osc].instrument;
-        userLabel.setText ("USER: " + u.name, juce::dontSendNotification);
+        const auto names = proc.getUserNames();
+        if (names != shownUsers)
+        {
+            shownUsers = names;
+            userBox.clear (juce::dontSendNotification);
+            userBox.addItemList (names, 1);
+        }
+        userBox.setSelectedItemIndex (userIdx, juce::dontSendNotification);
         for (int b = 0; b < kNumBlocks; ++b)
         {
             bool any = false;
@@ -1255,7 +1266,9 @@ void MappingEditor::resized()
 
     r.removeFromTop (6);
     auto infoRow = r.removeFromTop (24);
-    userLabel.setBounds (infoRow.removeFromLeft (220));
+    userLabel.setBounds (infoRow.removeFromLeft (44));
+    userBox.setBounds (infoRow.removeFromLeft (230).reduced (0, 1));
+    infoRow.removeFromLeft (10);
     stateLabel.setBounds (infoRow.removeFromRight (infoRow.getWidth() * 2 / 5));
     instLabel.setBounds (infoRow);
     hint.setVisible (false);

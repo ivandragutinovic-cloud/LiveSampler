@@ -458,6 +458,10 @@ std::vector<juce::Component*> LiveSamplerEditor::pages() const
 void LiveSamplerEditor::showTab (int tab)
 {
     currentTab = juce::jlimit (0, NumTabs - 1, tab);
+    // MAPIRANJE prati usera izabranog na strani USER
+    if (currentTab == TabMapping && userPage != nullptr && mappingEditor != nullptr
+        && userPage->getUserIndex() != mappingEditor->getUserIndex())
+        mappingEditor->setUserOsc (userPage->getUserIndex(), userPage->getSoundBlock() * kMsPerOsc);
     const auto all = pages();
     for (int i = 0; i < NumTabs; ++i)
     {
