@@ -217,7 +217,12 @@ multisemplove koje koriste tvoji programi i kombiji, da bi ih Live Sampler svira
 
 1. **Učitaj PCG** i izaberi programe ili kombije (Kombiji) → **Dodaj izabrane**. Desno se vidi spisak
    ROM multisemplova koje treba snimiti (svaki samo jednom).
-2. Izaberi **šablon** (inicijalizovan program sa Kronosa, npr. "Init"), **banku** i **od broja**, pa
+2. **Direktno preko SysEx-a** (preporučeno, uključeno po defaultu): na Kronosu izaberi Init Program
+   (npr. USER-FF 006), izaberi MIDI ulaz i izlaz Kronosa i klikni **Pročitaj šablon sa Kronosa**.
+   Autosampler zatim za svaki multisempl menja samo trenutni program na Kronosu (edit buffer) i
+   ništa ne snima u memoriju Kronosa. Korak sa PCG-om tada ne treba.
+
+   Ili preko PCG-a: izaberi **šablon** (inicijalizovan program sa Kronosa, npr. "Init"), **banku** i **od broja**, pa
    **Napravi PCG**. Nastaje `<ime>_AUTOSAMPLER.PCG` sa po jednim programom za svaki multisempl
    (OSC1 MS1 = taj multisempl, otvoren filter, bez efekata, bez velocity uticaja). Na Kronosu ga
    učitaj samo u tu banku.

@@ -6,6 +6,7 @@
 #include <JuceHeader.h>
 #include "KronosPcg.h"
 #include "RomNames.h"
+#include <optional>
 
 namespace
 {
@@ -126,7 +127,7 @@ public:
             addAndMakeVisible (l);
         };
         styleTitle (title1, juce::String::fromUTF8 ("1. ŠTA TREBA PRESEMPLOVATI"));
-        styleTitle (title2, juce::String::fromUTF8 ("2. PCG ZA KRONOS (po jedan program za svaki multisempl)"));
+        styleTitle (title2, juce::String::fromUTF8 ("2. PROGRAM ZA SVAKI MULTISEMPL: direktno preko SysEx-a (preporučeno) ili preko PCG-a"));
         styleTitle (title3, "3. SNIMANJE");
 
         loadButton.setButtonText (juce::String::fromUTF8 ("Učitaj PCG..."));
@@ -199,6 +200,31 @@ public:
         refreshMidi();
         midiOut.onChange = [this] { openMidi(); };
 
+        midiInLabel.setText ("MIDI ulaz sa Kronosa:", juce::dontSendNotification);
+        midiInLabel.setColour (juce::Label::textColourId, dim);
+        addAndMakeVisible (midiInLabel);
+        addAndMakeVisible (midiInBox);
+        inCallback.owner = this;
+        midiInDevices = juce::MidiInput::getAvailableDevices();
+        for (int i = 0; i < midiInDevices.size(); ++i)
+        {
+            midiInBox.addItem (midiInDevices[i].name, i + 1);
+            if (midiInBox.getSelectedId() == 0 && midiInDevices[i].name.containsIgnoreCase ("kronos")) midiInBox.setSelectedId (i + 1, juce::dontSendNotification);
+        }
+        midiInBox.onChange = [this] { openMidiIn(); };
+        openMidiIn();
+
+        sysexMode.setButtonText (juce::String::fromUTF8 ("Direktno preko SysEx-a (menja trenutni program, ništa se ne snima na Kronos)"));
+        sysexMode.setToggleState (true, juce::dontSendNotification);
+        addAndMakeVisible (sysexMode);
+        readTemplateButton.setButtonText (juce::String::fromUTF8 ("Pročitaj šablon sa Kronosa"));
+        readTemplateButton.setTooltip (juce::String::fromUTF8 ("Na Kronosu izaberi Init Program (npr. USER-FF 006), pa klikni ovde."));
+        readTemplateButton.onClick = [this] { readTemplateFromKronos(); };
+        addAndMakeVisible (readTemplateButton);
+        templateInfo.setColour (juce::Label::textColourId, lcd);
+        templateInfo.setText (juce::String::fromUTF8 ("Šablon još nije pročitan"), juce::dontSendNotification);
+        addAndMakeVisible (templateInfo);
+
         struct F { juce::Label* l; juce::Slider* s; const char* name; double lo, hi, def; };
         const F fields[] = { { &chLabel, &channel, "MIDI kanal", 1, 16, 1 }, { &cc0Label, &cc0, "Bank CC0", 0, 127, 0 },
                              { &cc32Label, &cc32, "Bank CC32", 0, 127, 0 }, { &lowLabel, &lowNote, "Od note", 0, 127, 24 },
@@ -231,8 +257,13 @@ public:
         folderLabel.setColour (juce::Label::textColourId, lcd);
         addAndMakeVisible (folderLabel);
 
-        testButton.setButtonText ("Test (izaberi prvi program)");
-        testButton.onClick = [this] { if (! needed.empty() && needed[0].slot >= 0) selectProgram (needed[0].slot); };
+        testButton.setButtonText ("Test (prvi multisempl)");
+        testButton.onClick = [this]
+        {
+            if (needed.empty()) return;
+            if (sysexMode.getToggleState()) { sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
+            else if (needed[0].slot >= 0) selectProgram (needed[0].slot);
+        };
         addAndMakeVisible (testButton);
         startButton.setButtonText ("START");
         startButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
@@ -257,6 +288,7 @@ public:
     ~MainComponent() override
     {
         stopThread (4000);
+        if (midiIn != nullptr) midiIn->stop();
         deviceManager.removeAudioCallback (&recorder);
     }
 
@@ -283,9 +315,9 @@ public:
     void resized() override
     {
         auto r = getLocalBounds().reduced (10);
-        sec1 = r.removeFromTop (380);
+        sec1 = r.removeFromTop (350);
         r.removeFromTop (8);
-        sec2 = r.removeFromTop (84);
+        sec2 = r.removeFromTop (118);
         r.removeFromTop (8);
         sec3 = r;
 
@@ -325,6 +357,12 @@ public:
         startNum.setBounds (row.removeFromLeft (110).reduced (0, 2));
         row.removeFromLeft (12);
         makePcgButton.setBounds (row.removeFromLeft (140));
+        b.removeFromTop (4);
+        auto rowS = b.removeFromTop (30);
+        sysexMode.setBounds (rowS.removeFromLeft (520));
+        readTemplateButton.setBounds (rowS.removeFromLeft (210));
+        rowS.removeFromLeft (10);
+        templateInfo.setBounds (rowS);
 
         auto c = sec3.reduced (10);
         title3.setBounds (c.removeFromTop (22));
@@ -332,9 +370,12 @@ public:
         audioButton.setBounds (r1.removeFromLeft (210));
         r1.removeFromLeft (12);
         midiLabel.setBounds (r1.removeFromLeft (150));
-        midiOut.setBounds (r1.removeFromLeft (260).reduced (0, 2));
+        midiOut.setBounds (r1.removeFromLeft (220).reduced (0, 2));
         r1.removeFromLeft (12);
-        meter = r1.removeFromLeft (200).reduced (0, 10).withTrimmedTop (6);
+        midiInLabel.setBounds (r1.removeFromLeft (150));
+        midiInBox.setBounds (r1.removeFromLeft (220).reduced (0, 2));
+        r1.removeFromLeft (12);
+        meter = r1.removeFromLeft (160).reduced (0, 10).withTrimmedTop (6);
         c.removeFromTop (8);
         juce::Label* ls[] = { &chLabel, &cc0Label, &cc32Label, &lowLabel, &highLabel, &stepLabel, &velLabel, &holdLabel, &relLabel };
         juce::Slider* ss[] = { &channel, &cc0, &cc32, &lowNote, &highNote, &step, &velocity, &hold, &release };
@@ -554,6 +595,197 @@ private:
         return (int) (notes * (hold.getValue() + release.getValue() * 0.6 + 0.4));
     }
 
+    // program za jedan multisempl: OSC1 MS1 = taj multisempl, sve ostalo neutralno, bez efekata
+    static void patchProgram (juce::uint8* p, const NeededMs& n)
+    {
+        juce::String name = "AS " + n.label();
+        std::fill (p, p + 24, 0);
+        for (int k = 0; k < juce::jmin (24, name.length()); ++k) p[k] = (juce::uint8) name[k];
+        p[2558] = 0;            // Single, poly
+        p[2565] = 0;            // Bus L/R
+        p[2684] = 0; p[2685] = 127;
+        for (int z = 0; z < 8; ++z)
+        {
+            auto* zp = p + Kronos::osc1ZonesOffset + z * Kronos::zoneSize;
+            if (z == 0) { std::copy (n.zone.begin(), n.zone.end(), zp); zp[20] = 127; zp[21] = 0; }
+            else zp[0] = 0;
+        }
+        for (int z = 0; z < 7; ++z) { p[2950 + z * 3] = 1; p[2951 + z * 3] = 0; p[2952 + z * 3] = 0; }
+        p[2972] = 1; p[2973] = 127;
+        p[3012] = 0; p[3013] = 0; p[3014] = 0; p[3015] = 0;      // oktava, transpose, tune
+        p[3019] = 0; p[3022] = 0; p[3030] = 0; p[3024] = 0;      // pitch EG, LFO, JS+Y, portamento
+        p[3036] = 0; p[3047] = 99; p[3048] = 0; p[3056] = 0; p[3057] = 0;   // filter otvoren
+        p[3141] = 127; p[3142] = 0;                                // jacina, bez velocity uticaja
+        const juce::uint8 amp[8] = { 0, 0, 99, 0, 99, 0, 99, 20 };
+        std::copy (amp, amp + 8, p + 3151);
+        p[3193] = 64; p[3196] = 0; p[3197] = 0;                    // pan centar, send MFX 0
+    }
+
+    //==========================================================================
+    //  SysEx: menja se samo trenutni program na Kronosu (edit buffer), nista se ne snima u memoriju.
+    //  Format: F0 42 3g 68 <funkcija> ... F7, podaci 7-bitno pakovani (7 bajtova -> 8).
+    //==========================================================================
+    static std::vector<juce::uint8> unpack7 (const juce::uint8* m, int len)
+    {
+        std::vector<juce::uint8> out;
+        while (len > 0)
+        {
+            const int chunk = juce::jmin (8, len);
+            for (int i = 0; i < chunk - 1; ++i)
+                out.push_back ((juce::uint8) (m[i + 1] | ((m[0] & (1 << i)) ? 0x80 : 0)));
+            m += chunk;
+            len -= chunk;
+        }
+        return out;
+    }
+
+    static std::vector<juce::uint8> pack7 (const std::vector<juce::uint8>& in)
+    {
+        std::vector<juce::uint8> out;
+        for (size_t i = 0; i < in.size(); i += 7)
+        {
+            const size_t chunk = juce::jmin ((size_t) 7, in.size() - i);
+            juce::uint8 hi = 0;
+            for (size_t k = 0; k < chunk; ++k) if (in[i + k] & 0x80) hi |= (juce::uint8) (1 << k);
+            out.push_back (hi);
+            for (size_t k = 0; k < chunk; ++k) out.push_back (in[i + k] & 0x7f);
+        }
+        return out;
+    }
+
+    const juce::uint8* rawProgram (const Kronos::Program& p) const
+    {
+        for (auto& b : banks)
+            if (b.bankId == p.bankId && p.number < b.count)
+                return (const juce::uint8*) pcgData.getData() + b.firstItem + (size_t) p.number * Kronos::programSize;
+        return nullptr;
+    }
+
+    juce::uint8 sysexChannelByte() const { return (juce::uint8) (0x30 | ((int) channel.getValue() - 1)); }
+
+    void handleIncomingSysex (const juce::MidiMessage& m)
+    {
+        if (! m.isSysEx()) return;
+        const auto* d = m.getSysExData();
+        const int n = m.getSysExDataSize();
+        if (n < 4 || d[0] != 0x42 || d[2] != 0x68) return;
+        const juce::ScopedLock sl (sysexLock);
+        lastSysex.assign (d, d + n);     // bez F0/F7
+        sysexEvent.signal();
+    }
+
+    // posalji SysEx (bez F0/F7) i sacekaj odgovor sa datom funkcijom
+    std::optional<std::vector<juce::uint8>> sysexCall (const std::vector<juce::uint8>& body, juce::uint8 replyFunc, int timeoutMs)
+    {
+        {
+            const juce::ScopedLock sl (sysexLock);
+            lastSysex.clear();
+        }
+        sysexEvent.reset();
+        if (midi == nullptr) return std::nullopt;
+        midi->sendMessageNow (juce::MidiMessage::createSysExMessage (body.data(), (int) body.size()));
+        const auto t0 = juce::Time::getMillisecondCounter();
+        while (juce::Time::getMillisecondCounter() - t0 < (juce::uint32) timeoutMs)
+        {
+            sysexEvent.wait (50);
+            const juce::ScopedLock sl (sysexLock);
+            if (lastSysex.size() > 3 && lastSysex[3] == replyFunc)
+                return lastSysex;
+        }
+        return std::nullopt;
+    }
+
+    // procitaj trenutni program sa Kronosa i upamti ga kao sablon
+    void readTemplateFromKronos()
+    {
+        if (midiIn == nullptr || midi == nullptr)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
+                juce::String::fromUTF8 ("Izaberi MIDI ulaz i izlaz Kronosa."));
+            return;
+        }
+        sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // Kronos u PROGRAM mod
+        auto reply = sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x74, 0x00 }, 0x75, 3000);
+        if (! reply)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
+                juce::String::fromUTF8 ("Kronos nije odgovorio. Proveri MIDI kanal (Global MIDI kanal Kronosa), da je Kronos u PROGRAM modu i da je u GLOBAL > MIDI uključeno primanje/slanje Exclusive poruka."));
+            return;
+        }
+        // nadji gde pocinju podaci: ime programa (24 ASCII bajta) je na pocetku programa
+        const auto& r = *reply;
+        int best = -1, bestShift = 0;
+        for (int start = 4; start <= 12 && best < 0; ++start)
+        {
+            auto dec = unpack7 (r.data() + start, (int) r.size() - start);
+            for (int shift = 0; shift + 24 < (int) dec.size() && shift < 64; ++shift)
+            {
+                int printable = 0;
+                for (int k = 0; k < 12; ++k) if (dec[(size_t) (shift + k)] >= 32 && dec[(size_t) (shift + k)] < 127) ++printable;
+                if (printable >= 3 && dec[(size_t) shift] >= 32 && (int) dec.size() - shift >= Kronos::programSize)
+                {
+                    // potvrdi poredjenjem sa PCG programom istog imena, ako postoji
+                    if (pcg != nullptr)
+                    {
+                        juce::String nm;
+                        for (int k = 0; k < 24 && dec[(size_t) (shift + k)] != 0; ++k) nm << (juce::juce_wchar) dec[(size_t) (shift + k)];
+                        // isti raspored kao u PCG-u? (vecina bajtova mora da se poklopi)
+                        int bestMatch = 0;
+                        for (auto& p : pcg->programs)
+                        {
+                            if (p.name != nm.trim() || ! p.hd1) continue;
+                            if (auto* raw = rawProgram (p))
+                            {
+                                int same = 0;
+                                for (int k = 0; k < Kronos::programSize; ++k) if (raw[k] == dec[(size_t) (shift + k)]) ++same;
+                                bestMatch = juce::jmax (bestMatch, same);
+                            }
+                        }
+                        if (bestMatch < Kronos::programSize * 9 / 10) continue;
+                    }
+                    best = start; bestShift = shift;
+                    break;
+                }
+            }
+        }
+        if (best < 0)
+        {
+            sxStart = 7; sxShift = 0;
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
+                juce::String::fromUTF8 ("Primio sam program (") + juce::String ((int) r.size()) + juce::String::fromUTF8 (" bajtova), ali raspored nije isti kao u PCG-u (ili taj program nije u učitanom PCG-u). "
+                "Na Kronosu izaberi program koji postoji u učitanom PCG-u (npr. USER-FF 006 Init Program) i probaj ponovo. Ako i dalje ne ide, pošalji mi fajl Kronos-program.syx iz foldera za semplove."));
+            outFolder.createDirectory();
+            outFolder.getChildFile ("Kronos-program.syx").replaceWithData (r.data(), r.size());
+            return;
+        }
+        sxStart = best;
+        sxShift = bestShift;
+        sxHeader.assign (r.begin(), r.begin() + best);
+        sxHeader[3] = 0x75;
+        sxTemplate = unpack7 (r.data() + best, (int) r.size() - best);
+        juce::String nm;
+        for (int k = 0; k < 24 && sxTemplate[(size_t) (sxShift + k)] != 0; ++k) nm << (juce::juce_wchar) sxTemplate[(size_t) (sxShift + k)];
+        templateInfo.setText (juce::String::fromUTF8 ("Šablon sa Kronosa: ") + nm.trim() + " (" + juce::String ((int) sxTemplate.size()) + juce::String::fromUTF8 (" bajtova)"),
+                              juce::dontSendNotification);
+        outFolder.createDirectory();
+        outFolder.getChildFile ("Kronos-program.syx").replaceWithData (r.data(), r.size());
+    }
+
+    // posalji izmenjen program u edit buffer Kronosa
+    bool sendProgramSysex (const NeededMs& n)
+    {
+        if (sxTemplate.empty()) return false;
+        auto data = sxTemplate;
+        patchProgram (data.data() + sxShift, n);
+        auto body = sxHeader;
+        auto packed = pack7 (data);
+        body.insert (body.end(), packed.begin(), packed.end());
+        auto reply = sysexCall (body, 0x24, 2000);
+        if (reply && reply->size() > 5 && (*reply)[5] != 0)
+            setStatus ("Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]));
+        return true;
+    }
+
     //==========================================================================
     void makePcg()
     {
@@ -582,31 +814,7 @@ private:
         {
             if (slot >= target->count) { n.slot = -1; continue; }
             auto prg = tpl;
-            auto* p = prg.data();
-            // ime
-            juce::String name = "AS " + n.label();
-            std::fill (p, p + 24, 0);
-            for (int k = 0; k < juce::jmin (24, name.length()); ++k) p[k] = (juce::uint8) name[k];
-            // jedan oscilator, poly, bez efekata (Bus L/R, send 0)
-            p[2558] = 0;
-            p[2565] = 0;
-            p[2684] = 0; p[2685] = 127;
-            // zone OSC1: samo MS1
-            for (int z = 0; z < 8; ++z)
-            {
-                auto* zp = p + Kronos::osc1ZonesOffset + z * Kronos::zoneSize;
-                if (z == 0) { std::copy (n.zone.begin(), n.zone.end(), zp); zp[20] = 127; zp[21] = 0; }
-                else zp[0] = 0;
-            }
-            for (int z = 0; z < 7; ++z) { p[2950 + z * 3] = 1; p[2951 + z * 3] = 0; p[2952 + z * 3] = 0; }
-            p[2972] = 1; p[2973] = 127;
-            p[3012] = 0; p[3013] = 0; p[3014] = 0; p[3015] = 0;      // oktava, transpose, tune
-            p[3019] = 0; p[3022] = 0; p[3030] = 0; p[3024] = 0;      // pitch EG, LFO, JS+Y, portamento
-            p[3036] = 0; p[3047] = 99; p[3048] = 0; p[3056] = 0; p[3057] = 0;   // filter otvoren
-            p[3141] = 127; p[3142] = 0;                                // jacina, bez velocity uticaja
-            const juce::uint8 amp[8] = { 0, 0, 99, 0, 99, 0, 99, 20 };  // start, attack, nivo, decay, break, slope, sustain, release
-            std::copy (amp, amp + 8, p + 3151);
-            p[3193] = 64; p[3196] = 0; p[3197] = 0;                    // pan centar, send MFX 0
+            patchProgram (prg.data(), n);
 
             std::copy (prg.begin(), prg.end(), o + target->firstItem + (size_t) slot * Kronos::programSize);
             n.slot = slot;
@@ -666,6 +874,18 @@ private:
             midi = juce::MidiOutput::openDevice (midiDevices[i].identifier);
     }
 
+    void openMidiIn()
+    {
+        if (midiIn != nullptr) midiIn->stop();
+        midiIn.reset();
+        const int i = midiInBox.getSelectedId() - 1;
+        if (i >= 0 && i < midiInDevices.size())
+        {
+            midiIn = juce::MidiInput::openDevice (midiInDevices[i].identifier, &inCallback);
+            if (midiIn != nullptr) midiIn->start();
+        }
+    }
+
     void send (const juce::MidiMessage& m) { if (midi != nullptr) midi->sendMessageNow (m); }
 
     void selectProgram (int number)
@@ -707,7 +927,14 @@ private:
                 juce::String::fromUTF8 ("Izaberi MIDI izlaz ka Kronosu i audio ulaz (Kronos USB)."));
             return;
         }
-        bool anySlot = false;
+        useSysex = sysexMode.getToggleState();
+        if (useSysex && sxTemplate.empty())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
+                juce::String::fromUTF8 ("Na Kronosu izaberi Init Program (npr. USER-FF 006) pa klikni \"Pročitaj šablon sa Kronosa\"."));
+            return;
+        }
+        bool anySlot = useSysex;
         for (auto& n : needed) anySlot = anySlot || n.slot >= 0;
         if (! anySlot)
         {
@@ -741,9 +968,17 @@ private:
         for (int i = 0; i < total && ! threadShouldExit(); ++i)
         {
             auto n = needed[(size_t) i];
-            if (n.slot < 0 || isDone (n)) continue;
+            if (isDone (n)) continue;
             setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  (" + n.usedBy + ")");
-            selectProgram (n.slot);
+            if (useSysex)
+            {
+                if (! sendProgramSysex (n)) break;
+            }
+            else
+            {
+                if (n.slot < 0) continue;
+                selectProgram (n.slot);
+            }
             wait (900);
 
             const auto folder = msFolder (n);
@@ -854,7 +1089,23 @@ private:
     juce::ToggleButton showCombis;
     juce::TextEditor search;
     juce::ListBox sourceList, neededList;
-    juce::ComboBox templateBox, bankBox, midiOut;
+    juce::ComboBox templateBox, bankBox, midiOut, midiInBox;
+    juce::ToggleButton sysexMode;
+    juce::TextButton readTemplateButton;
+    juce::Label templateInfo, midiInLabel;
+    std::unique_ptr<juce::MidiInput> midiIn;
+    juce::Array<juce::MidiDeviceInfo> midiInDevices;
+    juce::CriticalSection sysexLock;
+    juce::WaitableEvent sysexEvent;
+    std::vector<juce::uint8> lastSysex, sxHeader, sxTemplate;
+    int sxStart = 7, sxShift = 0;
+    bool useSysex = true;
+
+    struct InCallback : public juce::MidiInputCallback
+    {
+        MainComponent* owner = nullptr;
+        void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m) override { owner->handleIncomingSysex (m); }
+    } inCallback;
     juce::CriticalSection statusLock;
     juce::String statusText;
 
