@@ -371,6 +371,11 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int o, std::funct
     };
     addAndMakeVisible (instButton);
 
+    blockButton.getProperties().set ("fontSize", 13.0f);
+    blockButton.setTooltip (T ("Zvuk A ili B (svoj filter, envelope i pitch) - klik menja"));
+    blockButton.onClick = [this] { edit ([] (OscSettings& s) { s.block = 1 - s.block; }); };
+    addAndMakeVisible (blockButton);
+
     mapButton.setButtonText ("MAPA");
     mapButton.getProperties().set ("fontSize", 11.0f);
     mapButton.setTooltip (T ("Otvori editor mapiranja za ovaj instrument"));
@@ -423,6 +428,8 @@ void OscRow::refresh()
         instText = T ("⚠ nema: ") + s.instrument;
     instButton.setButtonText (instText);
     mapButton.setEnabled (s.instrument.isNotEmpty());
+    blockButton.setButtonText (s.block == 0 ? "A" : "B");
+    blockButton.setColour (juce::TextButton::buttonColourId, (s.block == 0 ? Pal::accent : Pal::part[1]).withAlpha (0.45f));
     setSliderValue (level, s.levelDb);
     setSliderValue (pan, s.pan);
     setSliderValue (transpose, s.transpose);
@@ -449,12 +456,13 @@ void OscRow::resized()
     auto r = getLocalBounds().reduced (4, 3);
     onButton.setBounds (r.removeFromLeft (64));
     r.removeFromLeft (6);
-    const int boxW = 86;
+    const int boxW = 82;
     juce::Slider* boxes[] = { &level, &pan, &transpose, &fine, &keyLow, &keyHigh, &velLow, &velHigh };
-    const int fixed = boxW * 8 + 56 + 6;
+    const int fixed = boxW * 8 + 56 + 6 + 40;
     auto instArea = r.removeFromLeft (r.getWidth() - fixed);
     instButton.setBounds (instArea);
     r.removeFromLeft (4);
+    blockButton.setBounds (r.removeFromLeft (38).reduced (2, 0));
     mapButton.setBounds (r.removeFromLeft (52));
     r.removeFromLeft (2);
     for (auto* b : boxes)
@@ -465,10 +473,406 @@ void OscRow::resized()
 }
 
 //==============================================================================
+//  EnvelopeView
+//==============================================================================
+void EnvelopeView::paint (juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour (Pal::lcdBg);
+    g.fillRoundedRectangle (r, 6.0f);
+    auto a = r.reduced (10.0f, 12.0f);
+
+    // vremena kao udeo sirine (sustain dobija fiksni deo)
+    auto tw = [] (float t) { return std::sqrt (juce::jmax (0.0f, t)) + 0.05f; };
+    const float ta = tw (env.attackTime), td = tw (env.decayTime), ts = tw (env.slopeTime), tr = tw (env.releaseTime);
+    const float sus = 0.6f;
+    const float total = ta + td + ts + sus + tr;
+    auto yOf = [&] (float lvl)
+    {
+        const float norm = bip ? (lvl + 1.0f) * 0.5f : lvl;
+        return a.getBottom() - juce::jlimit (0.0f, 1.0f, norm) * a.getHeight();
+    };
+
+    if (bip)
+    {
+        g.setColour (Pal::lcdText.withAlpha (0.4f));
+        g.drawHorizontalLine (juce::roundToInt (yOf (0.0f)), a.getX(), a.getRight());
+        g.setFont (juce::FontOptions (10.0f));
+        g.drawText ("0", juce::Rectangle<float> (a.getX() - 9.0f, yOf (0.0f) - 6.0f, 8.0f, 12.0f), juce::Justification::centredRight);
+    }
+
+    float x = a.getX();
+    const float w = a.getWidth() / total;
+    juce::Path path;
+    path.startNewSubPath (x, yOf (env.start));
+    x += ta * w; path.lineTo (x, yOf (env.attackLevel));
+    x += td * w; path.lineTo (x, yOf (env.breakLevel));
+    x += ts * w; path.lineTo (x, yOf (env.sustain));
+    x += sus * w; path.lineTo (x, yOf (env.sustain));
+    const float noteOffX = x;
+    x += tr * w; path.lineTo (x, yOf (bip ? env.releaseLevel : 0.0f));
+
+    g.setColour (colour.withAlpha (0.18f));
+    juce::Path fill (path);
+    fill.lineTo (x, yOf (bip ? 0.0f : 0.0f));
+    fill.lineTo (a.getX(), yOf (0.0f));
+    fill.closeSubPath();
+    g.fillPath (fill);
+    g.setColour (colour);
+    g.strokePath (path, juce::PathStrokeType (2.0f));
+
+    g.setColour (Pal::lcdText.withAlpha (0.35f));
+    const float dashes[] = { 3.0f, 3.0f };
+    g.drawDashedLine (juce::Line<float> (noteOffX, a.getY(), noteOffX, a.getBottom()), dashes, 2);
+    g.setFont (juce::FontOptions (10.0f));
+    g.drawText ("note off", juce::Rectangle<float> (noteOffX + 3.0f, a.getY() - 10.0f, 60.0f, 12.0f), juce::Justification::centredLeft);
+}
+
+//==============================================================================
+//  SoundEditor
+//==============================================================================
+static juce::String levelText (double v)  { return juce::String (juce::roundToInt (v * 100.0)); }
+static juce::String centsText (double v)  { return juce::String (juce::roundToInt (v)) + " c"; }
+static juce::String octText (double v)    { return (v > 0 ? "+" : "") + juce::String (v, 1) + " okt"; }
+static juce::String hzText2 (double v)    { return juce::String (v, 2) + " Hz"; }
+static juce::String stText (double v)     { return (v > 0 ? "+" : "") + juce::String (v, 1) + " st"; }
+
+SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
+    : proc (p), userIndex (std::move (ui))
+{
+    const char* blockNames[] = { "ZVUK A", "ZVUK B" };
+    for (int b = 0; b < 2; ++b)
+    {
+        blockButtons[b].setButtonText (blockNames[b]);
+        blockButtons[b].setColour (juce::TextButton::buttonOnColourId, b == 0 ? Pal::accent : Pal::part[1]);
+        blockButtons[b].setTooltip (T ("Kao OSC1 / OSC2 na Kronosu. Svaki oscilator gore biraš A ili B."));
+        blockButtons[b].onClick = [this, b] { block = b; rebuildKnobs(); };
+        addAndMakeVisible (blockButtons[b]);
+    }
+    const char* secNames[] = { "PITCH", "FILTER", "AMP", "ZAJEDNIČKO", "EFEKAT" };
+    for (int s = 0; s < NumSections; ++s)
+    {
+        sectionButtons[s].setButtonText (T (secNames[s]));
+        sectionButtons[s].setColour (juce::TextButton::buttonOnColourId, Pal::lcdText);
+        sectionButtons[s].onClick = [this, s] { showSection (s); };
+        addAndMakeVisible (sectionButtons[s]);
+    }
+    addAndMakeVisible (envView);
+
+    filterType.addItemList ({ T ("Isključen"), "Lowpass 24 dB", "Lowpass 12 dB", "Highpass", "Bandpass" }, 1);
+    filterType.onChange = [this] { const int t = filterType.getSelectedItemIndex(); const int b = block; edit ([t, b] (UserProgram& u) { u.block[(size_t) b].filterType = t; }); };
+    filterLabel.setText ("TIP FILTERA", juce::dontSendNotification);
+    filterLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    filterLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addChildComponent (filterType);
+    addChildComponent (filterLabel);
+
+    voiceMode.addItemList ({ "Poly", "Mono", "Mono legato" }, 1);
+    voiceMode.onChange = [this] { const int v = voiceMode.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.voiceMode = v; }); };
+    priority.addItemList ({ T ("Poslednja nota"), T ("Najviša nota"), T ("Najniža nota") }, 1);
+    priority.onChange = [this] { const int v = priority.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.priority = v; }); };
+    for (auto* b : { &portaOn, &portaFingered, &portaConstRate })
+    {
+        b->setClickingTogglesState (true);
+        b->setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        b->getProperties().set ("fontSize", 13.0f);
+    }
+    portaOn.setButtonText ("PORTAMENTO");
+    portaFingered.setButtonText ("Samo vezano (fingered)");
+    portaConstRate.setButtonText ("Konstantna brzina");
+    portaConstRate.setTooltip (T ("Veći skok traje duže (vreme je po oktavi)"));
+    portaOn.onClick = [this] { const bool v = portaOn.getToggleState(); edit ([v] (UserProgram& u) { u.portaOn = v; }); };
+    portaFingered.onClick = [this] { const bool v = portaFingered.getToggleState(); edit ([v] (UserProgram& u) { u.portaFingered = v; }); };
+    portaConstRate.onClick = [this] { const bool v = portaConstRate.getToggleState(); edit ([v] (UserProgram& u) { u.portaConstRate = v; }); };
+    portaTime = std::make_unique<ValueKnob> ("Vreme", Pal::accent, 0.001, 3.0, 0.3, UI::timeText, 0.1);
+    portaTime->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.portamento = (float) v; }); };
+    UI::setupIncDec (bendUp, 0, 24, 1);
+    UI::setupIncDec (bendDown, 0, 24, 1);
+    bendUp.onValueChange = [this] { const int v = (int) bendUp.getValue(); edit ([v] (UserProgram& u) { u.bendUp = v; }); };
+    bendDown.onValueChange = [this] { const int v = (int) bendDown.getValue(); edit ([v] (UserProgram& u) { u.bendDown = v; }); };
+    const char* cl[] = { "GLAS", "PRIORITET", "BEND GORE", "BEND DOLE" };
+    for (int i = 0; i < 4; ++i)
+    {
+        commonLabels[i].setText (T (cl[i]), juce::dontSendNotification);
+        commonLabels[i].setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        commonLabels[i].setColour (juce::Label::textColourId, Pal::dim);
+    }
+    for (auto* c : std::initializer_list<juce::Component*> { &voiceMode, &priority, &portaOn, &portaFingered, &portaConstRate,
+                                                             portaTime.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
+                                                             &commonLabels[2], &commonLabels[3] })
+        addChildComponent (c);
+
+    fxType.addItemList (InsertFx::getTypeNames(), 1);
+    fxType.onChange = [this] { const int v = fxType.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.fxType = v; }); };
+    fxLabel.setText ("INSERT EFEKAT", juce::dontSendNotification);
+    fxLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    fxLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addChildComponent (fxType);
+    addChildComponent (fxLabel);
+
+    showSection (Filter);
+}
+
+void SoundEditor::edit (std::function<void (UserProgram&)> fn)
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    auto user = proc.getUser (u);
+    fn (user);
+    proc.updateUser (u, user);
+}
+
+void SoundEditor::showSection (int s)
+{
+    section = s;
+    rebuildKnobs();
+}
+
+static std::vector<SoundEditor::Param> envParams (std::function<EnvSettings& (UserProgram&, int)> env, bool bipolar, bool withReleaseLevel);
+
+void SoundEditor::rebuildKnobs()
+{
+    knobs.clear();
+    rows.clear();
+    const auto acc = block == 0 ? Pal::accent : Pal::part[1];
+
+    auto P = [] (const char* n, double lo, double hi, double c, double d, std::function<juce::String (double)> f,
+                 std::function<float& (UserProgram&, int)> r) { return Param { T (n), lo, hi, c, d, std::move (f), std::move (r) }; };
+    using U = UserProgram;
+
+    switch (section)
+    {
+        case Pitch:
+            rows.push_back ({
+                P ("EG intenz.", -12, 12, 0, 0, stText, [] (U& u, int b) -> float& { return u.block[(size_t) b].pitchEgInt; }),
+                P ("Vibrato brz.", 0.1, 12, 4, 5.5, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibRate; }),
+                P ("Vibrato dub.", 0, 100, 0, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDepth; }),
+                P ("Kašnjenje", 0, 3, 0.5, 0.3, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDelay; }),
+                P ("Točkić→vib", 0, 100, 0, 30, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToVib; }),
+                P ("Aftert.→vib", 0, 100, 0, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToVib; }) });
+            rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].pitchEg; }, true, true));
+            break;
+
+        case Filter:
+            rows.push_back ({
+                P ("Cutoff", 40, 20000, 1500, 20000, UI::hzText, [] (U& u, int b) -> float& { return u.block[(size_t) b].cutoff; }),
+                P ("Rezonanca", 0, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].resonance; }),
+                P ("Key track", 0, 2, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].keyTrack; }),
+                P ("Velocity", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].velToCutoff; }),
+                P ("EG intenz.", -6, 6, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterEgInt; }),
+                P ("LFO brzina", 0.05, 15, 3, 2, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoRate; }),
+                P ("LFO dubina", 0, 3, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoDepth; }),
+                P ("Točkić→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToCutoff; }),
+                P ("Aftert.→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToCutoff; }) });
+            rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].filterEg; }, true, true));
+            break;
+
+        case Amp:
+            rows.push_back ({
+                P ("Velocity", 0, 1, 0, 0.8, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].velSens; }),
+                P ("Vel. kriva", 0.3, 4, 1.4, 1.6, [] (double v) { return juce::String (v, 2); }, [] (U& u, int b) -> float& { return u.block[(size_t) b].velCurve; }),
+                P ("Aftert.→jač.", 0, 12, 0, 0, [] (double v) { return "+" + juce::String (v, 1) + " dB"; }, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToAmp; }) });
+            rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].ampEg; }, false, false));
+            break;
+
+        case Effect:
+            rows.push_back ({
+                P ("FX brzina", 0, 1, 0, 0.3, UI::pctText, [] (U& u, int) -> float& { return u.fxRate; }),
+                P ("FX dubina", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxDepth; }),
+                P ("FX mix", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxMix; }) });
+            break;
+
+        default:
+            break;
+    }
+
+    for (auto& row : rows)
+        for (auto& prm : row)
+        {
+            auto* k = knobs.add (new ValueKnob (prm.name, acc, prm.lo, prm.hi, prm.centre, prm.fmt, prm.def));
+            auto ref = prm.ref;
+            k->onChange = [this, ref] (double v)
+            {
+                const int b = block;
+                edit ([ref, b, v] (UserProgram& u) { ref (u, b) = (float) v; });
+            };
+            addAndMakeVisible (k);
+        }
+
+    const bool isBlock = section == Pitch || section == Filter || section == Amp;
+    for (int b = 0; b < 2; ++b)
+    {
+        blockButtons[b].setToggleState (isBlock && b == block, juce::dontSendNotification);
+        blockButtons[b].setEnabled (isBlock);
+    }
+    for (int s = 0; s < NumSections; ++s)
+        sectionButtons[s].setToggleState (s == section, juce::dontSendNotification);
+
+    envView.setVisible (isBlock);
+    filterType.setVisible (section == Filter);
+    filterLabel.setVisible (section == Filter);
+    for (auto* c : std::initializer_list<juce::Component*> { &voiceMode, &priority, &portaOn, &portaFingered, &portaConstRate,
+                                                             portaTime.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
+                                                             &commonLabels[2], &commonLabels[3] })
+        c->setVisible (section == Common);
+    fxType.setVisible (section == Effect);
+    fxLabel.setVisible (section == Effect);
+
+    resized();
+    refresh();
+}
+
+static std::vector<SoundEditor::Param> envParams (std::function<EnvSettings& (UserProgram&, int)> env, bool bipolar, bool withReleaseLevel)
+{
+    using P = SoundEditor::Param;
+    const double lo = bipolar ? -1.0 : 0.0;
+    std::vector<P> v;
+    auto lvl = [&] (const char* n, double def, float EnvSettings::* m)
+    {
+        v.push_back ({ T (n), lo, 1.0, 0.0, def, levelText, [env, m] (UserProgram& u, int b) -> float& { return env (u, b).*m; } });
+    };
+    auto tim = [&] (const char* n, double def, float EnvSettings::* m)
+    {
+        v.push_back ({ T (n), 0.001, 10.0, 0.6, def, UI::timeText, [env, m] (UserProgram& u, int b) -> float& { return env (u, b).*m; } });
+    };
+    lvl ("Start", 0.0, &EnvSettings::start);
+    tim ("Attack", 0.001, &EnvSettings::attackTime);
+    lvl ("Attack niv.", 1.0, &EnvSettings::attackLevel);
+    tim ("Decay", 0.3, &EnvSettings::decayTime);
+    lvl ("Break niv.", 1.0, &EnvSettings::breakLevel);
+    tim ("Slope", 0.3, &EnvSettings::slopeTime);
+    lvl ("Sustain", 1.0, &EnvSettings::sustain);
+    tim ("Release", 0.3, &EnvSettings::releaseTime);
+    if (withReleaseLevel)
+        lvl ("Release niv.", 0.0, &EnvSettings::releaseLevel);
+    return v;
+}
+
+const EnvSettings* SoundEditor::currentEnv (const UserProgram& u, bool& bipolar) const
+{
+    const auto& sb = u.block[(size_t) block];
+    bipolar = section != Amp;
+    if (section == Pitch)  return &sb.pitchEg;
+    if (section == Filter) return &sb.filterEg;
+    if (section == Amp)    return &sb.ampEg;
+    return nullptr;
+}
+
+void SoundEditor::refresh()
+{
+    const int ui = userIndex();
+    const bool valid = ui >= 0 && ui < proc.getNumUsers();
+    setEnabled (valid);
+    if (! valid) return;
+
+    auto u = proc.getUser (ui);   // kopija: ref() vraca referencu u nju
+    int k = 0;
+    for (auto& row : rows)
+        for (auto& prm : row)
+            if (k < knobs.size())
+                knobs[k++]->setValue (prm.ref (u, block));
+
+    bool bip = false;
+    if (auto* e = currentEnv (u, bip))
+        envView.setEnvelope (*e, bip, block == 0 ? Pal::accent : Pal::part[1]);
+
+    filterType.setSelectedItemIndex (u.block[(size_t) block].filterType, juce::dontSendNotification);
+    voiceMode.setSelectedItemIndex (u.voiceMode, juce::dontSendNotification);
+    priority.setSelectedItemIndex (u.priority, juce::dontSendNotification);
+    portaOn.setToggleState (u.portaOn, juce::dontSendNotification);
+    portaFingered.setToggleState (u.portaFingered, juce::dontSendNotification);
+    portaConstRate.setToggleState (u.portaConstRate, juce::dontSendNotification);
+    portaTime->setValue (u.portamento);
+    setSliderValue (bendUp, u.bendUp);
+    setSliderValue (bendDown, u.bendDown);
+    fxType.setSelectedItemIndex (u.fxType, juce::dontSendNotification);
+}
+
+void SoundEditor::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::bg.withAlpha (0.6f));
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+}
+
+void SoundEditor::resized()
+{
+    auto r = getLocalBounds().reduced (8, 6);
+    auto top = r.removeFromTop (28);
+    for (auto& b : blockButtons)
+        b.setBounds (top.removeFromLeft (90).reduced (2, 0));
+    top.removeFromLeft (16);
+    for (auto& b : sectionButtons)
+        b.setBounds (top.removeFromLeft (110).reduced (2, 0));
+    r.removeFromTop (6);
+
+    const bool isBlock = section == Pitch || section == Filter || section == Amp;
+    if (isBlock)
+        envView.setBounds (r.removeFromRight (230).reduced (0, 4));
+
+    if (section == Common)
+    {
+        auto row = r.removeFromTop (90).reduced (0, 6);
+        auto col = [&] (int w) { auto c = row.removeFromLeft (w); row.removeFromLeft (14); return c; };
+        auto c1 = col (160);
+        commonLabels[0].setBounds (c1.removeFromTop (18));
+        voiceMode.setBounds (c1.removeFromTop (28));
+        auto c2 = col (160);
+        commonLabels[1].setBounds (c2.removeFromTop (18));
+        priority.setBounds (c2.removeFromTop (28));
+        auto c3 = col (190);
+        portaOn.setBounds (c3.removeFromTop (30));
+        c3.removeFromTop (6);
+        portaFingered.setBounds (c3.removeFromTop (26));
+        portaTime->setBounds (col (90));
+        auto c4 = col (170);
+        c4.removeFromTop (36);
+        portaConstRate.setBounds (c4.removeFromTop (26));
+        auto c5 = col (100);
+        commonLabels[2].setBounds (c5.removeFromTop (18));
+        bendUp.setBounds (c5.removeFromTop (26));
+        auto c6 = col (100);
+        commonLabels[3].setBounds (c6.removeFromTop (18));
+        bendDown.setBounds (c6.removeFromTop (26));
+        for (auto* s : { &bendUp, &bendDown })
+            s->setTextBoxStyle (juce::Slider::TextBoxLeft, false, 50, 26);
+        return;
+    }
+
+    if (section == Effect)
+    {
+        auto row = r.removeFromTop (90);
+        auto c = row.removeFromLeft (200).reduced (0, 10);
+        fxLabel.setBounds (c.removeFromTop (18));
+        fxType.setBounds (c.removeFromTop (28));
+        row.removeFromLeft (16);
+        for (auto* k : knobs)
+            k->setBounds (row.removeFromLeft (90));
+        return;
+    }
+
+    if (section == Filter)
+    {
+        auto c = r.removeFromLeft (150).reduced (0, 10);
+        filterLabel.setBounds (c.removeFromTop (18));
+        filterType.setBounds (c.removeFromTop (28).withTrimmedRight (10));
+    }
+
+    const int rowH = juce::jmin (90, r.getHeight() / juce::jmax (1, (int) rows.size()));
+    int k = 0;
+    for (auto& row : rows)
+    {
+        auto line = r.removeFromTop (rowH);
+        const int kw = juce::jmin (88, line.getWidth() / juce::jmax (1, (int) row.size()));
+        for (size_t i = 0; i < row.size() && k < knobs.size(); ++i)
+            knobs[k++]->setBounds (line.removeFromLeft (kw));
+    }
+}
+
+//==============================================================================
 //  UserPage
 //==============================================================================
 UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
-    : proc (p), editor (e)
+    : proc (p), editor (e), sound (p, [this] { return userIndex; })
 {
     list.setModel (this);
     list.setRowHeight (26);
@@ -521,8 +925,8 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     nameEdit.onTextChange = [this] { edit ([this] (UserProgram& u) { u.name = nameEdit.getText(); }); };
     addAndMakeVisible (nameEdit);
 
-    const char* headers[] = { "Instrument", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
-    for (int i = 0; i < 9; ++i)
+    const char* headers[] = { "Instrument", "Zvuk", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
+    for (int i = 0; i < 10; ++i)
     {
         styleLabel (headerLabels[i], T (headers[i]), 11.5f);
         addAndMakeVisible (headerLabels[i]);
@@ -530,47 +934,7 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
 
     for (int o = 0; o < kNumOsc; ++o)
         addAndMakeVisible (rows.add (new OscRow (p, e, o, [this] { return userIndex; })));
-
-    struct K { const char* name; double lo, hi, centre, def; std::function<juce::String (double)> fmt; };
-    const K ks[] = {
-        { "Attack", 0.001, 5.0, 0.3, 0.001, UI::timeText }, { "Decay", 0.01, 5.0, 0.5, 0.5, UI::timeText },
-        { "Sustain", 0.0, 1.0, 0.0, 1.0, UI::pctText }, { "Release", 0.01, 8.0, 0.6, 0.3, UI::timeText },
-        { "Cutoff", 40.0, 20000.0, 1500.0, 20000.0, UI::hzText }, { "Rezonanca", 0.0, 1.0, 0.0, 0.0, UI::pctText },
-        { "Velocity", 0.0, 1.0, 0.0, 0.8, UI::pctText }, { "Portamento", 0.0, 2.0, 0.25, 0.0, UI::timeText },
-        { "FX brzina", 0.0, 1.0, 0.0, 0.3, UI::pctText }, { "FX dubina", 0.0, 1.0, 0.0, 0.5, UI::pctText },
-        { "FX mix", 0.0, 1.0, 0.0, 0.5, UI::pctText } };
-    for (auto& k : ks)
-        addAndMakeVisible (knobs.add (new ValueKnob (T (k.name), Pal::accent, k.lo, k.hi, k.centre, k.fmt, k.def)));
-
-    knobs[0]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.attack = (float) v; }); };
-    knobs[1]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.decay = (float) v; }); };
-    knobs[2]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.sustain = (float) v; }); };
-    knobs[3]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.release = (float) v; }); };
-    knobs[4]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.cutoff = (float) v; }); };
-    knobs[5]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.resonance = (float) v; }); };
-    knobs[6]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.velSens = (float) v; }); };
-    knobs[7]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.portamento = (float) v; }); };
-    knobs[8]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.fxRate = (float) v; }); };
-    knobs[9]->onChange  = [this] (double v) { edit ([v] (UserProgram& u) { u.fxDepth = (float) v; }); };
-    knobs[10]->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.fxMix = (float) v; }); };
-
-    monoButton.setButtonText ("MONO");
-    monoButton.setClickingTogglesState (true);
-    monoButton.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
-    monoButton.onClick = [this] { edit ([this] (UserProgram& u) { u.mono = monoButton.getToggleState(); }); };
-    addAndMakeVisible (monoButton);
-
-    UI::setupIncDec (bendRange, 0, 12, 1);
-    bendRange.onValueChange = [this] { edit ([this] (UserProgram& u) { u.bendRange = (int) bendRange.getValue(); }); };
-    styleLabel (bendLabel, "P.bend", 12.0f);
-    addAndMakeVisible (bendRange);
-    addAndMakeVisible (bendLabel);
-
-    fxType.addItemList (InsertFx::getTypeNames(), 1);
-    fxType.onChange = [this] { edit ([this] (UserProgram& u) { u.fxType = fxType.getSelectedItemIndex(); }); };
-    styleLabel (fxLabel, "INSERT EFEKAT", 12.0f);
-    addAndMakeVisible (fxType);
-    addAndMakeVisible (fxLabel);
+    addAndMakeVisible (sound);
 }
 
 void UserPage::edit (std::function<void (UserProgram&)> fn)
@@ -621,26 +985,17 @@ void UserPage::refresh()
     const bool valid = userIndex >= 0 && userIndex < proc.getNumUsers();
     for (auto* r : rows)
         r->refresh();
+    sound.refresh();
 
-    for (auto* c : std::initializer_list<juce::Component*> { &nameEdit, &copyButton, &deleteButton, &monoButton, &bendRange, &fxType })
+    for (auto* c : std::initializer_list<juce::Component*> { &nameEdit, &copyButton, &deleteButton })
         c->setEnabled (valid);
-    for (auto* k : knobs)
-        k->setEnabled (valid);
     if (! valid)
     {
         nameEdit.setText (T ("Nema usera: klikni Novi"), juce::dontSendNotification);
         return;
     }
-
-    const auto& u = proc.getUser (userIndex);
     if (! nameEdit.isBeingEdited())
-        nameEdit.setText (u.name, juce::dontSendNotification);
-    const float vals[] = { u.attack, u.decay, u.sustain, u.release, u.cutoff, u.resonance, u.velSens, u.portamento, u.fxRate, u.fxDepth, u.fxMix };
-    for (int i = 0; i < knobs.size(); ++i)
-        knobs[i]->setValue (vals[i]);
-    monoButton.setToggleState (u.mono, juce::dontSendNotification);
-    setSliderValue (bendRange, u.bendRange);
-    fxType.setSelectedItemIndex (u.fxType, juce::dontSendNotification);
+        nameEdit.setText (proc.getUser (userIndex).name, juce::dontSendNotification);
 }
 
 void UserPage::paint (juce::Graphics& g)
@@ -665,49 +1020,30 @@ void UserPage::resized()
     list.setBounds (left);
 
     r.reduce (10, 8);
-    nameEdit.setBounds (r.removeFromTop (34).removeFromLeft (420));
-    r.removeFromTop (6);
+    nameEdit.setBounds (r.removeFromTop (30).removeFromLeft (420));
+    r.removeFromTop (4);
 
     // zaglavlje kolona (prati raspored u OscRow)
     auto header = r.removeFromTop (16).reduced (4, 0);
     header.removeFromLeft (70);
-    const int boxW = 86;
-    const int fixed = boxW * 8 + 56 + 6;
+    const int boxW = 82;
+    const int fixed = boxW * 8 + 56 + 6 + 40;
     headerLabels[0].setBounds (header.removeFromLeft (header.getWidth() - fixed));
     header.removeFromLeft (4);
-    headerLabels[1].setBounds (header.removeFromLeft (52));
+    headerLabels[1].setBounds (header.removeFromLeft (40));
+    headerLabels[2].setBounds (header.removeFromLeft (52));
     header.removeFromLeft (2);
-    for (int i = 2; i < 8; ++i)
+    for (int i = 3; i < 9; ++i)
         headerLabels[i].setBounds (header.removeFromLeft (boxW));
-    headerLabels[8].setBounds (header);
+    headerLabels[9].setBounds (header);
 
     for (auto* row : rows)
     {
-        row->setBounds (r.removeFromTop (32));
-        r.removeFromTop (2);
+        row->setBounds (r.removeFromTop (28));
+        r.removeFromTop (1);
     }
-
-    r.removeFromTop (10);
-    auto kRow = r.removeFromTop (80);
-    const int kw = 92;
-    for (int i = 0; i < 8; ++i)
-        knobs[i]->setBounds (kRow.removeFromLeft (kw));
-    kRow.removeFromLeft (16);
-    auto monoArea = kRow.removeFromLeft (110);
-    monoButton.setBounds (monoArea.removeFromTop (30).reduced (2, 0));
-    monoArea.removeFromTop (4);
-    bendLabel.setBounds (monoArea.removeFromTop (16));
-    bendRange.setBounds (monoArea.removeFromTop (24));
-    bendRange.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 46, 24);
-
-    r.removeFromTop (8);
-    auto fxRow = r.removeFromTop (80);
-    auto fxArea = fxRow.removeFromLeft (200);
-    fxArea.removeFromTop (14);
-    fxLabel.setBounds (fxArea.removeFromTop (16));
-    fxType.setBounds (fxArea.removeFromTop (28).withTrimmedRight (16));
-    for (int i = 8; i < 11; ++i)
-        knobs[i]->setBounds (fxRow.removeFromLeft (kw));
+    r.removeFromTop (6);
+    sound.setBounds (r);
 }
 
 //==============================================================================

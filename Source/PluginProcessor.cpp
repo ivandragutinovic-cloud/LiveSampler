@@ -815,6 +815,18 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         for (auto& p : parts)
             p.setSustain (m.isSustainPedalOn());
     }
+    else if (m.isControllerOfType (1))
+    {
+        const float v = (float) m.getControllerValue() / 127.0f;
+        for (auto& p : parts)
+            p.setModWheel (v);
+    }
+    else if (m.isChannelPressure())
+    {
+        const float v = (float) m.getChannelPressureValue() / 127.0f;
+        for (auto& p : parts)
+            p.setAftertouch (v);
+    }
     else if (m.isPitchWheel())
     {
         const float v = (float) (m.getPitchWheelValue() - 8192) / 8192.0f;

@@ -4,24 +4,69 @@
 //==============================================================================
 //  User
 //==============================================================================
+static void envToXml (const EnvSettings& e, juce::XmlElement& x)
+{
+    x.setAttribute ("start", (double) e.start);
+    x.setAttribute ("aTime", (double) e.attackTime);
+    x.setAttribute ("aLevel", (double) e.attackLevel);
+    x.setAttribute ("dTime", (double) e.decayTime);
+    x.setAttribute ("bLevel", (double) e.breakLevel);
+    x.setAttribute ("sTime", (double) e.slopeTime);
+    x.setAttribute ("sustain", (double) e.sustain);
+    x.setAttribute ("rTime", (double) e.releaseTime);
+    x.setAttribute ("rLevel", (double) e.releaseLevel);
+}
+
+static EnvSettings envFromXml (const juce::XmlElement* x, EnvSettings e)
+{
+    if (x == nullptr) return e;
+    auto f = [x] (const char* n, float def) { return (float) x->getDoubleAttribute (n, def); };
+    e.start = f ("start", e.start);
+    e.attackTime = f ("aTime", e.attackTime);
+    e.attackLevel = f ("aLevel", e.attackLevel);
+    e.decayTime = f ("dTime", e.decayTime);
+    e.breakLevel = f ("bLevel", e.breakLevel);
+    e.slopeTime = f ("sTime", e.slopeTime);
+    e.sustain = f ("sustain", e.sustain);
+    e.releaseTime = f ("rTime", e.releaseTime);
+    e.releaseLevel = f ("rLevel", e.releaseLevel);
+    return e;
+}
+
+#define BLOCK_FLOATS(X) X(pitchEgInt) X(vibRate) X(vibDepth) X(vibDelay) X(mwToVib) X(atToVib) \
+    X(cutoff) X(resonance) X(keyTrack) X(velToCutoff) X(filterEgInt) X(filterLfoRate) X(filterLfoDepth) \
+    X(mwToCutoff) X(atToCutoff) X(velSens) X(velCurve) X(atToAmp)
+
 std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
 {
     auto e = std::make_unique<juce::XmlElement> ("User");
     e->setAttribute ("name", name);
-    e->setAttribute ("attack", (double) attack);
-    e->setAttribute ("decay", (double) decay);
-    e->setAttribute ("sustain", (double) sustain);
-    e->setAttribute ("release", (double) release);
-    e->setAttribute ("cutoff", (double) cutoff);
-    e->setAttribute ("resonance", (double) resonance);
-    e->setAttribute ("velSens", (double) velSens);
-    e->setAttribute ("mono", mono);
+    e->setAttribute ("voiceMode", voiceMode);
+    e->setAttribute ("priority", priority);
+    e->setAttribute ("portaOn", portaOn);
     e->setAttribute ("portamento", (double) portamento);
-    e->setAttribute ("bendRange", bendRange);
+    e->setAttribute ("portaFingered", portaFingered);
+    e->setAttribute ("portaConstRate", portaConstRate);
+    e->setAttribute ("bendUp", bendUp);
+    e->setAttribute ("bendDown", bendDown);
     e->setAttribute ("fxType", fxType);
     e->setAttribute ("fxRate", (double) fxRate);
     e->setAttribute ("fxDepth", (double) fxDepth);
     e->setAttribute ("fxMix", (double) fxMix);
+
+    for (int b = 0; b < 2; ++b)
+    {
+        const auto& sb = block[(size_t) b];
+        auto* x = e->createNewChildElement ("Block");
+        x->setAttribute ("index", b);
+        x->setAttribute ("filterType", sb.filterType);
+       #define WRITE_F(n) x->setAttribute (#n, (double) sb.n);
+        BLOCK_FLOATS (WRITE_F)
+       #undef WRITE_F
+        envToXml (sb.pitchEg, *x->createNewChildElement ("PitchEG"));
+        envToXml (sb.filterEg, *x->createNewChildElement ("FilterEG"));
+        envToXml (sb.ampEg, *x->createNewChildElement ("AmpEG"));
+    }
 
     for (int i = 0; i < kNumOsc; ++i)
     {
@@ -38,6 +83,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
         x->setAttribute ("keyHigh", o.keyHigh);
         x->setAttribute ("velLow", o.velLow);
         x->setAttribute ("velHigh", o.velHigh);
+        x->setAttribute ("block", o.block);
     }
     return e;
 }
@@ -47,20 +93,54 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     UserProgram u;
     auto f = [&e] (const char* n, float def) { return (float) e.getDoubleAttribute (n, def); };
     u.name = e.getStringAttribute ("name", u.name);
-    u.attack = f ("attack", u.attack);
-    u.decay = f ("decay", u.decay);
-    u.sustain = f ("sustain", u.sustain);
-    u.release = f ("release", u.release);
-    u.cutoff = f ("cutoff", u.cutoff);
-    u.resonance = f ("resonance", u.resonance);
-    u.velSens = f ("velSens", u.velSens);
-    u.mono = e.getBoolAttribute ("mono", false);
-    u.portamento = f ("portamento", 0.0f);
-    u.bendRange = e.getIntAttribute ("bendRange", 2);
     u.fxType = e.getIntAttribute ("fxType", 0);
     u.fxRate = f ("fxRate", u.fxRate);
     u.fxDepth = f ("fxDepth", u.fxDepth);
     u.fxMix = f ("fxMix", u.fxMix);
+
+    if (e.getChildByName ("Block") != nullptr)
+    {
+        u.voiceMode = juce::jlimit (0, 2, e.getIntAttribute ("voiceMode", 0));
+        u.priority = juce::jlimit (0, 2, e.getIntAttribute ("priority", 0));
+        u.portaOn = e.getBoolAttribute ("portaOn", false);
+        u.portamento = f ("portamento", u.portamento);
+        u.portaFingered = e.getBoolAttribute ("portaFingered", false);
+        u.portaConstRate = e.getBoolAttribute ("portaConstRate", false);
+        u.bendUp = e.getIntAttribute ("bendUp", 2);
+        u.bendDown = e.getIntAttribute ("bendDown", 2);
+
+        for (auto* x : e.getChildWithTagNameIterator ("Block"))
+        {
+            const int b = x->getIntAttribute ("index", -1);
+            if (b < 0 || b > 1) continue;
+            auto& sb = u.block[(size_t) b];
+            sb.filterType = juce::jlimit (0, FilterType::Num - 1, x->getIntAttribute ("filterType", sb.filterType));
+           #define READ_F(n) sb.n = (float) x->getDoubleAttribute (#n, sb.n);
+            BLOCK_FLOATS (READ_F)
+           #undef READ_F
+            sb.pitchEg = envFromXml (x->getChildByName ("PitchEG"), sb.pitchEg);
+            sb.filterEg = envFromXml (x->getChildByName ("FilterEG"), sb.filterEg);
+            sb.ampEg = envFromXml (x->getChildByName ("AmpEG"), sb.ampEg);
+        }
+    }
+    else
+    {
+        // user iz prethodne verzije (jedan ADSR i filter)
+        const float a = f ("attack", 0.001f), d = f ("decay", 0.5f), s = f ("sustain", 1.0f), r = f ("release", 0.3f);
+        for (auto& sb : u.block)
+        {
+            sb.ampEg = { 0.0f, a, 1.0f, d, s, 0.01f, s, r, 0.0f };
+            sb.cutoff = f ("cutoff", 20000.0f);
+            sb.resonance = f ("resonance", 0.0f);
+            sb.filterType = FilterType::LP12;
+            sb.velSens = f ("velSens", 0.8f);
+        }
+        u.voiceMode = e.getBoolAttribute ("mono", false) ? VoiceMode::Mono : VoiceMode::Poly;
+        const float porta = f ("portamento", 0.0f);
+        u.portaOn = porta > 0.001f;
+        if (u.portaOn) u.portamento = porta;
+        u.bendUp = u.bendDown = e.getIntAttribute ("bendRange", 2);
+    }
 
     for (auto* x : e.getChildWithTagNameIterator ("Osc"))
     {
@@ -77,6 +157,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         o.keyHigh = juce::jlimit (0, 127, x->getIntAttribute ("keyHigh", 127));
         o.velLow = juce::jlimit (1, 127, x->getIntAttribute ("velLow", 1));
         o.velHigh = juce::jlimit (1, 127, x->getIntAttribute ("velHigh", 127));
+        o.block = juce::jlimit (0, 1, x->getIntAttribute ("block", 0));
     }
     return u;
 }

@@ -20,22 +20,66 @@ struct OscSettings
     float fineCents = 0.0f;
     int keyLow = 0, keyHigh = 127;
     int velLow = 1, velHigh = 127;
-
+    int block = 0;                      // 0 = Zvuk A, 1 = Zvuk B (kao OSC1/OSC2 na Kronosu)
 };
+
+// Envelope kao na Kronosu: start -> attack nivo -> break nivo -> sustain -> release nivo
+struct EnvSettings
+{
+    float start = 0.0f;
+    float attackTime = 0.001f, attackLevel = 1.0f;
+    float decayTime = 0.3f, breakLevel = 1.0f;
+    float slopeTime = 0.3f, sustain = 1.0f;
+    float releaseTime = 0.3f, releaseLevel = 0.0f;
+};
+
+namespace FilterType { enum { Off = 0, LP24, LP12, HP, BP, Num }; }
+
+struct SoundBlock
+{
+    // pitch
+    float pitchEgInt = 0.0f;            // polutonovi na pun nivo pitch EG-a
+    EnvSettings pitchEg { 0.0f, 0.001f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f };
+    float vibRate = 5.5f, vibDepth = 0.0f, vibDelay = 0.3f;   // Hz, centi, sekunde
+    float mwToVib = 30.0f, atToVib = 0.0f;                    // centi
+
+    // filter
+    int filterType = FilterType::LP24;
+    float cutoff = 20000.0f, resonance = 0.0f;
+    float keyTrack = 0.0f;              // 1 = prati klavijaturu potpuno
+    float velToCutoff = 0.0f;           // oktave (pozitivno: jaci udarac = svetlije)
+    float filterEgInt = 0.0f;           // oktave
+    EnvSettings filterEg { 0.0f, 0.01f, 1.0f, 0.5f, 0.4f, 0.5f, 0.2f, 0.5f, 0.0f };
+    float filterLfoRate = 2.0f, filterLfoDepth = 0.0f;        // Hz, oktave
+    float mwToCutoff = 0.0f, atToCutoff = 0.0f;               // oktave
+
+    // amp
+    EnvSettings ampEg { 0.0f, 0.001f, 1.0f, 0.5f, 1.0f, 0.5f, 1.0f, 0.3f, 0.0f };
+    float velSens = 0.8f, velCurve = 1.6f;
+    float atToAmp = 0.0f;               // dB
+};
+
+namespace VoiceMode { enum { Poly = 0, Mono, MonoLegato }; }
+namespace Priority  { enum { Last = 0, High, Low }; }
 
 struct UserProgram
 {
     juce::String name { "Novi user" };
     std::array<OscSettings, kNumOsc> osc;
+    std::array<SoundBlock, 2> block;
 
-    float attack = 0.001f, decay = 0.5f, sustain = 1.0f, release = 0.3f;
-    float cutoff = 20000.0f, resonance = 0.0f;
-    float velSens = 0.8f;
-    bool mono = false;
-    float portamento = 0.0f;
-    int bendRange = 2;
+    int voiceMode = VoiceMode::Poly;
+    int priority = Priority::Last;
+    bool portaOn = false;
+    float portamento = 0.1f;            // sekunde (kod konstantne brzine: po oktavi)
+    bool portaFingered = false;         // klizi samo kad se svira vezano
+    bool portaConstRate = false;
+    int bendUp = 2, bendDown = 2;
+
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;
+
+    bool isMono() const { return voiceMode != VoiceMode::Poly; }
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static UserProgram fromXml (const juce::XmlElement&);

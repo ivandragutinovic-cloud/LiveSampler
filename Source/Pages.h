@@ -72,8 +72,68 @@ private:
     const int osc;
     std::function<int()> userIndex;
 
-    juce::TextButton onButton, instButton, mapButton;
+    juce::TextButton onButton, instButton, blockButton, mapButton;
     juce::Slider level, pan, transpose, fine, keyLow, keyHigh, velLow, velHigh;
+};
+
+// Prikaz envelope (Kronos stil)
+class EnvelopeView : public juce::Component
+{
+public:
+    void setEnvelope (const EnvSettings& e, bool bipolar, juce::Colour c) { env = e; bip = bipolar; colour = c; repaint(); }
+    void paint (juce::Graphics&) override;
+private:
+    EnvSettings env;
+    bool bip = false;
+    juce::Colour colour { Pal::accent };
+};
+
+// Editor zvuka: Zvuk A/B (Pitch, Filter, Amp) + Zajednicko + Efekat
+class SoundEditor : public juce::Component
+{
+public:
+    SoundEditor (LiveSamplerProcessor&, std::function<int()> userIndex);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+    enum Section { Pitch = 0, Filter, Amp, Common, Effect, NumSections };
+
+    struct Param
+    {
+        juce::String name;
+        double lo, hi, centre, def;
+        std::function<juce::String (double)> fmt;
+        std::function<float& (UserProgram&, int block)> ref;
+    };
+
+private:
+    void showSection (int section);
+    void rebuildKnobs();
+    void edit (std::function<void (UserProgram&)> fn);
+    const EnvSettings* currentEnv (const UserProgram& u, bool& bipolar) const;
+
+    LiveSamplerProcessor& proc;
+    std::function<int()> userIndex;
+    int section = Filter, block = 0;
+
+    juce::TextButton blockButtons[2], sectionButtons[NumSections];
+    std::vector<std::vector<Param>> rows;
+    juce::OwnedArray<ValueKnob> knobs;
+    EnvelopeView envView;
+
+    // filter
+    juce::ComboBox filterType;
+    juce::Label filterLabel;
+    // zajednicko
+    juce::ComboBox voiceMode, priority;
+    juce::TextButton portaOn, portaFingered, portaConstRate;
+    std::unique_ptr<ValueKnob> portaTime;
+    juce::Slider bendUp, bendDown;
+    juce::Label commonLabels[4];
+    // efekat
+    juce::ComboBox fxType;
+    juce::Label fxLabel;
 };
 
 class UserPage : public juce::Component,
@@ -99,14 +159,9 @@ private:
 
     juce::ListBox list;
     juce::TextButton newButton, copyButton, deleteButton;
-    juce::Label nameEdit, headerLabels[9];
+    juce::Label nameEdit, headerLabels[10];
     juce::OwnedArray<OscRow> rows;
-
-    juce::OwnedArray<ValueKnob> knobs;   // attack, decay, sustain, release, cutoff, reso, velocity, porta, fx rate, depth, mix
-    juce::TextButton monoButton;
-    juce::Slider bendRange;
-    juce::ComboBox fxType;
-    juce::Label bendLabel, fxLabel;
+    SoundEditor sound;
 };
 
 //==============================================================================

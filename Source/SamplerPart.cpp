@@ -137,6 +137,62 @@ void InsertFx::process (juce::AudioBuffer<float>& buffer, int n, int type, float
 }
 
 //==============================================================================
+//  KronosEnv
+//==============================================================================
+void KronosEnv::enter (Stage s, float tgt, float seconds)
+{
+    stage = s;
+    target = tgt;
+    remaining = juce::jmax (1, (int) (seconds * sr));
+    step = (target - level) / (float) remaining;
+}
+
+void KronosEnv::start (const EnvSettings& e, double sampleRate)
+{
+    env = e;
+    sr = sampleRate;
+    level = e.start;
+    enter (Attack, e.attackLevel, e.attackTime);
+}
+
+void KronosEnv::release()
+{
+    if (stage == Idle || stage == Release)
+        return;
+    if (std::abs (level - env.releaseLevel) < 1.0e-4f)
+    {
+        stage = Idle;   // vec je na krajnjem nivou (npr. nota pustena odmah)
+        level = env.releaseLevel;
+        return;
+    }
+    enter (Release, env.releaseLevel, env.releaseTime);
+}
+
+float KronosEnv::advance (int n)
+{
+    while (n > 0 && stage != Idle && stage != Sustain)
+    {
+        const int k = juce::jmin (n, remaining);
+        level += step * (float) k;
+        remaining -= k;
+        n -= k;
+        if (remaining <= 0)
+        {
+            level = target;
+            switch (stage)
+            {
+                case Attack:  enter (Decay, env.breakLevel, env.decayTime); break;
+                case Decay:   enter (Slope, env.sustain, env.slopeTime); break;
+                case Slope:   stage = Sustain; level = env.sustain; break;
+                case Release: stage = Idle; break;
+                default: break;
+            }
+        }
+    }
+    return level;
+}
+
+//==============================================================================
 //  SamplerPart
 //==============================================================================
 void SamplerPart::prepare (double newSampleRate, int maxBlock)
@@ -151,9 +207,8 @@ void SamplerPart::prepare (double newSampleRate, int maxBlock)
     {
         v.active = false;
         v.instrument.reset();
-        v.env.setSampleRate (sampleRate);
         v.filter.prepare (spec);
-        v.filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+        v.filter2.prepare (spec);
     }
 
     gainL.reset (sampleRate, 0.03);
@@ -161,6 +216,9 @@ void SamplerPart::prepare (double newSampleRate, int maxBlock)
     heldKeys.clear();
     heldKeys.reserve (numIds);
     idPitch.fill (60);
+    idVel.fill (100);
+    monoKey = -1;
+    polyHeld = 0;
 }
 
 int SamplerPart::getNumActiveVoices() const
@@ -175,31 +233,8 @@ void SamplerPart::beginBlock (const PartRuntime* runtime, int numSamples)
 {
     cfg = runtime;
     partBuffer.clear (0, numSamples);
-
     if (cfg == nullptr)
         return;
-
-    const auto& u = cfg->user;
-    envParams.attack  = juce::jmax (0.001f, u.attack);
-    envParams.decay   = juce::jmax (0.001f, u.decay);
-    envParams.sustain = u.sustain;
-    envParams.release = juce::jmax (0.005f, u.release);
-
-    glideCoef = u.portamento > 0.001f ? std::exp (-4.0 / (u.portamento * sampleRate)) : 0.0;
-
-    filterOn = u.cutoff < 19500.0f || u.resonance > 0.01f;
-    filterQ = 0.7071f + u.resonance * u.resonance * 9.0f;
-    const float fc = juce::jlimit (20.0f, (float) sampleRate * 0.45f, u.cutoff);
-    for (auto& v : voices)
-    {
-        if (! v.active) continue;
-        v.env.setParameters (envParams);
-        if (filterOn)
-        {
-            v.filter.setCutoffFrequency (fc);
-            v.filter.setResonance (filterQ);
-        }
-    }
 
     const auto& p = cfg->part;
     const float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb, -60.0f) : 0.0f;
@@ -223,7 +258,24 @@ SamplerPart::Voice* SamplerPart::findFreeVoice()
     return oldestReleased != nullptr ? oldestReleased : oldest;
 }
 
-void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitch)
+void SamplerPart::setGlide (Voice& v, double fromPitch, bool glide)
+{
+    const auto& u = cfg->user;
+    if (! glide || fromPitch < 0.0)
+    {
+        v.pitch = v.pitchTarget;
+        v.glideCoef16 = 0.0;
+        return;
+    }
+    v.pitch = fromPitch;
+    double t = juce::jmax (0.001, (double) u.portamento);
+    if (u.portaConstRate)   // vreme po oktavi
+        t = juce::jmax (0.001, t * std::abs (v.pitchTarget - fromPitch) / 12.0);
+    const double coef = std::exp (-4.0 / (t * sampleRate));
+    v.glideCoef16 = std::pow (coef, (double) controlRate);
+}
+
+void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitch, bool glide)
 {
     const auto& u = cfg->user;
     const juce::uint32 serial = ++serialCounter;
@@ -231,7 +283,6 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         monoSerial = serial;
 
     const float vel01 = (float) velocity / 127.0f;
-    const float velGain = (1.0f - u.velSens) + u.velSens * std::pow (vel01, 1.6f);
 
     for (int i = 0; i < kNumOsc; ++i)
     {
@@ -252,6 +303,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         if (vp == nullptr)
             return;
         auto& v = *vp;
+        const auto& sb = u.block[(size_t) juce::jlimit (0, 1, o.block)];
 
         v.active = true;
         v.id = id;
@@ -260,10 +312,11 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.held = false;
         v.instrument = inst;
         v.sample = smp;
+        v.block = juce::jlimit (0, 1, o.block);
         v.oscTranspose = o.transpose;
         v.pos = (double) smp->startOffset;
-        v.pitch = startPitch + o.transpose;
         v.pitchTarget = (double) oscPitch;
+        setGlide (v, startPitch >= 0.0 ? startPitch + o.transpose : -1.0, glide);
         v.rootKey = zone->rootKey;
         v.tune = (zone->tuneCents + o.fineCents) / 100.0;
         v.fixedPitch = zone->fixedPitch;
@@ -286,30 +339,174 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
 
         const float pan = juce::jlimit (-1.0f, 1.0f, zone->pan + o.pan);
         const float g = juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb);
-        v.velGain = velGain;
+        v.vel01 = vel01;
+        v.velGain = (1.0f - sb.velSens) + sb.velSens * std::pow (vel01, juce::jmax (0.1f, sb.velCurve));
         v.gainL = g * juce::jmin (1.0f, 1.0f - pan);
         v.gainR = g * juce::jmin (1.0f, 1.0f + pan);
 
         v.fadingOut = false;
         v.fadeGain = 1.0f;
         v.age = ++ageCounter;
-        v.env.setParameters (envParams);
-        v.env.reset();
-        v.env.noteOn();
+        v.time = 0.0;
+        v.vibPhase = 0.0;
+        v.fltPhase = 0.0;
+        v.ctrl = 0;
+
+        auto amp = sb.ampEg;
+        amp.releaseLevel = 0.0f;
+        v.ampEnv.start (amp, sampleRate);
+        v.pitchEnv.start (sb.pitchEg, sampleRate);
+        v.filterEnv.start (sb.filterEg, sampleRate);
+
+        v.filterOn = sb.filterType != FilterType::Off;
+        v.cascade = sb.filterType == FilterType::LP24;
+        using FT = juce::dsp::StateVariableTPTFilterType;
+        const auto type = sb.filterType == FilterType::HP ? FT::highpass
+                        : sb.filterType == FilterType::BP ? FT::bandpass : FT::lowpass;
+        v.filter.setType (type);
+        v.filter2.setType (FT::lowpass);
         v.filter.reset();
-        if (filterOn)
+        v.filter2.reset();
+        updateModulation (v);
+    }
+}
+
+void SamplerPart::updateModulation (Voice& v)
+{
+    const auto& u = cfg->user;
+    const auto& sb = u.block[(size_t) v.block];
+    const double dt = (double) controlRate / sampleRate;
+
+    // glide
+    if (v.glideCoef16 > 0.0)
+    {
+        v.pitch = v.pitchTarget + (v.pitch - v.pitchTarget) * v.glideCoef16;
+        if (std::abs (v.pitchTarget - v.pitch) < 1.0e-3)
         {
-            v.filter.setCutoffFrequency (juce::jlimit (20.0f, (float) sampleRate * 0.45f, u.cutoff));
-            v.filter.setResonance (filterQ);
+            v.pitch = v.pitchTarget;
+            v.glideCoef16 = 0.0;
         }
     }
+    else
+    {
+        v.pitch = v.pitchTarget;
+    }
+
+    // pitch: EG + vibrato + bend
+    const float pEg = v.pitchEnv.advance (controlRate);
+    const double delayFade = juce::jlimit (0.0, 1.0, (v.time - sb.vibDelay) / 0.25);
+    const double vibCents = sb.vibDepth * delayFade + modWheel * sb.mwToVib + aftertouch * sb.atToVib;
+    v.vibPhase += juce::MathConstants<double>::twoPi * sb.vibRate * dt;
+    if (v.vibPhase > juce::MathConstants<double>::twoPi) v.vibPhase -= juce::MathConstants<double>::twoPi;
+    const double bendSemis = bend >= 0.0f ? bend * u.bendUp : bend * u.bendDown;
+    const double pitchMod = pEg * sb.pitchEgInt + std::sin (v.vibPhase) * vibCents / 100.0 + bendSemis + v.tune;
+
+    const double rateRatio = v.sample->sampleRate / sampleRate;
+    const double played = v.fixedPitch ? v.rootKey : v.pitch;
+    v.inc = std::exp2 ((played + pitchMod - v.rootKey) / 12.0) * rateRatio;
+
+    // filter
+    const float fEg = v.filterEnv.advance (controlRate);
+    v.fltPhase += juce::MathConstants<double>::twoPi * sb.filterLfoRate * dt;
+    if (v.fltPhase > juce::MathConstants<double>::twoPi) v.fltPhase -= juce::MathConstants<double>::twoPi;
+
+    if (v.filterOn)
+    {
+        const double octaves = sb.keyTrack * (v.pitch - v.oscTranspose - 60.0) / 12.0
+                             + sb.velToCutoff * (v.vel01 - 1.0)
+                             + sb.filterEgInt * fEg
+                             + sb.filterLfoDepth * std::sin (v.fltPhase)
+                             + sb.mwToCutoff * modWheel + sb.atToCutoff * aftertouch;
+        const float fc = (float) juce::jlimit (20.0, sampleRate * 0.45, sb.cutoff * std::exp2 (octaves));
+        const float q = 0.7071f + sb.resonance * sb.resonance * 9.0f;
+        v.filter.setCutoffFrequency (fc);
+        v.filter.setResonance (q);
+        if (v.cascade)
+        {
+            v.filter2.setCutoffFrequency (fc);
+            v.filter2.setResonance (0.7071f);
+        }
+    }
+
+    v.ampMod = sb.atToAmp != 0.0f ? juce::Decibels::decibelsToGain (sb.atToAmp * aftertouch) : 1.0f;
+    v.time += dt;
 }
 
 void SamplerPart::releaseVoice (Voice& v)
 {
     v.held = false;
     v.keyDown = false;
-    v.env.noteOff();
+    v.ampEnv.release();
+    v.pitchEnv.release();
+    v.filterEnv.release();
+}
+
+int SamplerPart::chooseMonoKey() const
+{
+    if (heldKeys.empty())
+        return -1;
+    switch (cfg != nullptr ? cfg->user.priority : Priority::Last)
+    {
+        case Priority::High:
+        {
+            int best = heldKeys.front();
+            for (int k : heldKeys) if (idPitch[(size_t) k] > idPitch[(size_t) best]) best = k;
+            return best;
+        }
+        case Priority::Low:
+        {
+            int best = heldKeys.front();
+            for (int k : heldKeys) if (idPitch[(size_t) k] < idPitch[(size_t) best]) best = k;
+            return best;
+        }
+        default:
+            return heldKeys.back();
+    }
+}
+
+void SamplerPart::soundMono (int id, bool transition)
+{
+    const auto& u = cfg->user;
+    const int pitch = idPitch[(size_t) id];
+
+    bool haveCurrent = false;
+    double currentPitch = -1.0;
+    for (auto& v : voices)
+        if (v.active && ! v.fadingOut && v.id < 128 && v.serial == monoSerial && (v.keyDown || v.held))
+        {
+            if (! haveCurrent) currentPitch = v.pitch - v.oscTranspose;
+            haveCurrent = true;
+        }
+
+    const bool glide = u.portaOn && (! u.portaFingered || transition);
+    const bool legato = u.voiceMode == VoiceMode::MonoLegato && transition && haveCurrent;
+
+    if (legato)
+    {
+        // legato: ista nota nastavlja, menja se samo visina (bez novog attack-a)
+        for (auto& v : voices)
+        {
+            if (! v.active || v.fadingOut || v.id >= 128 || v.serial != monoSerial)
+                continue;
+            const double from = v.pitch;
+            v.id = id;
+            v.keyDown = true;
+            v.held = false;
+            v.pitchTarget = pitch + v.oscTranspose;
+            setGlide (v, from, glide);
+        }
+    }
+    else
+    {
+        const double from = haveCurrent ? currentPitch : lastPitch;
+        for (auto& v : voices)
+            if (v.active && ! v.fadingOut && v.id < 128 && v.serial == monoSerial)
+                v.fadingOut = true;
+        startVoices (id, pitch, idVel[(size_t) id], glide ? from : -1.0, glide);
+    }
+
+    monoKey = id;
+    lastPitch = pitch;
 }
 
 void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
@@ -320,46 +517,32 @@ void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
     const auto& u = cfg->user;
     pitch = juce::jlimit (0, 127, pitch);
     idPitch[(size_t) id] = pitch;
-    const bool porta = u.portamento > 0.001f;
+    idVel[(size_t) id] = velocity;
 
-    if (u.mono && id < 128)
+    if (u.isMono() && id < 128)
     {
+        const bool transition = ! heldKeys.empty();
         heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), id), heldKeys.end());
         heldKeys.push_back (id);
+        const int target = chooseMonoKey();
+        if (target == id && (target != monoKey || ! transition))
+            soundMono (id, transition);
+        return;
+    }
 
-        // glas koji trenutno svira (mono)
-        double startPitch = pitch;
-        bool found = false;
+    if (! additive)
         for (auto& v : voices)
-        {
-            if (v.active && ! v.fadingOut && v.id < 128 && v.serial == monoSerial)
-            {
-                if (! found && porta)
-                {
-                    startPitch = v.pitch - v.oscTranspose;
-                    found = true;
-                }
-                v.fadingOut = true;
-            }
-        }
-        if (! found && porta && lastPitch >= 0.0)
-            startPitch = lastPitch;
+            if (v.active && v.id == id && ! v.fadingOut)
+                releaseVoice (v);
 
-        startVoices (id, pitch, velocity, startPitch);
-    }
-    else
-    {
-        if (! additive)
-            for (auto& v : voices)
-                if (v.active && v.id == id && ! v.fadingOut)
-                    releaseVoice (v);
-
-        const double startPitch = (porta && lastPitch >= 0.0 && id < 128) ? lastPitch : (double) pitch;
-        startVoices (id, pitch, velocity, startPitch);
-    }
+    const bool glide = u.portaOn && id < 128 && lastPitch >= 0.0 && (! u.portaFingered || polyHeld > 0);
+    startVoices (id, pitch, velocity, glide ? lastPitch : -1.0, glide);
 
     if (id < 128)
+    {
         lastPitch = pitch;
+        ++polyHeld;
+    }
 }
 
 void SamplerPart::noteOff (int id)
@@ -369,38 +552,32 @@ void SamplerPart::noteOff (int id)
 
     const bool sustainOn = sustainDown && (cfg == nullptr || cfg->part.sustainPedal);
 
-    if (cfg != nullptr && cfg->user.mono && id < 128)
+    if (cfg != nullptr && cfg->user.isMono() && id < 128)
     {
         heldKeys.erase (std::remove (heldKeys.begin(), heldKeys.end(), id), heldKeys.end());
+        if (id != monoKey)
+            return;
 
-        bool retargeted = false;
+        if (! heldKeys.empty())
+        {
+            soundMono (chooseMonoKey(), true);   // vrati se na drzani taster
+            return;
+        }
+
         for (auto& v : voices)
         {
             if (! v.active || v.fadingOut || v.id != id || ! v.keyDown)
                 continue;
-
-            if (! heldKeys.empty())
-            {
-                // legato: vrati se na poslednji drzani taster
-                const int newId = heldKeys.back();
-                const int newPitch = idPitch[(size_t) newId];
-                v.id = newId;
-                v.pitchTarget = newPitch + v.oscTranspose;
-                if (cfg->user.portamento <= 0.001f)
-                    v.pitch = v.pitchTarget;
-                lastPitch = newPitch;
-                retargeted = true;
-            }
-            else
-            {
-                v.keyDown = false;
-                if (sustainOn) v.held = true;
-                else releaseVoice (v);
-            }
+            v.keyDown = false;
+            if (sustainOn) v.held = true;
+            else releaseVoice (v);
         }
-        juce::ignoreUnused (retargeted);
+        monoKey = -1;
         return;
     }
+
+    if (id < 128 && polyHeld > 0)
+        --polyHeld;
 
     for (auto& v : voices)
     {
@@ -425,6 +602,8 @@ void SamplerPart::setSustain (bool down)
 void SamplerPart::allNotesOff (bool immediate)
 {
     heldKeys.clear();
+    monoKey = -1;
+    polyHeld = 0;
     for (auto& v : voices)
     {
         if (! v.active) continue;
@@ -446,12 +625,11 @@ static inline float hermite (float xm1, float x0, float x1, float x2, float t) n
 
 void SamplerPart::renderVoices (int start, int num)
 {
-    if (num <= 0)
+    if (num <= 0 || cfg == nullptr)
         return;
 
     auto* outL = partBuffer.getWritePointer (0) + start;
     auto* outR = partBuffer.getWritePointer (1) + start;
-    const double bendOffset = cfg != nullptr ? bend * (double) cfg->user.bendRange : 0.0;
     const float fadeStep = 1.0f / (0.006f * (float) sampleRate);   // 6 ms
 
     for (auto& v : voices)
@@ -466,9 +644,6 @@ void SamplerPart::renderVoices (int start, int num)
         const bool loop = v.loop;
         const int loopStart = v.loopStart, loopEnd = v.loopEnd;
         const int loopLen = loopEnd - loopStart;
-        const double rateRatio = smp->sampleRate / sampleRate;
-        const double pitchOffset = bendOffset + v.tune - v.rootKey;
-        auto incFor = [&] (double p) { return std::exp2 (((v.fixedPitch ? v.rootKey : p) + pitchOffset) / 12.0) * rateRatio; };
 
         auto fetch = [&] (const float* d, int idx) -> float
         {
@@ -477,20 +652,12 @@ void SamplerPart::renderVoices (int start, int num)
             return idx < len ? d[idx] : 0.0f;
         };
 
-        bool gliding = std::abs (v.pitchTarget - v.pitch) > 1.0e-4;
-        double inc = incFor (v.pitch);
-
         for (int i = 0; i < num; ++i)
         {
-            if (gliding)
+            if (--v.ctrl <= 0)
             {
-                v.pitch = v.pitchTarget + (v.pitch - v.pitchTarget) * glideCoef;
-                if (std::abs (v.pitchTarget - v.pitch) <= 1.0e-4)
-                {
-                    v.pitch = v.pitchTarget;
-                    gliding = false;
-                }
-                inc = incFor (v.pitch);
+                v.ctrl = controlRate;
+                updateModulation (v);
             }
 
             const int ip = (int) v.pos;
@@ -498,7 +665,7 @@ void SamplerPart::renderVoices (int start, int num)
             float l = hermite (fetch (L, ip - 1), fetch (L, ip), fetch (L, ip + 1), fetch (L, ip + 2), t);
             float r = hermite (fetch (R, ip - 1), fetch (R, ip), fetch (R, ip + 1), fetch (R, ip + 2), t);
 
-            float g = v.env.getNextSample() * v.velGain;
+            float g = juce::jmax (0.0f, v.ampEnv.advance (1)) * v.velGain * v.ampMod;
             if (v.fadingOut)
             {
                 v.fadeGain -= fadeStep;
@@ -512,15 +679,20 @@ void SamplerPart::renderVoices (int start, int num)
 
             l *= g * v.gainL;
             r *= g * v.gainR;
-            if (filterOn)
+            if (v.filterOn)
             {
                 l = v.filter.processSample (0, l);
                 r = v.filter.processSample (1, r);
+                if (v.cascade)
+                {
+                    l = v.filter2.processSample (0, l);
+                    r = v.filter2.processSample (1, r);
+                }
             }
             outL[i] += l;
             outR[i] += r;
 
-            v.pos += inc;
+            v.pos += v.inc;
             if (loop)
             {
                 while (v.pos >= (double) loopEnd)
@@ -532,7 +704,7 @@ void SamplerPart::renderVoices (int start, int num)
                 break;
             }
 
-            if (! v.env.isActive())
+            if (! v.ampEnv.isActive())
             {
                 v.active = false;
                 break;

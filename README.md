@@ -107,9 +107,22 @@ Stranica **MAPIRANJE** (ili dugme MAPA kod oscilatora na stranici USER) otvara e
 USB, klikni "Osveži". Instrumenti dobijaju ime po folderu, npr. `USB/Gudaci/Violina`.
 
 **USER** = zvuk od do 8 oscilatora. Svaki oscilator ima instrument iz biblioteke, jačinu,
-pan, transpoziciju, fino štimovanje, raspon tastera i velocity-ja. Zajedničko za usera:
-ADSR, cutoff/rezonanca, velocity osetljivost, mono, portamento, pitch bend i insert efekat.
-Dugme MAPA otvara editor mapiranja za taj instrument. Useri se čuvaju automatski.
+pan, transpoziciju, fino štimovanje, raspon tastera i velocity-ja, i pripada **Zvuku A ili B**
+(kao OSC1/OSC2 na Kronosu). Dugme MAPA otvara editor mapiranja za taj instrument.
+
+Editor zvuka (dole na USER stranici), posebno za Zvuk A i Zvuk B:
+- **PITCH**: pitch envelope sa intenzitetom, vibrato (brzina, dubina, kašnjenje),
+  mod točkić i aftertouch na vibrato.
+- **FILTER**: tip (Lowpass 24/12 dB, Highpass, Bandpass), cutoff, rezonanca, key tracking,
+  velocity na cutoff, filter envelope sa intenzitetom, LFO na filter, mod točkić i aftertouch.
+- **AMP**: amp envelope, velocity osetljivost i kriva, aftertouch na jačinu.
+- Envelope je kao na Kronosu: Start, Attack (vreme i nivo), Decay, Break nivo, Slope,
+  Sustain, Release (i Release nivo za pitch i filter). Grafik desno pokazuje oblik.
+
+Zajedničko: **Poly / Mono / Mono legato** (legato ne pokreće notu ispočetka),
+prioritet note (poslednja, najviša, najniža), **portamento** (vreme, "samo vezano" /
+fingered, konstantna brzina) i pitch bend posebno gore i dole. Insert efekat je na EFEKAT.
+Useri se čuvaju automatski; useri iz prethodne verzije se prenose sami.
 
 **PERFORMANS** = 8 delova. Svaki deo: user, uključen/isključen, jačina, pan, transpozicija,
 oktava, raspon tastera (split), velocity raspon, MIDI kanal, reverb/delay send, terca i
