@@ -367,7 +367,7 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     panicButton.onClick = [this] { proc.panic(); };
     content.addAndMakeVisible (panicButton);
 
-    const char* tabNames[] = { "PERFORMANS", "USER", "MAPIRANJE", "TERCE", "EFEKTI", "PODEŠAVANJA" };
+    const char* tabNames[] = { "PERFORMANS", "USER", "MAPIRANJE", "TERCE", "EFEKTI", "KRONOS", "PODEŠAVANJA" };
     for (int i = 0; i < NumTabs; ++i)
     {
         tabButtons[i].setButtonText (T (tabNames[i]));
@@ -383,9 +383,9 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     tercePage = std::make_unique<TercePage> (proc);
     effectsPage = std::make_unique<EffectsPage> (proc);
     settingsPage = std::make_unique<SettingsPage> (proc);
+    kronosPage = std::make_unique<KronosPage> (proc, *this);
     mappingEditor->onClose = [this] { showTab (TabUser); };
-    for (auto* c : std::initializer_list<juce::Component*> { performancePage.get(), userPage.get(), mappingEditor.get(),
-                                                             tercePage.get(), effectsPage.get(), settingsPage.get() })
+    for (auto* c : pages())
         content.addChildComponent (c);
 
     for (int b = 0; b < kNumPerfBanks; ++b)
@@ -449,6 +449,7 @@ LiveSamplerEditor::~LiveSamplerEditor()
     tercePage.reset();
     effectsPage.reset();
     settingsPage.reset();
+    kronosPage.reset();
     setLookAndFeel (nullptr);
 }
 
@@ -457,14 +458,20 @@ void LiveSamplerEditor::paint (juce::Graphics& g)
     g.fillAll (Pal::bg);
 }
 
+std::vector<juce::Component*> LiveSamplerEditor::pages() const
+{
+    // redosled odgovara enum Tab
+    return { performancePage.get(), userPage.get(), mappingEditor.get(), tercePage.get(),
+             effectsPage.get(), kronosPage.get(), settingsPage.get() };
+}
+
 void LiveSamplerEditor::showTab (int tab)
 {
     currentTab = juce::jlimit (0, NumTabs - 1, tab);
-    juce::Component* pages[] = { performancePage.get(), userPage.get(), mappingEditor.get(),
-                                 tercePage.get(), effectsPage.get(), settingsPage.get() };
+    const auto all = pages();
     for (int i = 0; i < NumTabs; ++i)
     {
-        pages[i]->setVisible (i == currentTab);
+        all[(size_t) i]->setVisible (i == currentTab);
         tabButtons[i].setToggleState (i == currentTab, juce::dontSendNotification);
     }
     refreshAll();
@@ -528,8 +535,7 @@ void LiveSamplerEditor::resized()
         b.setBounds (slotsBar.removeFromLeft (sw).reduced (2, 0));
 
     auto page = r.reduced (12, 6);
-    for (auto* c : std::initializer_list<juce::Component*> { performancePage.get(), userPage.get(), mappingEditor.get(),
-                                                             tercePage.get(), effectsPage.get(), settingsPage.get() })
+    for (auto* c : pages())
         c->setBounds (page);
 }
 
@@ -571,6 +577,7 @@ void LiveSamplerEditor::refreshAll()
         case TabTerce:       tercePage->refresh(); break;
         case TabEffects:     effectsPage->refresh(); break;
         case TabSettings:    settingsPage->refresh(); break;
+        case TabKronos:      kronosPage->refresh(); break;
         default: break;
     }
 }

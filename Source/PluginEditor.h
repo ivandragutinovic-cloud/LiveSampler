@@ -8,6 +8,7 @@ class UserPage;
 class TercePage;
 class EffectsPage;
 class SettingsPage;
+class KronosPage;
 
 namespace Pal
 {
@@ -90,7 +91,7 @@ public:
 
     static constexpr int designW = 1280, designH = 860;
 
-    enum Tab { TabPerformance = 0, TabUser, TabMapping, TabTerce, TabEffects, TabSettings, NumTabs };
+    enum Tab { TabPerformance = 0, TabUser, TabMapping, TabTerce, TabEffects, TabKronos, TabSettings, NumTabs };
     void showTab (int tab);
     void editUser (const juce::String& userName);            // otvori USER stranicu za ovog usera
     void editMapping (const juce::String& userName, int osc);
@@ -138,6 +139,8 @@ private:
     std::unique_ptr<TercePage> tercePage;
     std::unique_ptr<EffectsPage> effectsPage;
     std::unique_ptr<SettingsPage> settingsPage;
+    std::unique_ptr<KronosPage> kronosPage;
+    std::vector<juce::Component*> pages() const;
 
     // performans mesta
     juce::TextButton bankButtons[kNumPerfBanks];

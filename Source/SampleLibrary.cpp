@@ -153,6 +153,7 @@ void SampleLibrary::scan (const juce::Array<juce::File>& rootFolders)
     roots = rootFolders;
     names.clear();
     entries.clear();
+    kronosMs.clear();
 
     for (auto& r : roots)
         if (r.isDirectory())
@@ -161,11 +162,18 @@ void SampleLibrary::scan (const juce::Array<juce::File>& rootFolders)
     names.sortNatural();
 }
 
+juce::String SampleLibrary::findKronosMultisample (const juce::String& uuid, int index) const
+{
+    const juce::ScopedLock sl (lock);
+    auto it = kronosMs.find (uuid.toLowerCase() + ":" + juce::String (index));
+    return it != kronosMs.end() ? it->second : juce::String();
+}
+
 void SampleLibrary::scanRoot (const juce::File& root)
 {
 
     std::set<juce::File> wavDirs;
-    juce::Array<juce::File> kmpFiles, nkiFiles, kontaktFileDirs;
+    juce::Array<juce::File> kmpFiles, nkiFiles, kontaktFileDirs, kscFiles;
 
     for (const auto& entry : juce::RangedDirectoryIterator (root, true, "*", juce::File::findFiles))
     {
@@ -173,6 +181,7 @@ void SampleLibrary::scanRoot (const juce::File& root)
         const auto ext = f.getFileExtension().toLowerCase();
         if (isAudioFile (f))      wavDirs.insert (f.getParentDirectory());
         else if (ext == ".kmp")   kmpFiles.add (f);
+        else if (ext == ".ksc")   kscFiles.add (f);
         else if (ext == ".nki")   nkiFiles.add (f);
         if (ext == ".nki" || ext == ".nkm")
             kontaktFileDirs.addIfNotAlreadyThere (f.getParentDirectory());
@@ -225,8 +234,64 @@ void SampleLibrary::scanRoot (const juce::File& root)
             add (rel (d), SourceType::WavFolder, d, "WAV");
     }
 
+    // Korg Kronos KSC kolekcije: multisemplovi dobijaju broj i ime kao na Kronosu
+    std::set<juce::File> claimed;
+    for (auto& ksc : kscFiles)
+    {
+        if (ksc.getFileNameWithoutExtension().endsWithIgnoreCase ("_UserBank"))
+            continue;
+        const auto lines = juce::StringArray::fromLines (ksc.loadFileAsString());
+        if (lines.isEmpty() || ! lines[0].startsWith ("#KORG Script"))
+            continue;
+
+        juce::String uuid;
+        juce::StringArray kmpNames;
+        for (auto& l : lines)
+        {
+            const auto t = l.trim();
+            if (t.startsWith ("#uuid:")) uuid = t.fromFirstOccurrenceOf ("#uuid:", false, false).removeCharacters ("-").toLowerCase();
+            else if (! t.startsWith ("#") && t.endsWithIgnoreCase (".KMP")) kmpNames.add (t);
+        }
+        if (kmpNames.isEmpty())
+            continue;
+
+        // broj i ime multisempla iz "<ime>_UserBank.KSC" (istim redom kao KMP fajlovi)
+        std::vector<std::pair<int, juce::String>> msInfo;
+        const auto bankFile = ksc.getSiblingFile (ksc.getFileNameWithoutExtension() + "_UserBank.KSC");
+        for (auto& l : juce::StringArray::fromLines (bankFile.loadFileAsString()))
+        {
+            const int msPos = l.indexOf (".MS");
+            if (! l.startsWith ("#>>") || msPos < 0) continue;
+            auto rest = l.substring (msPos + 3);
+            const int idx = rest.upToFirstOccurrenceOf (".", false, false).getIntValue();
+            auto parts = juce::StringArray::fromTokens (rest, ".", {});
+            juce::String nm;
+            for (int k = 3; k < parts.size(); ++k) nm << (k > 3 ? "." : "") << parts[k];
+            msInfo.push_back ({ idx, nm.trim() });
+        }
+
+        const auto folder = ksc.getSiblingFile (ksc.getFileNameWithoutExtension());
+        const auto base = rel (ksc.withFileExtension ({}));
+        for (int k = 0; k < kmpNames.size(); ++k)
+        {
+            auto kmp = findChildIgnoringCase (folder, kmpNames[k]);
+            if (! kmp.existsAsFile())
+                continue;
+            claimed.insert (kmp);
+
+            const bool known = k < (int) msInfo.size();
+            const int idx = known ? msInfo[(size_t) k].first : k;
+            auto nm = known ? msInfo[(size_t) k].second : kmp.getFileNameWithoutExtension();
+            const auto entryName = base + "/MS" + juce::String (idx).paddedLeft ('0', 4) + " " + nm.replaceCharacter ('/', '-');
+            add (entryName, SourceType::Korg, kmp, "KMP");
+            if (uuid.isNotEmpty())
+                kronosMs[uuid + ":" + juce::String (idx)] = names[names.size() - 1];
+        }
+    }
+
     for (auto& f : kmpFiles)
-        add (rel (f.withFileExtension ({})), SourceType::Korg, f, "KMP");
+        if (claimed.count (f) == 0)
+            add (rel (f.withFileExtension ({})), SourceType::Korg, f, "KMP");
     for (auto& f : nkiFiles)
         add (rel (f.withFileExtension ({})), SourceType::Kontakt, f, "NKI");
 }

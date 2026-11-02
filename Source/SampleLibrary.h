@@ -86,6 +86,9 @@ public:
     bool contains (const juce::String& name) const { const juce::ScopedLock sl (lock); return entries.count (name) > 0; }
     static juce::String rootLabel (const juce::File& root);
 
+    // Kronos: instrument za multisempl broj 'index' iz KSC kolekcije sa datim UUID-om
+    juce::String findKronosMultisample (const juce::String& uuid, int index) const;
+
     // Ucitava instrument (poziva se iz pozadinske niti, moze da traje).
     // ignoreMapFile: ne koristi sacuvanu mapu (za "vrati automatsko")
     InstrumentPtr loadInstrument (const juce::String& name, bool c3Is60, bool ignoreMapFile = false);
@@ -112,6 +115,7 @@ private:
     juce::Array<juce::File> roots;
     juce::StringArray names;
     std::map<juce::String, Entry> entries;
+    std::map<juce::String, juce::String> kronosMs;   // "uuid:broj" -> ime instrumenta
     juce::AudioFormatManager formatManager;
     juce::CriticalSection lock;
 };

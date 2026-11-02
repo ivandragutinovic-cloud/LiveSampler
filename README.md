@@ -86,6 +86,16 @@ sačuvao: u folderu `IME Samples` pored `IME.nki`, u podfolderima ili u folderu 
   foldera i mapira ih po nazivu ili po root noti zapisanoj u WAV-u. **Proveri mapu u editoru.**
 - Monolitni NKI (semplovi upakovani u sam NKI) i NCW semplovi nisu podržani.
 
+### Korg Kronos (PCG + KSC)
+Stranica **KRONOS** → "Učitaj Kronos PCG". Pored PCG-a treba da budu KSC fajl(ovi) i folder
+sa semplovima, onako kako ih Kronos sačuva (npr. `Pikaso stage.PCG`, `Pikaso stage.KSC`,
+`Pikaso stage_UserBank.KSC` i folder `Pikaso stage`). Folder se sam dodaje u biblioteku.
+- Multisemplovi iz KSC-a dobijaju broj i ime kao na Kronosu (npr. `MS0000 Kabina pr`).
+- Tabela pokazuje programe koji koriste tvoje semplove; fabrički ROM zvukovi se preskaču.
+- Dupli klik na program: napravi usera i stavi ga na PART 1, da odmah sviraš.
+- Faza 1 uzima glavni multisempl programa. Slojevi, rasponi, filter i envelope iz
+  Kronosa dolaze u fazi 2, a kombiji u fazi 3.
+
 ## 3. Editor mapiranja
 
 Stranica **MAPIRANJE** (ili dugme MAPA kod oscilatora na stranici USER) otvara editor za instrument izabranog oscilatora.
@@ -162,6 +172,7 @@ Semplovi se drže u RAM memoriji. Status gore pokazuje koliko memorije zauzimaju
 - `Source/MappingEditor.*`: editor mapiranja
 - `Source/SamplerPart.*`: glasovi, mono/portamento, velocity, filter, ADSR, insert efekti
 - `Source/MasterEffects.*`: reverb, delay, EQ, kompresor, limiter
+- `Source/KronosPcg.*`: čitanje Kronos PCG fajla
 - `Source/Model.*`: User, Performans, Terce (podaci, čuvanje, prepoznavanje akorda)
 - `Source/PluginProcessor.*`: MIDI rutiranje, delovi, terce, čuvanje u `%APPDATA%\LiveSampler`
 - `Source/PluginEditor.*`, `Source/Pages.*`: interfejs

@@ -53,6 +53,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("globalDb", (double) globalDb);
     root.setAttribute ("currentSlot", currentSlot);
     root.setAttribute ("currentBank", currentBank);
+    root.setAttribute ("kronosPcg", kronosFile.getFullPathName());
 
     auto* folders = root.createNewChildElement ("Folders");
     for (auto& f : libraryFolders)
@@ -107,6 +108,7 @@ void LiveSamplerProcessor::loadData()
     globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
     currentSlot = xml->getIntAttribute ("currentSlot", -1);
     currentBank = juce::jlimit (0, kNumPerfBanks - 1, xml->getIntAttribute ("currentBank", 0));
+    kronosFile = juce::File (xml->getStringAttribute ("kronosPcg"));
 
     if (auto* folders = xml->getChildByName ("Folders"))
         for (auto* f : folders->getChildWithTagNameIterator ("Folder"))
@@ -434,6 +436,58 @@ void LiveSamplerProcessor::handleAsyncUpdate()
     if (tercaChanged.exchange (false))
         sendChangeMessage();
     sendChangeMessage();
+}
+
+//==============================================================================
+//  Korg Kronos
+//==============================================================================
+bool LiveSamplerProcessor::loadKronosPcg (const juce::File& f, juce::String& error)
+{
+    auto pcg = std::make_unique<Kronos::Pcg>();
+    if (! pcg->load (f, error))
+        return false;
+
+    kronosPcg = std::move (pcg);
+    kronosFile = f;
+    markSave();
+
+    // folder sa PCG-om (i KSC kolekcijom pored njega) ide u biblioteku
+    const auto dir = f.getParentDirectory();
+    bool covered = false;
+    for (auto& lf : libraryFolders)
+        if (dir == lf || dir.isAChildOf (lf))
+            covered = true;
+    if (! covered)
+        addLibraryFolder (dir);
+
+    sendChangeMessage();
+    return true;
+}
+
+int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
+{
+    // Faza 1: glavni user multisempl sa OSC1 (ili OSC2 ako OSC1 nema user sempl), ceo velocity opseg.
+    // Slojevi, rasponi i parametri zvuka dolaze kad se utvrde mesta u PCG-u (faza 2).
+    UserProgram u;
+    int o = 0;
+    for (int oscIdx = 0; oscIdx < 2 && o == 0; ++oscIdx)
+    {
+        const int z = prog.firstUserZone (oscIdx);
+        if (z < 0) continue;
+        const auto& zone = prog.osc[(size_t) oscIdx][(size_t) z];
+        const auto inst = library.findKronosMultisample (zone.uuid, zone.ms);
+        if (inst.isEmpty()) continue;
+        u.osc[0].on = true;
+        u.osc[0].instrument = inst;
+        o = 1;
+    }
+    if (o == 0)
+        return -1;
+
+    const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
+    loadNeededInstruments();
+    requestInstrument (users[(size_t) idx].osc[0].instrument, nullptr);
+    return idx;
 }
 
 //==============================================================================

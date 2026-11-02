@@ -185,7 +185,7 @@ float KronosEnv::advance (int n)
                 case Decay:   enter (Slope, env.sustain, env.slopeTime); break;
                 case Slope:   stage = Sustain; level = env.sustain; break;
                 case Release: stage = Idle; break;
-                default: break;
+                case Idle: case Sustain: break;
             }
         }
     }
@@ -428,7 +428,7 @@ void SamplerPart::updateModulation (Voice& v)
         }
     }
 
-    v.ampMod = sb.atToAmp != 0.0f ? juce::Decibels::decibelsToGain (sb.atToAmp * aftertouch) : 1.0f;
+    v.ampMod = sb.atToAmp > 0.001f ? juce::Decibels::decibelsToGain (sb.atToAmp * aftertouch) : 1.0f;
     v.time += dt;
 }
 

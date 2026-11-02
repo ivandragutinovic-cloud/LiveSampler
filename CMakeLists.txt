@@ -44,7 +44,8 @@ target_sources(LiveSampler PRIVATE
     Source/SamplerPart.cpp
     Source/MasterEffects.cpp
     Source/Model.cpp
-    Source/Pages.cpp)
+    Source/Pages.cpp
+    Source/KronosPcg.cpp)
 
 target_compile_definitions(LiveSampler PUBLIC
     JUCE_WEB_BROWSER=0

@@ -1641,3 +1641,273 @@ void SettingsPage::resized()
     r.removeFromTop (16);
     info.setBounds (r);
 }
+
+//==============================================================================
+//  KronosPage
+//==============================================================================
+enum KronosCols { kcBank = 1, kcNum, kcName, kcOsc1, kcOsc2, kcState };
+
+KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
+{
+    loadButton.setButtonText (T ("Učitaj Kronos PCG..."));
+    loadButton.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> (T ("Izaberi Kronos PCG fajl"),
+                                                       proc.getKronosFile().existsAsFile() ? proc.getKronosFile() : juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+                                                       "*.PCG;*.pcg");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) { if (fc.getResult().existsAsFile()) loadPcg (fc.getResult()); });
+    };
+    addAndMakeVisible (loadButton);
+
+    fileLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    fileLabel.setColour (juce::Label::textColourId, Pal::lcdText);
+    addAndMakeVisible (fileLabel);
+    infoLabel.setFont (juce::FontOptions (13.0f));
+    infoLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (infoLabel);
+
+    onlyUser.setButtonText (T ("Samo programi sa mojim semplovima"));
+    onlyUser.setToggleState (true, juce::dontSendNotification);
+    onlyUser.onClick = [this] { rebuildRows(); };
+    addAndMakeVisible (onlyUser);
+
+    search.setTextToShowWhenEmpty (T ("Traži po imenu..."), Pal::dim);
+    search.onTextChange = [this] { rebuildRows(); };
+    addAndMakeVisible (search);
+
+    table.setModel (this);
+    table.setRowHeight (24);
+    table.setMultipleSelectionEnabled (true);
+    table.setColour (juce::ListBox::backgroundColourId, Pal::bg);
+    auto& h = table.getHeader();
+    h.addColumn ("Banka", kcBank, 80, 60, 120, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("Br.", kcNum, 50, 40, 80, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("Program", kcName, 230, 120, 400, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("OSC1 multisempl", kcOsc1, 260, 120, 500, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("OSC2 multisempl", kcOsc2, 260, 120, 500, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("User", kcState, 150, 80, 300, juce::TableHeaderComponent::notSortable);
+    h.setColour (juce::TableHeaderComponent::backgroundColourId, Pal::panelHi);
+    h.setColour (juce::TableHeaderComponent::textColourId, Pal::text);
+    addAndMakeVisible (table);
+
+    createSelected.setButtonText (T ("Napravi usere od izabranih"));
+    createSelected.onClick = [this]
+    {
+        auto* pcg = proc.getKronosPcg();
+        if (pcg == nullptr) return;
+        const auto sel = table.getSelectedRows();
+        for (int i = 0; i < sel.size(); ++i)
+            if (sel[i] >= 0 && sel[i] < (int) rows.size())
+                userFor (pcg->programs[(size_t) rows[(size_t) sel[i]]]);
+        table.repaint();
+    };
+    createAll.setButtonText (T ("Napravi usere od svih prikazanih"));
+    createAll.onClick = [this]
+    {
+        juce::Component::SafePointer<KronosPage> safe (this);
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Kronos",
+            T ("Napraviti usere od ") + juce::String ((int) rows.size()) + T (" programa? Postojeći useri sa istim imenom se ne dupliraju."),
+            T ("Napravi"), T ("Otkaži"), nullptr,
+            juce::ModalCallbackFunction::create ([safe] (int r)
+            {
+                if (safe == nullptr || r == 0 || safe->proc.getKronosPcg() == nullptr) return;
+                for (int idx : safe->rows)
+                    safe->userFor (safe->proc.getKronosPcg()->programs[(size_t) idx]);
+                safe->table.repaint();
+            }));
+    };
+    playButton.setButtonText (T ("Sviraj (PART 1)"));
+    playButton.setTooltip (T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
+    playButton.onClick = [this] { const int r = table.getSelectedRow(); if (r >= 0) playRow (r); };
+    for (auto* b : { &createSelected, &createAll, &playButton })
+        addAndMakeVisible (b);
+
+    help.setText (T ("Faza 1: od programa se uzima glavni user multisempl (bez fabričkih ROM zvukova). "
+                     "Slojevi, rasponi, filter i envelope iz Kronosa dolaze u fazi 2, a kombiji u fazi 3."),
+                  juce::dontSendNotification);
+    help.setFont (juce::FontOptions (12.5f));
+    help.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (help);
+}
+
+void KronosPage::loadPcg (const juce::File& f)
+{
+    juce::String err;
+    if (! proc.loadKronosPcg (f, err))
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos", T ("Ne mogu da učitam PCG: ") + err);
+    refresh();
+}
+
+int KronosPage::userFor (const Kronos::Program& p)
+{
+    const int existing = proc.findUser (p.name);
+    if (existing >= 0)
+        return existing;
+    return proc.createUserFromKronos (p);
+}
+
+void KronosPage::cellDoubleClicked (int row, int, const juce::MouseEvent&)
+{
+    playRow (row);
+}
+
+void KronosPage::playRow (int row)
+{
+    auto* pcg = proc.getKronosPcg();
+    if (pcg == nullptr || row < 0 || row >= (int) rows.size())
+        return;
+    const int u = userFor (pcg->programs[(size_t) rows[(size_t) row]]);
+    if (u < 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
+            T ("Semplovi ovog programa nisu u biblioteci. Proveri da je KSC kolekcija u folderu biblioteke (PODEŠAVANJA)."));
+        return;
+    }
+    auto perf = proc.getPerformance();
+    perf.parts[0].on = true;
+    perf.parts[0].user = proc.getUser (u).name;
+    proc.updatePerformance (perf);
+    table.repaint();
+}
+
+void KronosPage::rebuildRows()
+{
+    rows.clear();
+    auto* pcg = proc.getKronosPcg();
+    shownPcg = pcg;
+    if (pcg != nullptr)
+    {
+        const auto q = search.getText().trim();
+        for (size_t i = 0; i < pcg->programs.size(); ++i)
+        {
+            const auto& p = pcg->programs[i];
+            if (! p.hd1) continue;
+            if (onlyUser.getToggleState() && ! p.usesUser()) continue;
+            if (q.isNotEmpty() && ! p.name.containsIgnoreCase (q)) continue;
+            rows.push_back ((int) i);
+        }
+    }
+    table.updateContent();
+    table.repaint();
+}
+
+void KronosPage::refresh()
+{
+    if (proc.getKronosPcg() == nullptr && proc.getKronosFile().existsAsFile())
+    {
+        juce::String err;
+        proc.loadKronosPcg (proc.getKronosFile(), err);
+    }
+
+    auto* pcg = proc.getKronosPcg();
+    if (pcg != shownPcg)
+        rebuildRows();
+    else
+        table.repaint();
+
+    if (pcg == nullptr)
+    {
+        fileLabel.setText (T ("Nije učitan PCG"), juce::dontSendNotification);
+        infoLabel.setText (T ("Učitaj PCG sa Kronosa. KSC fajl i folder sa semplovima treba da budu pored njega."), juce::dontSendNotification);
+        return;
+    }
+
+    int hd1 = 0, user = 0;
+    for (auto& p : pcg->programs)
+    {
+        if (p.hd1) ++hd1;
+        if (p.usesUser()) ++user;
+    }
+    fileLabel.setText (pcg->file.getFileName(), juce::dontSendNotification);
+    infoLabel.setText (juce::String ((int) pcg->programs.size()) + T (" programa (") + juce::String (hd1) + T (" HD-1), ")
+                       + juce::String (user) + T (" sa tvojim semplovima  |  ") + juce::String ((int) pcg->combis.size()) + T (" kombija  |  ")
+                       + juce::String (pcg->drumKits) + T (" bubanj kitova") + (proc.isScanning() ? T ("  |  pretražujem semplove...") : juce::String()),
+                       juce::dontSendNotification);
+}
+
+juce::String KronosPage::msText (const Kronos::Zone& z) const
+{
+    if (! z.user) return z.used ? "ROM" : "-";
+    const auto inst = proc.findKronosMultisample (z.uuid, z.ms);
+    if (inst.isEmpty()) return "MS" + juce::String (z.ms) + T ("  (nije u biblioteci)");
+    return inst.fromLastOccurrenceOf ("/", false, false);
+}
+
+int KronosPage::getNumRows() { return (int) rows.size(); }
+
+void KronosPage::paintRowBackground (juce::Graphics& g, int row, int, int, bool selected)
+{
+    if (selected) g.fillAll (Pal::lcdText.withAlpha (0.25f));
+    else if (row % 2) g.fillAll (Pal::panel.withAlpha (0.5f));
+}
+
+void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, bool)
+{
+    auto* pcg = proc.getKronosPcg();
+    if (pcg == nullptr || row < 0 || row >= (int) rows.size()) return;
+    const auto& p = pcg->programs[(size_t) rows[(size_t) row]];
+
+    juce::String t;
+    auto c = Pal::text;
+    switch (col)
+    {
+        case kcBank: t = p.bank; break;
+        case kcNum:  t = juce::String (p.number).paddedLeft ('0', 3); break;
+        case kcName: t = p.name; break;
+        case kcOsc1:
+        case kcOsc2:
+        {
+            const int o = col == kcOsc1 ? 0 : 1;
+            const int z = p.firstUserZone (o);
+            t = z >= 0 ? msText (p.osc[(size_t) o][(size_t) z]) : (p.osc[(size_t) o][0].used ? "ROM" : "-");
+            if (z < 0) c = Pal::dim;
+            int extra = 0;
+            for (auto& zz : p.osc[(size_t) o]) if (zz.user) ++extra;
+            if (extra > 1) t << "  (+" << (extra - 1) << ")";
+            break;
+        }
+        case kcState:
+        {
+            const int u = proc.findUser (p.name);
+            t = u >= 0 ? T ("✓ napravljen") : "";
+            c = juce::Colour (0xff3ddc84);
+            break;
+        }
+        default: break;
+    }
+    g.setColour (c);
+    g.setFont (juce::FontOptions (13.5f));
+    g.drawText (t, 6, 0, w - 8, h, juce::Justification::centredLeft, true);
+}
+
+void KronosPage::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+}
+
+void KronosPage::resized()
+{
+    auto r = getLocalBounds().reduced (14, 10);
+    auto top = r.removeFromTop (32);
+    loadButton.setBounds (top.removeFromLeft (190));
+    top.removeFromLeft (14);
+    fileLabel.setBounds (top.removeFromLeft (260));
+    infoLabel.setBounds (top);
+    r.removeFromTop (8);
+    auto filt = r.removeFromTop (28);
+    onlyUser.setBounds (filt.removeFromLeft (300));
+    search.setBounds (filt.removeFromLeft (260));
+    r.removeFromTop (8);
+    help.setBounds (r.removeFromBottom (22));
+    r.removeFromBottom (6);
+    auto btns = r.removeFromBottom (32);
+    createSelected.setBounds (btns.removeFromLeft (230));
+    btns.removeFromLeft (8);
+    createAll.setBounds (btns.removeFromLeft (260));
+    btns.removeFromLeft (8);
+    playButton.setBounds (btns.removeFromLeft (170));
+    r.removeFromBottom (8);
+    table.setBounds (r);
+}

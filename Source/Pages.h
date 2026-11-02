@@ -259,3 +259,39 @@ private:
     juce::Label info;
     std::unique_ptr<juce::FileChooser> chooser;
 };
+
+//==============================================================================
+//  KRONOS: uvoz programa iz PCG fajla
+//==============================================================================
+class KronosPage : public juce::Component,
+                   private juce::TableListBoxModel
+{
+public:
+    KronosPage (LiveSamplerProcessor&, LiveSamplerEditor&);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+private:
+    int getNumRows() override;
+    void paintRowBackground (juce::Graphics&, int row, int w, int h, bool selected) override;
+    void paintCell (juce::Graphics&, int row, int col, int w, int h, bool selected) override;
+    void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
+    void playRow (int row);
+    void rebuildRows();
+    juce::String msText (const Kronos::Zone& z) const;
+    int userFor (const Kronos::Program& p);
+    void loadPcg (const juce::File& f);
+
+    LiveSamplerProcessor& proc;
+    LiveSamplerEditor& editor;
+    const Kronos::Pcg* shownPcg = nullptr;
+    std::vector<int> rows;
+    std::unique_ptr<juce::FileChooser> chooser;
+
+    juce::TextButton loadButton, createSelected, createAll, playButton;
+    juce::ToggleButton onlyUser;
+    juce::TextEditor search;
+    juce::Label fileLabel, infoLabel, help;
+    juce::TableListBox table;
+};

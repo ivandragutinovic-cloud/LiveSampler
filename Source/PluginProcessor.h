@@ -4,6 +4,7 @@
 #include "SamplerPart.h"
 #include "MasterEffects.h"
 #include "Model.h"
+#include "KronosPcg.h"
 
 class LiveSamplerProcessor : public juce::AudioProcessor,
                              public juce::ChangeBroadcaster,
@@ -93,6 +94,13 @@ public:
     void reloadInstrument (const juce::String& name, bool ignoreMapFile);
     void ensureLoaded (const juce::String& name) { if (instrumentList.contains (name) && cache.count (name) == 0) requestInstrument (name, nullptr); }
 
+    // Korg Kronos
+    bool loadKronosPcg (const juce::File& f, juce::String& error);
+    const Kronos::Pcg* getKronosPcg() const { return kronosPcg.get(); }
+    juce::File getKronosFile() const { return kronosFile; }
+    juce::String findKronosMultisample (const juce::String& uuid, int ms) const { return library.findKronosMultisample (uuid, ms); }
+    int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
+
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }
 
@@ -177,6 +185,9 @@ private:
     juce::String lastWarning;
     juce::ThreadPool loadPool { 1 };
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
+
+    std::unique_ptr<Kronos::Pcg> kronosPcg;
+    juce::File kronosFile;
 
     // korisnicki podaci
     std::vector<UserProgram> users;
