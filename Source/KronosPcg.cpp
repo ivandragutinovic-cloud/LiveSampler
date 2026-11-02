@@ -103,6 +103,47 @@ namespace Kronos
         }
     }
 
+    // Banka programa u timbre-u: 0-5 = INT-A..F, 17-30 = USER-A..GG
+    static juce::uint32 timbreBank (int code)
+    {
+        if (code >= 0 && code <= 5)   return (juce::uint32) code;
+        if (code >= 17 && code <= 30) return (2u << 16) | (juce::uint32) (code - 17);
+        return 0xffffffff;
+    }
+
+    // Mesta utvrdjena test kombijima C01-C08
+    static void readTimbres (Combi& c, const juce::uint8* d)
+    {
+        auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
+        for (int t = 0; t < 16; ++t)
+        {
+            const auto* b = d + timbresOffset + t * timbreSize;
+            auto& tm = c.timbres[(size_t) t];
+            tm.programNumber = b[0];
+            tm.programBank = timbreBank (b[1]);
+            tm.channel = (b[2] & 0x10) != 0 ? 0 : (b[2] & 0x0f) + 1;   // 0x10 = Gch (globalni kanal)
+            tm.volume = b[5];
+            tm.transpose = s8 (b[7]);
+            tm.detuneCents = (int) (juce::int16) (b[8] | (b[9] << 8));
+            tm.pan = b[14];
+            tm.send1 = b[15];
+            tm.send2 = b[16];
+            tm.play = (b[34] & 0x80) == 0;
+            tm.keyHigh = b[37];
+            tm.keyLow = b[38];
+            tm.velHigh = juce::jlimit (1, 127, (int) b[40]);
+            tm.velLow = juce::jlimit (1, 127, (int) b[41]);
+        }
+    }
+
+    const Program* Pcg::findProgram (juce::uint32 bankId, int number) const
+    {
+        for (auto& p : programs)
+            if (p.bankId == bankId && p.number == number)
+                return &p;
+        return nullptr;
+    }
+
     bool Pcg::load (const juce::File& f, juce::String& error)
     {
         programs.clear();
@@ -161,7 +202,14 @@ namespace Kronos
                         }
                         if (id == "CBK1")
                         {
-                            combis.push_back ({ bankId, combiBankName (bankId), (int) k, readName (item) });
+                            Combi c;
+                            c.bankId = bankId;
+                            c.bank = combiBankName (bankId);
+                            c.number = (int) k;
+                            c.name = readName (item);
+                            if (itemSize >= (juce::uint32) combiSize)
+                                readTimbres (c, item);
+                            combis.push_back (std::move (c));
                             continue;
                         }
 

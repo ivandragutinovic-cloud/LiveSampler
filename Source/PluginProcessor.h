@@ -100,6 +100,9 @@ public:
     juce::File getKronosFile() const { return kronosFile; }
     juce::String findKronosMultisample (const juce::String& uuid, int ms) const { return library.findKronosMultisample (uuid, ms); }
     int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
+    int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
+    // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
+    juce::StringArray loadKronosCombi (const Kronos::Combi& c);
 
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }

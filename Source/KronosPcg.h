@@ -48,12 +48,27 @@ namespace Kronos
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
     };
 
+    // Timbre u kombiju (16 komada, svaki 188 bajtova od mesta 4802)
+    struct Timbre
+    {
+        juce::uint32 programBank = 0xffffffff;   // isti ID kao kod banke programa; 0xffffffff = nepoznata banka
+        int programNumber = 0;
+        bool play = false;                       // Play / Mute
+        int channel = 0;                         // MIDI kanal 1-16, 0 = Gch (globalni)
+        int volume = 127, pan = 64;
+        int transpose = 0, detuneCents = 0;
+        int keyLow = 0, keyHigh = 127, velLow = 1, velHigh = 127;
+        int send1 = 0, send2 = 0;
+    };
+
     struct Combi
     {
         juce::uint32 bankId = 0;
         juce::String bank;
         int number = 0;
         juce::String name;
+        std::array<Timbre, 16> timbres;
+        juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
     };
 
     struct Pcg
@@ -63,6 +78,7 @@ namespace Kronos
         std::vector<Combi> combis;
         int drumKits = 0;
         bool load (const juce::File& f, juce::String& error);
+        const Program* findProgram (juce::uint32 bankId, int number) const;
     };
 
     juce::String programBankName (juce::uint32 id);
@@ -73,4 +89,7 @@ namespace Kronos
     constexpr int osc1ZonesOffset = 2774;
     constexpr int osc2ZonesOffset = 3240;
     constexpr int zoneSize = 22;
+    constexpr int combiSize = 7810;
+    constexpr int timbresOffset = 4802;
+    constexpr int timbreSize = 188;
 }

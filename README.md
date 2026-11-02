@@ -98,7 +98,11 @@ sa semplovima, onako kako ih Kronos sačuva (npr. `Pikaso stage.PCG`, `Pikaso st
   filter (cutoff, rezonanca, 12/24 dB, filter EG sa intenzitetom), amp EG, LFO vibrato,
   Mono / Legato / prioritet, portamento i pitch bend.
 - Vrednosti (vremena, Hz) su preračunate približno. Uporedi sa Kronosom i doteraj na USER strani.
-- Još se ne prenose: pitch EG, crossfade između zona, ROM zone i efekti. Kombiji dolaze u fazi 3.
+- Još se ne prenose: pitch EG, ROM zone i efekti.
+- **KOMBIJI** (dugme gore levo na KRONOS strani): dupli klik učitava kombi kao trenutni performans
+  sa 16 delova. Za svaki timbre na Play: program (pravi se user ako ga nema), jačina, pan,
+  transpozicija, detune, key i velocity zona, MIDI kanal (Gch = svi kanali), Send1 → reverb,
+  Send2 → delay. Timbre-i sa fabričkim ROM programima se preskaču. Sačuvaj performans sa SNIMI.
 
 ## 3. Editor mapiranja
 
@@ -139,7 +143,7 @@ prioritet note (poslednja, najviša, najniža), **portamento** (vreme, "samo vez
 fingered, konstantna brzina) i pitch bend posebno gore i dole. Insert efekat je na EFEKAT.
 Useri se čuvaju automatski; useri iz prethodne verzije se prenose sami.
 
-**PERFORMANS** = 8 delova. Svaki deo: user, uključen/isključen, jačina, pan, transpozicija,
+**PERFORMANS** = 16 delova (kao timbre-i u Kronos kombiju), prikazanih po 8: dugmad DELOVI 1-8 / 9-16. Svaki deo: user, uključen/isključen, jačina, pan, transpozicija,
 oktava, raspon tastera (split), velocity raspon, MIDI kanal, reverb/delay send, terca i
 sustain pedala. Traka ispod pokazuje gde je koji deo na klavijaturi. Performans pamti i
 master efekte (stranica EFEKTI).

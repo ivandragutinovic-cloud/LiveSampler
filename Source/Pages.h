@@ -51,6 +51,8 @@ private:
     juce::Label nameLabel, nameEdit;
     juce::OwnedArray<PartStrip> strips;
     KeyRangeView ranges;
+    juce::TextButton pageButtons[2];
+    int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
 };
 
 //==============================================================================
@@ -282,6 +284,9 @@ private:
     void paintCell (juce::Graphics&, int row, int col, int w, int h, bool selected) override;
     void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
     void playRow (int row);
+    void loadCombiRow (int row);
+    void setMode (bool combis);
+    juce::String timbreSummary (const Kronos::Combi& c, int& romCount) const;
     void rebuildRows();
     juce::String msText (const Kronos::Zone& z) const;
     int userFor (const Kronos::Program& p);
@@ -293,7 +298,8 @@ private:
     std::vector<int> rows;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::TextButton loadButton, createSelected, createAll, playButton;
+    juce::TextButton loadButton, createSelected, createAll, playButton, modeButtons[2];
+    bool combiMode = false;
     juce::ToggleButton onlyUser;
     juce::TextEditor search;
     juce::Label fileLabel, infoLabel, help;

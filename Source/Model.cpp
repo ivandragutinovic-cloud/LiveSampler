@@ -247,6 +247,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("pan", (double) p.pan);
         x->setAttribute ("transpose", p.transpose);
         x->setAttribute ("octave", p.octave);
+        x->setAttribute ("detune", (double) p.detuneCents);
         x->setAttribute ("keyLow", p.keyLow);
         x->setAttribute ("keyHigh", p.keyHigh);
         x->setAttribute ("velLow", p.velLow);
@@ -279,6 +280,7 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.pan = (float) x->getDoubleAttribute ("pan", 0.0);
         p.transpose = x->getIntAttribute ("transpose", 0);
         p.octave = x->getIntAttribute ("octave", 0);
+        p.detuneCents = (float) x->getDoubleAttribute ("detune", 0.0);
         p.keyLow = juce::jlimit (0, 127, x->getIntAttribute ("keyLow", 0));
         p.keyHigh = juce::jlimit (0, 127, x->getIntAttribute ("keyHigh", 127));
         p.velLow = juce::jlimit (1, 127, x->getIntAttribute ("velLow", 1));

@@ -374,6 +374,8 @@ void LiveSamplerProcessor::rebuildConfig()
         if (u >= 0)
         {
             pr.user = users[(size_t) u];
+            for (auto& o : pr.user.osc)
+                o.fineCents += pr.part.detuneCents;
             for (int o = 0; o < kNumOsc; ++o)
                 if (pr.user.osc[(size_t) o].on)
                     pr.inst[(size_t) o] = getLoadedInstrument (pr.user.osc[(size_t) o].instrument);
@@ -593,6 +595,58 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
     for (auto& os : users[(size_t) idx].osc)
         if (os.on) requestInstrument (os.instrument, nullptr);
     return idx;
+}
+
+int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
+{
+    const int existing = findUser (p.name);
+    if (existing >= 0)
+        return existing;
+    return createUserFromKronos (p);
+}
+
+juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c)
+{
+    juce::StringArray skipped;
+    if (kronosPcg == nullptr)
+        return skipped;
+
+    auto p = perf;
+    p.name = c.name.isNotEmpty() ? c.name : c.id();
+    for (int t = 0; t < 16 && t < kNumParts; ++t)
+    {
+        const auto& tm = c.timbres[(size_t) t];
+        auto& part = p.parts[(size_t) t];
+        part = PerfPart();
+        if (! tm.play)
+            continue;
+
+        const auto* prog = kronosPcg->findProgram (tm.programBank, tm.programNumber);
+        const int u = prog != nullptr && prog->hd1 && prog->usesUser() ? userForKronosProgram (*prog) : -1;
+        if (u < 0)
+        {
+            skipped.add ("Timbre " + juce::String (t + 1) + ": "
+                         + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
+                         + (prog != nullptr && ! prog->usesUser() ? " (fabrički ROM)" : ""));
+            continue;
+        }
+
+        part.on = true;
+        part.user = users[(size_t) u].name;
+        part.volumeDb = tm.volume <= 0 ? -60.0f : juce::jlimit (-60.0f, 6.0f, 40.0f * std::log10 ((float) tm.volume / 127.0f));
+        part.pan = juce::jlimit (-1.0f, 1.0f, ((float) tm.pan - 64.0f) / 64.0f);
+        part.transpose = tm.transpose;
+        part.detuneCents = (float) tm.detuneCents;
+        part.keyLow = juce::jmin (tm.keyLow, tm.keyHigh);
+        part.keyHigh = juce::jmax (tm.keyLow, tm.keyHigh);
+        part.velLow = juce::jmin (tm.velLow, tm.velHigh);
+        part.velHigh = juce::jmax (tm.velLow, tm.velHigh);
+        part.midiChannel = tm.channel;
+        part.reverbSend = (float) tm.send1 / 127.0f;
+        part.delaySend = (float) tm.send2 / 127.0f;
+    }
+    updatePerformance (p);
+    return skipped;
 }
 
 //==============================================================================

@@ -308,8 +308,18 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     addAndMakeVisible (nameEdit);
 
     for (int i = 0; i < kNumParts; ++i)
-        addAndMakeVisible (strips.add (new PartStrip (p, e, i)));
+        addChildComponent (strips.add (new PartStrip (p, e, i)));
     addAndMakeVisible (ranges);
+
+    const char* pageNames[] = { "DELOVI 1-8", "DELOVI 9-16" };
+    for (int b = 0; b < 2; ++b)
+    {
+        pageButtons[b].setButtonText (pageNames[b]);
+        pageButtons[b].setClickingTogglesState (false);
+        pageButtons[b].setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        pageButtons[b].onClick = [this, b] { page = b; resized(); refresh(); };
+        addAndMakeVisible (pageButtons[b]);
+    }
 }
 
 void PerformancePage::refresh()
@@ -318,6 +328,15 @@ void PerformancePage::refresh()
         nameEdit.setText (proc.getPerformance().name, juce::dontSendNotification);
     for (auto* s : strips)
         s->refresh();
+    for (int b = 0; b < 2; ++b)
+    {
+        // oznaci stranu na kojoj ima ukljucenih delova
+        bool any = false;
+        for (int i = b * 8; i < b * 8 + 8; ++i)
+            any = any || (proc.getPerformance().parts[(size_t) i].on && proc.getPerformance().parts[(size_t) i].user.isNotEmpty());
+        pageButtons[b].setToggleState (b == page, juce::dontSendNotification);
+        pageButtons[b].setButtonText (juce::String (b == 0 ? "DELOVI 1-8" : "DELOVI 9-16") + (any ? " ●" : ""));
+    }
     ranges.repaint();
 }
 
@@ -329,15 +348,21 @@ void PerformancePage::resized()
     auto top = r.removeFromTop (32);
     nameLabel.setBounds (top.removeFromLeft (140));
     nameEdit.setBounds (top.removeFromLeft (360).reduced (0, 2));
+    pageButtons[1].setBounds (top.removeFromRight (130).reduced (2, 2));
+    pageButtons[0].setBounds (top.removeFromRight (130).reduced (2, 2));
 
     r.removeFromTop (4);
     ranges.setBounds (r.removeFromBottom (78));
     r.removeFromBottom (6);
 
-    const int gap = 6;
-    const int w = (r.getWidth() - gap * (kNumParts - 1)) / kNumParts;
-    for (auto* s : strips)
+    const int perPage = 8, gap = 6;
+    const int w = (r.getWidth() - gap * (perPage - 1)) / perPage;
+    for (int i = 0; i < strips.size(); ++i)
     {
+        auto* s = strips[i];
+        const bool shown = i / perPage == page;
+        s->setVisible (shown);
+        if (! shown) continue;
         s->setBounds (r.removeFromLeft (w));
         r.removeFromLeft (gap);
     }
@@ -1713,12 +1738,21 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     };
     playButton.setButtonText (T ("Sviraj (PART 1)"));
     playButton.setTooltip (T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
-    playButton.onClick = [this] { const int r = table.getSelectedRow(); if (r >= 0) playRow (r); };
+    playButton.onClick = [this] { const int r = table.getSelectedRow(); if (r < 0) return; if (combiMode) loadCombiRow (r); else playRow (r); };
+    const char* modeNames[] = { "PROGRAMI", "KOMBIJI" };
+    for (int b = 0; b < 2; ++b)
+    {
+        modeButtons[b].setButtonText (modeNames[b]);
+        modeButtons[b].setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        modeButtons[b].setToggleState (b == 0, juce::dontSendNotification);
+        modeButtons[b].onClick = [this, b] { setMode (b == 1); };
+        addAndMakeVisible (modeButtons[b]);
+    }
     for (auto* b : { &createSelected, &createAll, &playButton })
         addAndMakeVisible (b);
 
-    help.setText (T ("Faza 1: od programa se uzima glavni user multisempl (bez fabričkih ROM zvukova). "
-                     "Slojevi, rasponi, filter i envelope iz Kronosa dolaze u fazi 2, a kombiji u fazi 3."),
+    help.setText (T ("Programi: dupli klik pravi usera (OSC1/OSC2, zone, filter, EG...) i stavlja ga na PART 1. "
+                     "Kombiji: dupli klik pravi performans od 16 timbre-a; fabrički ROM programi se preskaču."),
                   juce::dontSendNotification);
     help.setFont (juce::FontOptions (12.5f));
     help.setColour (juce::Label::textColourId, Pal::dim);
@@ -1735,15 +1769,63 @@ void KronosPage::loadPcg (const juce::File& f)
 
 int KronosPage::userFor (const Kronos::Program& p)
 {
-    const int existing = proc.findUser (p.name);
-    if (existing >= 0)
-        return existing;
-    return proc.createUserFromKronos (p);
+    return proc.userForKronosProgram (p);
 }
 
 void KronosPage::cellDoubleClicked (int row, int, const juce::MouseEvent&)
 {
-    playRow (row);
+    if (combiMode) loadCombiRow (row);
+    else           playRow (row);
+}
+
+void KronosPage::setMode (bool combis)
+{
+    combiMode = combis;
+    for (int b = 0; b < 2; ++b)
+        modeButtons[b].setToggleState ((b == 1) == combis, juce::dontSendNotification);
+    auto& h = table.getHeader();
+    h.setColumnName (kcName, combis ? T ("Kombi") : T ("Program"));
+    h.setColumnName (kcOsc1, combis ? T ("Timbre-i (Play)") : T ("OSC1 multisempl"));
+    h.setColumnName (kcOsc2, combis ? T ("Fabrički (ROM)") : T ("OSC2 multisempl"));
+    h.setColumnName (kcState, combis ? T ("Kanal") : T ("User"));
+    h.setColumnWidth (kcOsc1, combis ? 520 : 260);
+    h.setColumnWidth (kcOsc2, combis ? 120 : 260);
+    onlyUser.setButtonText (combis ? T ("Samo kombiji sa mojim semplovima") : T ("Samo programi sa mojim semplovima"));
+    playButton.setButtonText (combis ? T ("Učitaj u performans") : T ("Sviraj (PART 1)"));
+    playButton.setTooltip (combis ? T ("Kombi postaje trenutni performans (16 delova). Može i dupli klik. Sačuvaj ga dugmetom SNIMI.")
+                                  : T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
+    createSelected.setVisible (! combis);
+    createAll.setVisible (! combis);
+    search.setText ({}, juce::dontSendNotification);
+    rebuildRows();
+}
+
+juce::String KronosPage::timbreSummary (const Kronos::Combi& c, int& romCount) const
+{
+    auto* pcg = proc.getKronosPcg();
+    juce::StringArray parts;
+    romCount = 0;
+    for (int t = 0; t < 16; ++t)
+    {
+        const auto& tm = c.timbres[(size_t) t];
+        if (! tm.play) continue;
+        const auto* p = pcg != nullptr ? pcg->findProgram (tm.programBank, tm.programNumber) : nullptr;
+        if (p == nullptr || ! p->usesUser()) { ++romCount; continue; }
+        parts.add (juce::String (t + 1) + " " + p->name);
+    }
+    return parts.joinIntoString ("  ·  ");
+}
+
+void KronosPage::loadCombiRow (int row)
+{
+    auto* pcg = proc.getKronosPcg();
+    if (pcg == nullptr || row < 0 || row >= (int) rows.size())
+        return;
+    const auto skipped = proc.loadKronosCombi (pcg->combis[(size_t) rows[(size_t) row]]);
+    if (! skipped.isEmpty())
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
+            T ("Ovi timbre-i nisu preneti (nema tvojih semplova u biblioteci):\n\n") + skipped.joinIntoString ("\n"));
+    editor.showTab (LiveSamplerEditor::TabPerformance);
 }
 
 void KronosPage::playRow (int row)
@@ -1773,6 +1855,19 @@ void KronosPage::rebuildRows()
     if (pcg != nullptr)
     {
         const auto q = search.getText().trim();
+        if (combiMode)
+        {
+            for (size_t i = 0; i < pcg->combis.size(); ++i)
+            {
+                const auto& c = pcg->combis[i];
+                int rom = 0;
+                const auto sum = timbreSummary (c, rom);
+                if (onlyUser.getToggleState() && sum.isEmpty()) continue;
+                if (q.isNotEmpty() && ! c.name.containsIgnoreCase (q) && ! sum.containsIgnoreCase (q)) continue;
+                rows.push_back ((int) i);
+            }
+        }
+        else
         for (size_t i = 0; i < pcg->programs.size(); ++i)
         {
             const auto& p = pcg->programs[i];
@@ -1840,10 +1935,40 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
 {
     auto* pcg = proc.getKronosPcg();
     if (pcg == nullptr || row < 0 || row >= (int) rows.size()) return;
-    const auto& p = pcg->programs[(size_t) rows[(size_t) row]];
 
     juce::String t;
     auto c = Pal::text;
+    if (combiMode)
+    {
+        const auto& cb = pcg->combis[(size_t) rows[(size_t) row]];
+        int rom = 0;
+        switch (col)
+        {
+            case kcBank: t = cb.bank; break;
+            case kcNum:  t = juce::String (cb.number).paddedLeft ('0', 3); break;
+            case kcName: t = cb.name; break;
+            case kcOsc1: t = timbreSummary (cb, rom); if (t.isEmpty()) { t = "-"; c = Pal::dim; } break;
+            case kcOsc2: timbreSummary (cb, rom); t = rom > 0 ? juce::String (rom) + T (" timbre") : "-"; c = Pal::dim; break;
+            case kcState:
+            {
+                juce::StringArray ch;
+                for (auto& tm : cb.timbres)
+                {
+                    const auto s = tm.channel == 0 ? juce::String ("Gch") : juce::String (tm.channel);
+                    if (tm.play && ! ch.contains (s)) ch.add (s);
+                }
+                t = ch.joinIntoString (", ");
+                c = Pal::dim;
+                break;
+            }
+            default: break;
+        }
+        g.setColour (c);
+        g.setFont (juce::FontOptions (13.5f));
+        g.drawText (t, 6, 0, w - 8, h, juce::Justification::centredLeft, true);
+        return;
+    }
+    const auto& p = pcg->programs[(size_t) rows[(size_t) row]];
     switch (col)
     {
         case kcBank: t = p.bank; break;
@@ -1891,6 +2016,9 @@ void KronosPage::resized()
     infoLabel.setBounds (top);
     r.removeFromTop (8);
     auto filt = r.removeFromTop (28);
+    modeButtons[0].setBounds (filt.removeFromLeft (110).reduced (1, 0));
+    modeButtons[1].setBounds (filt.removeFromLeft (110).reduced (1, 0));
+    filt.removeFromLeft (14);
     onlyUser.setBounds (filt.removeFromLeft (300));
     search.setBounds (filt.removeFromLeft (260));
     r.removeFromTop (8);

@@ -6,7 +6,7 @@
 
 constexpr int kMsPerOsc = 8;                 // MS1..MS8 u OSC1 i u OSC2 (kao Kronos)
 constexpr int kNumOsc = 2 * kMsPerOsc;       // 0..7 = OSC1, 8..15 = OSC2
-constexpr int kNumParts = 8;
+constexpr int kNumParts = 16;               // kao 16 timbre-a u Kronos kombiju
 constexpr int kNumPerfBanks = 4;
 constexpr int kPerfPerBank = 16;
 constexpr int kNumPerfSlots = kNumPerfBanks * kPerfPerBank;
@@ -98,6 +98,7 @@ struct PerfPart
     juce::String user;                  // ime usera
     float volumeDb = 0.0f, pan = 0.0f;
     int transpose = 0, octave = 0;
+    float detuneCents = 0.0f;
     int keyLow = 0, keyHigh = 127;
     int velLow = 1, velHigh = 127;
     int midiChannel = 0;                // 0 = svi kanali

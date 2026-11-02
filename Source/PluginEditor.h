@@ -22,8 +22,10 @@ namespace Pal
     const juce::Colour master   { 0xffc58aff };
     const juce::Colour accent   { 0xffff8a3d };
     const juce::Colour red      { 0xffff4d5e };
-    const juce::Colour part[8]  { juce::Colour (0xffff8a3d), juce::Colour (0xff3dc5ff), juce::Colour (0xff7ddf64), juce::Colour (0xffff5c8a),
-                                  juce::Colour (0xffc58aff), juce::Colour (0xffffd23d), juce::Colour (0xff3dffd0), juce::Colour (0xffff9be0) };
+    const juce::Colour part[16] { juce::Colour (0xffff8a3d), juce::Colour (0xff3dc5ff), juce::Colour (0xff7ddf64), juce::Colour (0xffff5c8a),
+                                  juce::Colour (0xffc58aff), juce::Colour (0xffffd23d), juce::Colour (0xff3dffd0), juce::Colour (0xffff9be0),
+                                  juce::Colour (0xffd9a066), juce::Colour (0xff6f9dff), juce::Colour (0xffb8e05a), juce::Colour (0xffff7a6b),
+                                  juce::Colour (0xff9be7ff), juce::Colour (0xffe8c9ff), juce::Colour (0xff5fd39b), juce::Colour (0xffffb36b) };
 }
 
 //==============================================================================
