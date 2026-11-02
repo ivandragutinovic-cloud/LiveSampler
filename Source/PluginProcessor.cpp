@@ -523,7 +523,10 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         sb.filterType = (q.filterRouting & 3) == 3 || (q.filterRouting & 3) == 1 ? FilterType::LP24 : FilterType::LP12;
         sb.cutoff = kHz (q.cutoff, 20.0f, 1000.0f);
         sb.resonance = (float) juce::jlimit (0, 99, q.resonance) / 99.0f;
-        sb.filterEgInt = (float) q.filterEgInt / 99.0f * 5.0f;
+        // cutoff skala ima oko 10 oktava na 99 koraka, pa je jedan korak intenziteta ~0.1 oktave
+        sb.filterEgInt = (float) q.filterEgInt * 0.1f;
+        sb.velToFilterEg = (float) q.filterEgVel * 0.1f;
+        sb.velSens = (float) juce::jlimit (0, 99, std::abs (q.ampVelocity)) / 99.0f;
         sb.filterEg = kFilterEg (q.filterEg);
         sb.vibRate = kLfoHz (q.lfo1Freq);
         sb.vibDepth = kSemis (q.pitchLfo1Int) * 100.0f;
@@ -579,6 +582,8 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
     u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
     u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
     u.portaOn = q1.portaOn != 0;
+    u.portaFingered = q1.portaFingered != 0;
+    u.portaConstRate = q1.portaConstTime == 0;
     u.portamento = q1.portaTime <= 0 ? 0.0f : 0.002f * std::exp (0.085f * (float) q1.portaTime);
     u.bendUp = juce::jlimit (0, 24, std::abs (q1.bendUp));
     u.bendDown = juce::jlimit (0, 24, std::abs (q1.bendDown));

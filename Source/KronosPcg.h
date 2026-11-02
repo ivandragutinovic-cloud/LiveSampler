@@ -24,11 +24,11 @@ namespace Kronos
         std::array<int, 8> xfadeCurve {};   // 0 Linear, 1 Power, 2 Layer
         int transpose = 0, tuneCents = 0;
         int lfo1Freq = 0, pitchLfo1Int = 0, pitchEgInt = 0;
-        int portaOn = 0, portaTime = 0, bendUp = 2, bendDown = -2;
-        int filterRouting = 0, cutoff = 99, resonance = 0, filterEgInt = 0;
+        int portaOn = 0, portaFingered = 0, portaConstTime = 0, portaTime = 0, bendUp = 2, bendDown = -2;
+        int filterRouting = 0, cutoff = 99, resonance = 0, filterEgInt = 0, filterEgVel = 0;
         std::array<int, 9> filterEg {};   // start, attack t, attack lvl, decay t, break, slope t, sustain, release t, release lvl
         std::array<int, 8> ampEg {};      // start, attack t, attack lvl, decay t, break, slope t, sustain, release t
-        int ampLevel = 127, pan = 64;
+        int ampLevel = 127, ampVelocity = 0, pan = 64;
     };
 
     struct Program

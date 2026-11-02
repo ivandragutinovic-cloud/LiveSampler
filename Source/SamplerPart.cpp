@@ -424,7 +424,8 @@ void SamplerPart::updateModulation (Voice& v)
     {
         const double octaves = sb.keyTrack * (v.pitch - v.oscTranspose - 60.0) / 12.0
                              + sb.velToCutoff * (v.vel01 - 1.0)
-                             + sb.filterEgInt * fEg
+                             + (sb.filterEgInt + sb.velToFilterEg * v.vel01) * fEg
+                             + sb.bendToCutoff * bend
                              + sb.filterLfoDepth * std::sin (v.fltPhase)
                              + sb.mwToCutoff * modWheel + sb.atToCutoff * aftertouch;
         const float fc = (float) juce::jlimit (20.0, sampleRate * 0.45, sb.cutoff * std::exp2 (octaves));

@@ -61,7 +61,7 @@ namespace Kronos
         auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
         p.doubleMode = (d[2558] & 0x01) != 0;
         p.mono       = (d[2558] & 0x80) != 0;
-        p.legato     = (d[2559] & 0x01) != 0;
+        p.legato     = (d[2559] & 0x10) != 0;
         p.priority   = (d[2559] >> 2) & 3;
 
         for (int o = 0; o < 2; ++o)
@@ -84,7 +84,9 @@ namespace Kronos
             q.lfo1Freq    = b[2977];
             q.pitchEgInt  = s8 (b[3019]);
             q.pitchLfo1Int = s8 (b[3022]);
-            q.portaOn     = b[3024];
+            q.portaOn        = b[3024] & 1;
+            q.portaFingered  = (b[3024] >> 1) & 1;
+            q.portaConstTime = (b[3024] >> 2) & 1;
             q.portaTime   = b[3025];
             q.bendUp      = s8 (b[3026]);
             q.bendDown    = s8 (b[3027]);
@@ -92,9 +94,11 @@ namespace Kronos
             q.cutoff      = b[3047];
             q.resonance   = b[3048];
             q.filterEgInt = s8 (b[3056]);
+            q.filterEgVel = s8 (b[3057]);
             for (int i = 0; i < 9; ++i) q.filterEg[(size_t) i] = s8 (b[3094 + i]);
             for (int i = 0; i < 8; ++i) q.ampEg[(size_t) i] = b[3151 + i];
             q.ampLevel    = b[3141];
+            q.ampVelocity = s8 (b[3142]);
             q.pan         = b[3193];
         }
     }

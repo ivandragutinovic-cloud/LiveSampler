@@ -52,6 +52,8 @@ struct SoundBlock
     float keyTrack = 0.0f;              // 1 = prati klavijaturu potpuno
     float velToCutoff = 0.0f;           // oktave (pozitivno: jaci udarac = svetlije)
     float filterEgInt = 0.0f;           // oktave
+    float velToFilterEg = 0.0f;         // oktave EG-a na pun udarac (Kronos: Filter EG Velocity to A)
+    float bendToCutoff = 0.0f;          // oktave na pun pitch bend (gore otvara, dole zatvara)
     EnvSettings filterEg { 0.0f, 0.01f, 1.0f, 0.5f, 0.4f, 0.5f, 0.2f, 0.5f, 0.0f };
     float filterLfoRate = 2.0f, filterLfoDepth = 0.0f;        // Hz, oktave
     float mwToCutoff = 0.0f, atToCutoff = 0.0f;               // oktave

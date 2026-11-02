@@ -34,7 +34,7 @@ static EnvSettings envFromXml (const juce::XmlElement* x, EnvSettings e)
 }
 
 #define BLOCK_FLOATS(X) X(pitchEgInt) X(vibRate) X(vibDepth) X(vibDelay) X(mwToVib) X(atToVib) \
-    X(cutoff) X(resonance) X(keyTrack) X(velToCutoff) X(filterEgInt) X(filterLfoRate) X(filterLfoDepth) \
+    X(cutoff) X(resonance) X(keyTrack) X(velToCutoff) X(filterEgInt) X(velToFilterEg) X(bendToCutoff) X(filterLfoRate) X(filterLfoDepth) \
     X(mwToCutoff) X(atToCutoff) X(velSens) X(velCurve) X(atToAmp)
 
 std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
