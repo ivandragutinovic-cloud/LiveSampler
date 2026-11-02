@@ -20,6 +20,8 @@ namespace Kronos
         int keyLow = 0, keyHigh = 127;
         int velLow = 1, velHigh = 127;
         std::array<int, 8> zoneBottom { 1, 1, 1, 1, 1, 1, 1, 1 };  // donja jacina zone (zona 1 je najjaca)
+        std::array<int, 8> xfadeRange {};   // 0 = Off
+        std::array<int, 8> xfadeCurve {};   // 0 Linear, 1 Power, 2 Layer
         int transpose = 0, tuneCents = 0;
         int lfo1Freq = 0, pitchLfo1Int = 0, pitchEgInt = 0;
         int portaOn = 0, portaTime = 0, bendUp = 2, bendDown = -2;

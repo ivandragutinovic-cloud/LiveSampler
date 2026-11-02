@@ -73,7 +73,11 @@ namespace Kronos
             q.velLow  = juce::jlimit (1, 127, (int) b[2972]);
             q.velHigh = juce::jlimit (1, 127, (int) b[2973]);
             for (int z = 0; z < 7; ++z)
+            {
                 q.zoneBottom[(size_t) z] = juce::jlimit (1, 127, (int) b[2950 + z * 3]);
+                q.xfadeRange[(size_t) z] = juce::jlimit (0, 127, (int) b[2951 + z * 3]);
+                q.xfadeCurve[(size_t) z] = juce::jlimit (0, 2, (int) b[2952 + z * 3]);
+            }
             q.zoneBottom[7] = 1;
             q.transpose   = s8 (b[3013]);
             q.tuneCents   = (int) (juce::int16) (b[3014] | (b[3015] << 8));

@@ -338,7 +338,16 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             v.pos = v.loop ? juce::jmin ((double) zone->sampleStart, (double) v.loopStart) : (double) zone->sampleStart;
 
         const float pan = juce::jlimit (-1.0f, 1.0f, zone->pan + o.pan);
-        const float g = juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb);
+        float xfade = 1.0f;
+        auto fade = [&o] (int steps, int dist)
+        {
+            if (steps <= 0) return 1.0f;
+            const float x = juce::jlimit (0.0f, 1.0f, (float) (dist + 1) / (float) (steps + 1));
+            return o.fadeCurve == 1 ? std::sin (x * juce::MathConstants<float>::halfPi) : x;
+        };
+        xfade *= fade (o.fadeIn, velocity - o.velLow);
+        xfade *= fade (o.fadeOut, o.velHigh - velocity);
+        const float g = xfade * juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb);
         v.vel01 = vel01;
         v.velGain = (1.0f - sb.velSens) + sb.velSens * std::pow (vel01, juce::jmax (0.1f, sb.velCurve));
         v.gainL = g * juce::jmin (1.0f, 1.0f - pan);

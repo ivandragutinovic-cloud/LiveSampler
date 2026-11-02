@@ -523,15 +523,25 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         sb.vibDelay = 0.0f;
         // pitch EG: nivoi jos nisu nadjeni u PCG-u, pa intenzitet ostaje 0 da ne pokvari visinu
 
-        // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje
-        int top = 127;
+        // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje.
+        // Xfade range ide od donje granice zone navise: gornja zona se tu pojacava,
+        // donja se utisava (Linear/Power) ili svira punom jacinom (Layer).
+        int top = 127, prevRange = 0, prevCurve = 0;
         for (int z = 0; z < 8 && top >= 1; ++z)
         {
             const auto& zone = prog.osc[(size_t) o][(size_t) z];
             if (! zone.used) break;
             const int bottom = juce::jmin (top, q.zoneBottom[(size_t) z]);
+            const int range = q.xfadeRange[(size_t) z], curve = q.xfadeCurve[(size_t) z];
+            const bool lowerExists = z < 7 && prog.osc[(size_t) o][(size_t) z + 1].used;
+            const int fadeIn = range > 0 && lowerExists ? range : 0;
+            const int fadeOut = prevRange > 0 && prevCurve != 2 ? prevRange : 0;
             const int lo = juce::jmax (bottom, q.velLow), hi = juce::jmin (top, q.velHigh);
-            top = bottom - 1;
+            const int oscCurve = curve == 1 || prevCurve == 1 ? 1 : 0;
+
+            top = bottom - 1 + (lowerExists ? range : 0);
+            prevRange = lowerExists ? range : 0;
+            prevCurve = curve;
             if (! zone.user || lo > hi || n >= kNumOsc) continue;
 
             const auto inst = library.findKronosMultisample (zone.uuid, zone.ms);
@@ -543,6 +553,9 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             os.block = o;
             os.velLow = lo;
             os.velHigh = hi;
+            os.fadeIn = fadeIn;
+            os.fadeOut = fadeOut;
+            os.fadeCurve = oscCurve;
             os.keyLow = juce::jmin (q.keyLow, q.keyHigh);
             os.keyHigh = juce::jmax (q.keyLow, q.keyHigh);
             os.transpose = q.transpose;

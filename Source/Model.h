@@ -21,6 +21,8 @@ struct OscSettings
     int keyLow = 0, keyHigh = 127;
     int velLow = 1, velHigh = 127;
     int block = 0;                      // 0 = Zvuk A, 1 = Zvuk B (kao OSC1/OSC2 na Kronosu)
+    int fadeIn = 0, fadeOut = 0;        // velocity crossfade (koliko koraka od donje / gornje granice)
+    int fadeCurve = 0;                  // 0 linearno, 1 power
 };
 
 // Envelope kao na Kronosu: start -> attack nivo -> break nivo -> sustain -> release nivo
