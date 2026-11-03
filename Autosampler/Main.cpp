@@ -151,7 +151,7 @@ public:
             addAndMakeVisible (l);
         };
         styleTitle (title1, juce::String::fromUTF8 ("1. ŠTA TREBA PRESEMPLOVATI"));
-        styleTitle (title2, juce::String::fromUTF8 ("2. PROGRAM ZA SVAKI MULTISEMPL: direktno preko SysEx-a (preporučeno) ili preko PCG-a"));
+        styleTitle (title2, juce::String::fromUTF8 ("2. ŠABLON SA KRONOSA (SysEx, ništa se ne snima na Kronos; treba samo za ROM multisemplove)"));
         styleTitle (title3, "3. SNIMANJE");
 
         loadButton.setButtonText (juce::String::fromUTF8 ("Učitaj PCG..."));
@@ -220,7 +220,11 @@ public:
         addAndMakeVisible (startNum);
         makePcgButton.setButtonText ("Napravi PCG");
         makePcgButton.onClick = [this] { makePcg(); };
-        addAndMakeVisible (makePcgButton);
+        // snimanje preko PCG-a (USB flash) je izbaceno: sve ide direktno preko SysEx-a
+        for (juce::Component* c : { (juce::Component*) &templateLabel, (juce::Component*) &templateBox, (juce::Component*) &bankLabel,
+                                    (juce::Component*) &bankBox, (juce::Component*) &startLabel, (juce::Component*) &startNum,
+                                    (juce::Component*) &makePcgButton })
+            c->setVisible (false);
 
         // 3. snimanje
         audioButton.setButtonText (juce::String::fromUTF8 ("Audio ulaz (Kronos USB)..."));
@@ -247,7 +251,7 @@ public:
 
         sysexMode.setButtonText (juce::String::fromUTF8 ("Direktno preko SysEx-a (menja trenutni program, ništa se ne snima na Kronos)"));
         sysexMode.setToggleState (true, juce::dontSendNotification);
-        addAndMakeVisible (sysexMode);
+        sysexMode.setVisible (false);
         readTemplateButton.setButtonText (juce::String::fromUTF8 ("Pročitaj šablon sa Kronosa"));
         readTemplateButton.setTooltip (juce::String::fromUTF8 ("Na Kronosu izaberi Init Program (npr. USER-FF 006), pa klikni ovde."));
         readTemplateButton.onClick = [this] { readTemplateFromKronos(); };
@@ -357,9 +361,9 @@ public:
         progress.setFont (juce::FontOptions (14.0f, juce::Font::bold));
         addAndMakeVisible (progress);
         help.setText (juce::String::fromUTF8 (
-            "Redosled: 1) učitaj PCG i dodaj programe/kombije  2) Napravi PCG, pa ga na Kronosu učitaj u izabranu banku "
-            "(Load PCG → samo tu banku)  3) izaberi Kronos USB audio ulaz i MIDI izlaz, podesi Bank CC0/CC32 tako da Test "
-            "na Kronosu izabere prvi novi program, pa START. Snimanje se može prekinuti i nastaviti: postojeći fajlovi se preskaču.\n"
+            "Redosled: 1) učitaj PCG i dodaj programe/kombije (ili zvuk sa druge klavijature)  2) za ROM multisemplove: na Kronosu izaberi "
+            "Init Program i klikni Pročitaj šablon  3) izaberi Kronos USB audio ulaz, MIDI izlaz i ulaz, pa START. "
+            "Snimanje se može prekinuti i nastaviti: postojeći fajlovi se preskaču.\n"
             "EXi programi (AL-1, CX-3, SGX-2...) idu samo direktno preko SysEx-a (treba i MIDI ulaz sa Kronosa); šablon za njih ne treba. "
             "Na Kronosu isključi KARMA i Drum Track dugme. Za klavir i EP stavi Drži na 8-10 s. "
             "Desni klik na listu desno: Presempluj ponovo (briše stare semplove)."),
@@ -441,7 +445,7 @@ public:
         auto r = getLocalBounds().reduced (10);
         sec1 = r.removeFromTop (350);
         r.removeFromTop (8);
-        sec2 = r.removeFromTop (118);
+        sec2 = r.removeFromTop (78);
         r.removeFromTop (8);
         sec3 = r;
 
@@ -471,7 +475,7 @@ public:
 
         auto b = sec2.reduced (10);
         title2.setBounds (b.removeFromTop (22));
-        auto row = b.removeFromTop (32);
+        auto row = juce::Rectangle<int>();
         templateLabel.setBounds (row.removeFromLeft (210));
         templateBox.setBounds (row.removeFromLeft (290).reduced (0, 2));
         row.removeFromLeft (12);
@@ -484,7 +488,6 @@ public:
         makePcgButton.setBounds (row.removeFromLeft (140));
         b.removeFromTop (4);
         auto rowS = b.removeFromTop (30);
-        sysexMode.setBounds (rowS.removeFromLeft (520));
         readTemplateButton.setBounds (rowS.removeFromLeft (210));
         rowS.removeFromLeft (10);
         templateInfo.setBounds (rowS);
