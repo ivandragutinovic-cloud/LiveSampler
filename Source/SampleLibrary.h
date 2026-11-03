@@ -107,7 +107,7 @@ public:
     // Korg i Kontakt citaci (javni zbog testova)
     void loadKorg (Instrument& inst);
     void loadKontakt (Instrument& inst, bool c3Is60);
-    SamplePtr loadKsf (const juce::File& f, const juce::String& id, juce::StringArray& warnings);
+    SamplePtr loadKsf (const juce::File& f, const juce::String& id, juce::StringArray& warnings, int depth = 0);
     SamplePtr loadAudioFile (const juce::File& f, const juce::String& id, juce::StringArray& warnings);
 
     static void autoMapByName (Instrument& inst, const std::vector<int>& sampleIndices, bool c3Is60);

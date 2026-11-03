@@ -630,7 +630,7 @@ namespace
     };
 }
 
-SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, juce::StringArray& warnings)
+SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, juce::StringArray& warnings, int depth)
 {
     juce::MemoryBlock mb;
     if (! f.loadFileAsData (mb))
@@ -643,13 +643,57 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
     auto chunks = r.readChunks();
     auto* smp = ChunkReader::find (chunks, "SMP1");
     auto* smd = ChunkReader::find (chunks, "SMD1");
+    const bool be = r.bigEndian;
+
+    // Korg SMP1: ime (16), banka (1), Start (3), Start2 (4), Loop Start (4), End (4).
+    // SMD1 atributi: bit 7 = loop iskljucen (Loop Off), tada se svira od Start do End jednom.
+    auto applyPoints = [&] (SampleData& sd, int frames, juce::uint8 attributes)
+    {
+        if (smp == nullptr || smp->size < 32) return false;
+        const auto* sp = r.d + smp->offset;
+        const int start = be ? ((sp[17] << 16) | (sp[18] << 8) | sp[19]) : ((sp[19] << 16) | (sp[18] << 8) | sp[17]);
+        const int ls = (int) r.u32 (smp->offset + 24);
+        const int le = juce::jmin ((int) r.u32 (smp->offset + 28) + 1, frames);
+        const bool loopOff = (attributes & 0x80) != 0;
+        sd.startOffset = start >= 0 && start < le - 16 ? start : 0;
+        sd.endPoint = le > sd.startOffset + 16 ? le : frames;
+        sd.hasLoop = false;
+        if (! loopOff && ls >= 0 && le - ls >= 16)
+        {
+            sd.hasLoop = true;
+            sd.loopStart = ls;
+            sd.loopEnd = le;
+        }
+        return true;
+    };
+
+    // SMF1: ovaj sempl koristi zvuk iz drugog KSF fajla (Kronos tako deli isti zvuk izmedju zona),
+    // a svoje su mu samo tacke (start, loop, end) iz SMP1
+    if (auto* smf = ChunkReader::find (chunks, "SMF1"); smf != nullptr && smf->size > 0)
+    {
+        const auto refName = r.text (smf->offset, (int) smf->size).trim();
+        const auto ref = f.getSiblingFile (refName);
+        if (depth < 4 && refName.isNotEmpty() && ref != f && ref.existsAsFile())
+        {
+            juce::StringArray dummy;
+            if (auto base = loadKsf (ref, id, dummy, depth + 1))
+            {
+                auto sd = std::make_shared<SampleData> (*base);
+                sd->id = id;
+                if (smp != nullptr && smp->size >= 16)
+                    if (auto n = r.text (smp->offset, 16); n.isNotEmpty()) sd->displayName = n;
+                const juce::uint8 attributes = smd != nullptr && smd->size >= 5 ? r.d[smd->offset + 4] : (juce::uint8) (base->hasLoop ? 0x00 : 0x80);
+                applyPoints (*sd, sd->buffer.getNumSamples(), attributes);
+                return sd;
+            }
+        }
+        warnings.add (f.getFileName() + T (": upućuje na ") + refName + T (", koji ne postoji"));
+        return nullptr;
+    }
 
     if (smd == nullptr)
     {
-        if (ChunkReader::find (chunks, "SMF1") != nullptr)
-            warnings.add (f.getFileName() + T (": KSF upućuje na drugi fajl (SMF1), nije podržano"));
-        else
-            warnings.add (f.getFileName() + T (": nije Korg KSF sempl"));
+        warnings.add (f.getFileName() + T (": nije Korg KSF sempl"));
         return nullptr;
     }
     if (smd->size < 12)
@@ -698,7 +742,6 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
     sd->sampleRate = rate;
     sd->buffer.setSize (2, frames);
 
-    const bool be = r.bigEndian;
     for (int ch = 0; ch < 2; ++ch)
     {
         const int srcCh = juce::jmin (ch, channels - 1);
@@ -725,26 +768,8 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
         }
     }
 
-    // Korg SMP1: ime (16), banka (1), Start (3), Start2 (4), Loop Start (4), End (4).
-    // SMD1 atributi: bit 7 = loop iskljucen (Loop Off), tada se svira od Start do End jednom.
-    if (smp != nullptr && smp->size >= 32)
-    {
-        const auto* sp = r.d + smp->offset;
-        const int start = be ? ((sp[17] << 16) | (sp[18] << 8) | sp[19]) : ((sp[19] << 16) | (sp[18] << 8) | sp[17]);
-        const int ls = (int) r.u32 (smp->offset + 24);
-        const int le = juce::jmin ((int) r.u32 (smp->offset + 28) + 1, frames);
-        const bool loopOff = (attributes & 0x80) != 0;
-
-        sd->startOffset = start >= 0 && start < le - 16 ? start : 0;
-        sd->endPoint = le > sd->startOffset + 16 ? le : frames;
-        if (! loopOff && ls >= 0 && le - ls >= 16)
-        {
-            sd->hasLoop = true;
-            sd->loopStart = ls;
-            sd->loopEnd = le;
-        }
+    if (applyPoints (*sd, frames, attributes))
         return sd;
-    }
 
     trimLeadingSilence (*sd);
     return sd;
