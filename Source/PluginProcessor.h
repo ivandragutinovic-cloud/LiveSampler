@@ -80,10 +80,16 @@ public:
     // kategorije performansa (kao Combi Category na Kronosu); mogu da se menjaju i dodaju
     const juce::StringArray& getCategories() const { return categories; }
     // nova lista; remap[stari indeks] = novi indeks ili -1 (obrisana)
-    void setCategories (const juce::StringArray& names, const std::vector<int>& remap);
+    void setCategories (const juce::StringArray& names, const std::vector<juce::Colour>& colours, const std::vector<int>& remap);
     void setSlotCategory (int slot, int category);
     juce::String categoryName (int c) const { return c >= 0 && c < categories.size() ? categories[c] : juce::String(); }
-    static juce::StringArray kronosDefaultCategories();
+    juce::Colour categoryColour (int c) const { return c >= 0 && c < (int) categoryColours.size() ? categoryColours[(size_t) c] : juce::Colour (0xff8a93a6); }
+    const std::vector<juce::Colour>& getCategoryColours() const { return categoryColours; }
+    static juce::StringArray defaultCategories();             // kao Kronos kategorije u Live Kontroleru
+    static std::vector<juce::Colour> defaultCategoryColours();
+    // uvoz iz Live Kontrolera (live-kontroler-podesavanja.json): kategorije, boje i koji kombi ide gde
+    bool importLiveKontroler (const juce::File& f, juce::String& report);
+    int categoryForCombi (juce::uint32 bankId, int number) const;
 
     // set liste (velika dugmad za svirku)
     const SetList& getSetList (int i) const { return setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)]; }
@@ -242,8 +248,10 @@ private:
     Performance perf;
     int currentSlot = -1, currentBank = 0;
     std::array<juce::String, kNumPerfBanks> bankNames;
-    juce::StringArray categories { kronosDefaultCategories() };
-    bool categoriesEdited = false;   // dok nisu menjane, preuzimaju se imena iz ucitanog PCG-a
+    juce::StringArray categories { defaultCategories() };
+    std::vector<juce::Colour> categoryColours { defaultCategoryColours() };
+    bool categoriesEdited = false;
+    std::map<juce::String, juce::String> combiCategoryMap;   // "bankId:broj" -> ime kategorije (iz Live Kontrolera)
     std::array<SetList, kNumSetLists> setLists;
     int currentSetList = 0, setListPage = 0, currentSetListSlot = -1, pcMode = 0;
     bool perfDirty = false;

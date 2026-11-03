@@ -77,8 +77,19 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("setListPage", setListPage);
     auto* cats = root.createNewChildElement ("Categories");
     cats->setAttribute ("edited", categoriesEdited);
-    for (auto& c : categories)
-        cats->createNewChildElement ("Category")->setAttribute ("name", c);
+    cats->setAttribute ("version", 2);
+    for (int c = 0; c < categories.size(); ++c)
+    {
+        auto* x = cats->createNewChildElement ("Category");
+        x->setAttribute ("name", categories[c]);
+        x->setAttribute ("colour", categoryColour (c).toString());
+    }
+    for (auto& [k, v] : combiCategoryMap)
+    {
+        auto* x = cats->createNewChildElement ("Combi");
+        x->setAttribute ("key", k);
+        x->setAttribute ("category", v);
+    }
     auto* bn = root.createNewChildElement ("BankNames");
     for (int b = 0; b < kNumPerfBanks; ++b)
         if (bankNames[(size_t) b].isNotEmpty())
@@ -171,11 +182,26 @@ void LiveSamplerProcessor::loadData()
     setListPage = juce::jlimit (0, kSetListSlots / 16 - 1, xml->getIntAttribute ("setListPage", 0));
     if (auto* cats = xml->getChildByName ("Categories"))
     {
-        categories.clear();
-        for (auto* x : cats->getChildWithTagNameIterator ("Category"))
-            categories.add (x->getStringAttribute ("name"));
         categoriesEdited = cats->getBoolAttribute ("edited", false);
-        if (categories.isEmpty()) categories = kronosDefaultCategories();
+        if (cats->getIntAttribute ("version", 1) >= 2 || categoriesEdited)
+        {
+            categories.clear();
+            categoryColours.clear();
+            for (auto* x : cats->getChildWithTagNameIterator ("Category"))
+            {
+                categories.add (x->getStringAttribute ("name"));
+                categoryColours.push_back (juce::Colour::fromString (x->getStringAttribute ("colour", "ff8a93a6")));
+            }
+            for (auto* x : cats->getChildWithTagNameIterator ("Combi"))
+                combiCategoryMap[x->getStringAttribute ("key")] = x->getStringAttribute ("category");
+        }
+        else
+        {
+            // prva verzija (Korg imena, niko ih nije menjao): prelazi se na kategorije iz Live Kontrolera
+            for (auto& s : slots) s.category = -1;
+        }
+        if (categories.isEmpty()) { categories = defaultCategories(); categoryColours = defaultCategoryColours(); }
+        categoryColours.resize ((size_t) categories.size(), juce::Colour (0xff8a93a6));
     }
     if (auto* bn = xml->getChildByName ("BankNames"))
         for (auto* x : bn->getChildWithTagNameIterator ("Bank"))
@@ -536,13 +562,6 @@ bool LiveSamplerProcessor::loadKronosPcg (const juce::File& f, juce::String& err
 
     kronosPcg = std::move (pcg);
     kronosFile = f;
-    // dok korisnik nije sam menjao kategorije, imena se uzimaju sa Kronosa (GLOBAL)
-    if (! categoriesEdited && kronosPcg->combiCategories.size() == 18)
-    {
-        bool any = false;
-        for (auto& c : kronosPcg->combiCategories) any = any || c.isNotEmpty();
-        if (any) categories = kronosPcg->combiCategories;
-    }
     markSave();
 
     // folder sa PCG-om (i KSC kolekcijom pored njega) ide u biblioteku
@@ -749,7 +768,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
 
     auto p = perf;
     p.name = c.name.isNotEmpty() ? c.name : c.id();
-    p.category = c.category < categories.size() ? c.category : -1;
+    p.kronosSource = juce::String (c.bankId) + ":" + juce::String (c.number);
+    p.category = categoryForCombi (c.bankId, c.number);
     p.master.reverbLevel = (float) c.return1 / 127.0f;   // MFX1 Return
     p.master.delayLevel = (float) c.return2 / 127.0f;    // MFX2 Return
     for (int t = 0; t < 16 && t < kNumParts; ++t)
@@ -945,20 +965,126 @@ void LiveSamplerProcessor::setBankName (int b, const juce::String& n)
     sendChangeMessage();
 }
 
-juce::StringArray LiveSamplerProcessor::kronosDefaultCategories()
+juce::StringArray LiveSamplerProcessor::defaultCategories()
 {
-    // Combi kategorije na Kronosu (fabricka imena)
-    return { "Keyboard", "Organ", "Bell/Mallet/Perc", "Strings", "Brass/Reed/Wood", "Orchestral", "World", "Guitar/Plucked",
-             "Pads/Vocal", "Motion Synth", "Synth", "LeadSplits", "BassSplits", "Complex&SFX", "BPM Sync", "Drums/Hits",
-             "User 16", "User 17" };
+    // iste kao Kronos kategorije u Live Kontroleru
+    return { "Keys", "Acc", "Winds", "Sax", "Brass", "Strings", "Pluck", "Guitar", "Synth", "Lead", "Bass", "Pesme", "Main" };
 }
 
-void LiveSamplerProcessor::setCategories (const juce::StringArray& names, const std::vector<int>& remap)
+std::vector<juce::Colour> LiveSamplerProcessor::defaultCategoryColours()
+{
+    return { juce::Colour (0xff88a4c5), juce::Colour (0xff6a7f96), juce::Colour (0xffab81a2), juce::Colour (0xffaa842a),
+             juce::Colour (0xff808080), juce::Colour (0xffb23f3f), juce::Colour (0xff7f4236), juce::Colour (0xff374520),
+             juce::Colour (0xff9267ba), juce::Colour (0xff5360a5), juce::Colour (0xff91a730), juce::Colour (0xfff5e663),
+             juce::Colour (0xfff5e663) };
+}
+
+int LiveSamplerProcessor::categoryForCombi (juce::uint32 bankId, int number) const
+{
+    auto it = combiCategoryMap.find (juce::String (bankId) + ":" + juce::String (number));
+    return it == combiCategoryMap.end() ? -1 : categories.indexOf (it->second, true);
+}
+
+bool LiveSamplerProcessor::importLiveKontroler (const juce::File& f, juce::String& report)
+{
+    const auto json = juce::JSON::parse (f.loadFileAsString());
+    const auto* cats = json.getProperty ("categories", {}).getArray();
+    if (cats == nullptr)
+    {
+        report = T ("U fajlu nema kategorija (treba live-kontroler-podesavanja.json).");
+        return false;
+    }
+
+    // Kronos bank select u Live Kontroleru: CC32 0-6 = INT-A..G, 8-14 = USER-A..G
+    auto bankFromLsb = [] (int lsb) -> juce::int64
+    {
+        if (lsb >= 0 && lsb <= 6) return lsb;
+        if (lsb >= 8 && lsb <= 21) return (2 << 16) | (lsb - 8);
+        return -1;
+    };
+
+    int newCats = 0, mapped = 0;
+    std::map<juce::String, juce::String> map;
+    std::vector<std::pair<juce::String, juce::String>> mainItems;   // "Main" je kao omiljeni: samo ako kombi nema drugu kategoriju
+    for (auto& c : *cats)
+    {
+        if (c.getProperty ("device", {}).toString() != "kronos") continue;
+        const auto* items = c.getProperty ("items", {}).getArray();
+        if (items == nullptr) continue;
+        auto name = c.getProperty ("name", {}).toString();
+        if (name.contains (juce::String::fromUTF8 ("\xc2\xb7"))) name = name.fromFirstOccurrenceOf (juce::String::fromUTF8 ("\xc2\xb7"), false, false);
+        name = name.trim();
+        if (name.isEmpty()) continue;
+        int idx = categories.indexOf (name, true);
+        if (idx < 0)
+        {
+            categories.add (name);
+            categoryColours.push_back (juce::Colour (0xff8a93a6));
+            idx = categories.size() - 1;
+            ++newCats;
+        }
+        name = categories[idx];
+        const auto col = c.getProperty ("color", {}).toString().trimCharactersAtStart ("#");
+        if (col.length() == 6) categoryColours[(size_t) idx] = juce::Colour ((juce::uint32) (0xff000000u | (juce::uint32) col.getHexValue32()));
+
+        const bool isMain = name.equalsIgnoreCase ("Main");
+        for (auto& it : *items)
+            if (const auto* actions = it.getProperty ("do", {}).getArray())
+                for (auto& a : *actions)
+                {
+                    if (a.getProperty ("device", {}).toString() != "kronos" || a.getProperty ("type", {}).toString() != "pc") continue;
+                    const auto bank = bankFromLsb ((int) a.getProperty ("lsb", -1));
+                    if (bank < 0) continue;
+                    const auto key = juce::String (bank) + ":" + juce::String ((int) a.getProperty ("pc", 0));
+                    if (isMain) mainItems.push_back ({ key, name });
+                    else if (map.count (key) == 0) map[key] = name;
+                    break;
+                }
+    }
+    for (auto& [k, n] : mainItems)
+        if (map.count (k) == 0) map[k] = n;
+    for (auto& [k, n] : map) { combiCategoryMap[k] = n; ++mapped; }
+    categoriesEdited = true;
+
+    // performansi u listama: po kombiju od kog su napravljeni, ili po imenu kombija iz ucitanog PCG-a
+    int assigned = 0, missing = 0;
+    for (auto& s : slots)
+    {
+        if (! s.used) continue;
+        juce::String key = s.kronosSource;
+        if (key.isEmpty() && kronosPcg != nullptr)
+            for (auto& c : kronosPcg->combis)
+                if (c.name.isNotEmpty() && c.name.trim() == s.name.trim()) { key = juce::String (c.bankId) + ":" + juce::String (c.number); break; }
+        if (key.isNotEmpty())
+            if (auto it = combiCategoryMap.find (key); it != combiCategoryMap.end())
+                if (const int ci = categories.indexOf (it->second, true); ci >= 0) { s.category = ci; ++assigned; }
+        if (s.category < 0) ++missing;
+    }
+    if (currentSlot >= 0) perf.category = slots[(size_t) currentSlot].category;
+    markSave();
+    sendChangeMessage();
+    report = juce::String (mapped) + T (" kombija ima kategoriju") + (newCats > 0 ? ", " + juce::String (newCats) + T (" novih kategorija") : juce::String())
+           + ".\n" + juce::String (assigned) + T (" performansa u listama dobilo kategoriju, ") + juce::String (missing) + T (" je bez kategorije.")
+           + (kronosPcg == nullptr ? T ("\n\nUčitaj PCG (KRONOS) pa uvezi ponovo da se prepoznaju i stariji performansi po imenu kombija.") : juce::String());
+    return true;
+}
+
+void LiveSamplerProcessor::setCategories (const juce::StringArray& names, const std::vector<juce::Colour>& colours, const std::vector<int>& remap)
 {
     auto fix = [&remap] (int c) { return c >= 0 && c < (int) remap.size() ? remap[(size_t) c] : -1; };
     for (auto& s : slots) if (s.used) s.category = fix (s.category);
     perf.category = fix (perf.category);
+    // kombiji vezani za obrisanu kategoriju gube vezu; preimenovana nosi novo ime
+    for (auto it = combiCategoryMap.begin(); it != combiCategoryMap.end();)
+    {
+        const int old = categories.indexOf (it->second, true);
+        const int nw = fix (old);
+        if (nw < 0) it = combiCategoryMap.erase (it);
+        else { it->second = names[nw]; ++it; }
+    }
     categories = names;
+    categoryColours = colours;
+    categoryColours.resize ((size_t) categories.size(), juce::Colour (0xff8a93a6));
     categoriesEdited = true;
     markSave();
     sendChangeMessage();

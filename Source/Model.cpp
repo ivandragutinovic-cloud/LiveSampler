@@ -283,6 +283,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
     e->setAttribute ("name", name);
     e->setAttribute ("used", used);
     e->setAttribute ("category", category);
+    if (kronosSource.isNotEmpty()) e->setAttribute ("kronosSource", kronosSource);
     masterToXml (master, *e->createNewChildElement ("Master"));
 
     for (int i = 0; i < kNumParts; ++i)
@@ -319,6 +320,7 @@ Performance Performance::fromXml (const juce::XmlElement& e)
     perf.name = e.getStringAttribute ("name", perf.name);
     perf.used = e.getBoolAttribute ("used", true);
     perf.category = e.getIntAttribute ("category", -1);
+    perf.kronosSource = e.getStringAttribute ("kronosSource");
     if (auto* m = e.getChildByName ("Master"))
         perf.master = masterFromXml (*m);
 
