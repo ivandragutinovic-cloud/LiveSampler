@@ -246,7 +246,8 @@ i snima svaki treci ton u vise jacina (Auto: klavir 6, EP 5, STR-1 4, orgulje 1,
 Meri i release posle pustanja tastera. Pikaso Workstation od toga sam pravi usera.
 
 ### Kategorije performansa
-Svaki performans u listi ima kategoriju (iste kao Combi kategorije na Kronosu; imena se preuzimaju
-iz ucitanog PCG-a). Dugme KATEGORIJE... menja, dodaje, brise i preuredjuje kategorije.
-Performansi bez kategorije imaju narandzast okvir, a lista koja ih ima ima tacku na dugmetu.
-Kombi preuzet sa Kronosa dobija svoju kategoriju.
+Kategorije su iste kao Kronos kategorije u Live Kontroleru (Keys, Acc, Winds, Sax, Brass, Strings, Pluck,
+Guitar, Synth, Lead, Bass, Pesme, Main), sa istim bojama. Pikaso Workstation prati
+Desktop\Live Kontroler\podesavanja-server.json: kad u Live Kontroleru promenis boju, ime ili kombi
+u kategoriji, za par sekundi se promeni i ovde. Performans napravljen od Kronos kombija dobija
+kategoriju tog kombija. Bez kategorije: narandzast okvir i tacka na dugmetu liste.

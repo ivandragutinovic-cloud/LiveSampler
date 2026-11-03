@@ -336,6 +336,8 @@ private:
     int cellAt (juce::Point<int> p) const;
     void cellMenu (int index);
     void editCategories();
+    void categoriesMenu();
+    std::unique_ptr<juce::FileChooser> chooser;
     bool passesFilter (const Performance& s) const;
 
     LiveSamplerProcessor& proc;

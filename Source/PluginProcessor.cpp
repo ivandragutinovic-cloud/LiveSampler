@@ -77,7 +77,9 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("setListPage", setListPage);
     auto* cats = root.createNewChildElement ("Categories");
     cats->setAttribute ("edited", categoriesEdited);
-    cats->setAttribute ("version", 2);
+    cats->setAttribute ("version", 3);
+    cats->setAttribute ("kontrolerLinked", kontrolerLinked);
+    cats->setAttribute ("kontrolerFile", kontrolerFile.getFullPathName());
     for (int c = 0; c < categories.size(); ++c)
     {
         auto* x = cats->createNewChildElement ("Category");
@@ -183,7 +185,10 @@ void LiveSamplerProcessor::loadData()
     if (auto* cats = xml->getChildByName ("Categories"))
     {
         categoriesEdited = cats->getBoolAttribute ("edited", false);
-        if (cats->getIntAttribute ("version", 1) >= 2 || categoriesEdited)
+        kontrolerChecked = cats->hasAttribute ("kontrolerLinked");
+        kontrolerLinked = cats->getBoolAttribute ("kontrolerLinked", false);
+        kontrolerFile = juce::File (cats->getStringAttribute ("kontrolerFile"));
+        if (cats->getIntAttribute ("version", 1) >= 3 || categoriesEdited)
         {
             categories.clear();
             categoryColours.clear();
@@ -197,8 +202,8 @@ void LiveSamplerProcessor::loadData()
         }
         else
         {
-            // prva verzija (Korg imena, niko ih nije menjao): prelazi se na kategorije iz Live Kontrolera
-            for (auto& s : slots) s.category = -1;
+            // starije verzije (Korg imena / indeksi): prelazi se na kategorije iz Live Kontrolera
+            for (auto& s : slots) s.category = {};
         }
         if (categories.isEmpty()) { categories = defaultCategories(); categoryColours = defaultCategoryColours(); }
         categoryColours.resize ((size_t) categories.size(), juce::Colour (0xff8a93a6));
@@ -500,6 +505,18 @@ void LiveSamplerProcessor::rebuildConfig()
 
 void LiveSamplerProcessor::timerCallback()
 {
+    // Live Kontroler: prvi put se sam poveze ako fajl postoji; posle se prati izmena fajla
+    if (++kontrolerTick >= 4)
+    {
+        kontrolerTick = 0;
+        if (! kontrolerChecked)
+        {
+            kontrolerChecked = true;
+            if (defaultKontrolerFile().existsAsFile()) linkKontroler (defaultKontrolerFile());
+        }
+        else if (kontrolerLinked && kontrolerFile.existsAsFile() && kontrolerFile.getLastModificationTime() != kontrolerTime)
+            syncKontroler();
+    }
     // stare konfiguracije i instrumenti se oslobadjaju ovde, ne na audio niti
     configGraveyard.erase (std::remove_if (configGraveyard.begin(), configGraveyard.end(),
                                            [] (const ConfigPtr& p) { return p.use_count() == 1; }),
@@ -979,19 +996,42 @@ std::vector<juce::Colour> LiveSamplerProcessor::defaultCategoryColours()
              juce::Colour (0xfff5e663) };
 }
 
-int LiveSamplerProcessor::categoryForCombi (juce::uint32 bankId, int number) const
+juce::String LiveSamplerProcessor::categoryForCombi (juce::uint32 bankId, int number) const
 {
     auto it = combiCategoryMap.find (juce::String (bankId) + ":" + juce::String (number));
-    return it == combiCategoryMap.end() ? -1 : categories.indexOf (it->second, true);
+    return it == combiCategoryMap.end() ? juce::String() : it->second;
 }
 
-bool LiveSamplerProcessor::importLiveKontroler (const juce::File& f, juce::String& report)
+juce::File LiveSamplerProcessor::defaultKontrolerFile()
 {
-    const auto json = juce::JSON::parse (f.loadFileAsString());
+    return juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Live Kontroler").getChildFile ("podesavanja-server.json");
+}
+
+void LiveSamplerProcessor::linkKontroler (const juce::File& f)
+{
+    kontrolerLinked = f != juce::File();
+    if (kontrolerLinked) kontrolerFile = f;
+    kontrolerTime = {};
+    if (kontrolerLinked) syncKontroler();
+    markSave();
+    sendChangeMessage();
+}
+
+// Live Kontroler (most.py cuva podesavanja-server.json): Kronos kategorije, njihove boje i koji kombi je u kojoj.
+// Kategorije ovde postaju iste kao tamo (ime, boja, redosled); performans napravljen od kombija dobija njegovu kategoriju.
+bool LiveSamplerProcessor::syncKontroler (juce::String* report)
+{
+    if (! kontrolerFile.existsAsFile())
+    {
+        if (report != nullptr) *report = T ("Ne nalazim ") + kontrolerFile.getFullPathName();
+        return false;
+    }
+    kontrolerTime = kontrolerFile.getLastModificationTime();
+    const auto json = juce::JSON::parse (kontrolerFile.loadFileAsString());
     const auto* cats = json.getProperty ("categories", {}).getArray();
     if (cats == nullptr)
     {
-        report = T ("U fajlu nema kategorija (treba live-kontroler-podesavanja.json).");
+        if (report != nullptr) *report = T ("U fajlu nema kategorija.");
         return false;
     }
 
@@ -1002,8 +1042,10 @@ bool LiveSamplerProcessor::importLiveKontroler (const juce::File& f, juce::Strin
         if (lsb >= 8 && lsb <= 21) return (2 << 16) | (lsb - 8);
         return -1;
     };
+    const auto dot = juce::String::fromUTF8 ("\xc2\xb7");
 
-    int newCats = 0, mapped = 0;
+    juce::StringArray names;
+    std::vector<juce::Colour> colours;
     std::map<juce::String, juce::String> map;
     std::vector<std::pair<juce::String, juce::String>> mainItems;   // "Main" je kao omiljeni: samo ako kombi nema drugu kategoriju
     for (auto& c : *cats)
@@ -1012,21 +1054,13 @@ bool LiveSamplerProcessor::importLiveKontroler (const juce::File& f, juce::Strin
         const auto* items = c.getProperty ("items", {}).getArray();
         if (items == nullptr) continue;
         auto name = c.getProperty ("name", {}).toString();
-        if (name.contains (juce::String::fromUTF8 ("\xc2\xb7"))) name = name.fromFirstOccurrenceOf (juce::String::fromUTF8 ("\xc2\xb7"), false, false);
+        if (name.contains (dot)) name = name.fromFirstOccurrenceOf (dot, false, false);
         name = name.trim();
-        if (name.isEmpty()) continue;
-        int idx = categories.indexOf (name, true);
-        if (idx < 0)
-        {
-            categories.add (name);
-            categoryColours.push_back (juce::Colour (0xff8a93a6));
-            idx = categories.size() - 1;
-            ++newCats;
-        }
-        name = categories[idx];
+        if (name.isEmpty() || names.contains (name, true)) continue;
+        names.add (name);
         const auto col = c.getProperty ("color", {}).toString().trimCharactersAtStart ("#");
-        if (col.length() == 6) categoryColours[(size_t) idx] = juce::Colour ((juce::uint32) (0xff000000u | (juce::uint32) col.getHexValue32()));
-
+        colours.push_back (col.length() == 6 ? juce::Colour ((juce::uint32) (0xff000000u | (juce::uint32) col.getHexValue32()))
+                                             : juce::Colour (0xff8a93a6));
         const bool isMain = name.equalsIgnoreCase ("Main");
         for (auto& it : *items)
             if (const auto* actions = it.getProperty ("do", {}).getArray())
@@ -1041,12 +1075,19 @@ bool LiveSamplerProcessor::importLiveKontroler (const juce::File& f, juce::Strin
                     break;
                 }
     }
+    if (names.isEmpty())
+    {
+        if (report != nullptr) *report = T ("U Live Kontroleru nema Kronos kategorija.");
+        return false;
+    }
     for (auto& [k, n] : mainItems)
         if (map.count (k) == 0) map[k] = n;
-    for (auto& [k, n] : map) { combiCategoryMap[k] = n; ++mapped; }
-    categoriesEdited = true;
 
-    // performansi u listama: po kombiju od kog su napravljeni, ili po imenu kombija iz ucitanog PCG-a
+    categories = names;
+    categoryColours = colours;
+    combiCategoryMap = map;
+
+    // performansi: po kombiju od kog su napravljeni, ili po imenu kombija iz ucitanog PCG-a
     int assigned = 0, missing = 0;
     for (auto& s : slots)
     {
@@ -1056,24 +1097,29 @@ bool LiveSamplerProcessor::importLiveKontroler (const juce::File& f, juce::Strin
             for (auto& c : kronosPcg->combis)
                 if (c.name.isNotEmpty() && c.name.trim() == s.name.trim()) { key = juce::String (c.bankId) + ":" + juce::String (c.number); break; }
         if (key.isNotEmpty())
-            if (auto it = combiCategoryMap.find (key); it != combiCategoryMap.end())
-                if (const int ci = categories.indexOf (it->second, true); ci >= 0) { s.category = ci; ++assigned; }
-        if (s.category < 0) ++missing;
+            if (auto it = map.find (key); it != map.end()) { s.category = it->second; ++assigned; }
+        if (categoryIndex (s) < 0) ++missing;
     }
     if (currentSlot >= 0) perf.category = slots[(size_t) currentSlot].category;
     markSave();
     sendChangeMessage();
-    report = juce::String (mapped) + T (" kombija ima kategoriju") + (newCats > 0 ? ", " + juce::String (newCats) + T (" novih kategorija") : juce::String())
-           + ".\n" + juce::String (assigned) + T (" performansa u listama dobilo kategoriju, ") + juce::String (missing) + T (" je bez kategorije.")
-           + (kronosPcg == nullptr ? T ("\n\nUčitaj PCG (KRONOS) pa uvezi ponovo da se prepoznaju i stariji performansi po imenu kombija.") : juce::String());
+    if (report != nullptr)
+        *report = juce::String (names.size()) + T (" kategorija, ") + juce::String ((int) map.size()) + T (" kombija ima kategoriju.\n")
+                + juce::String (assigned) + T (" performansa u listama dobilo kategoriju, ") + juce::String (missing) + T (" je bez kategorije.")
+                + (kronosPcg == nullptr ? T ("\n\nUčitaj PCG (KRONOS) da se prepoznaju i stariji performansi po imenu kombija.") : juce::String());
     return true;
 }
 
 void LiveSamplerProcessor::setCategories (const juce::StringArray& names, const std::vector<juce::Colour>& colours, const std::vector<int>& remap)
 {
     auto fix = [&remap] (int c) { return c >= 0 && c < (int) remap.size() ? remap[(size_t) c] : -1; };
-    for (auto& s : slots) if (s.used) s.category = fix (s.category);
-    perf.category = fix (perf.category);
+    auto rename = [&] (juce::String& cat)
+    {
+        const int nw = fix (categories.indexOf (cat, true));
+        if (cat.isNotEmpty() && categories.contains (cat, true)) cat = nw >= 0 ? names[nw] : juce::String();
+    };
+    for (auto& s : slots) if (s.used) rename (s.category);
+    rename (perf.category);
     // kombiji vezani za obrisanu kategoriju gube vezu; preimenovana nosi novo ime
     for (auto it = combiCategoryMap.begin(); it != combiCategoryMap.end();)
     {
@@ -1093,8 +1139,8 @@ void LiveSamplerProcessor::setCategories (const juce::StringArray& names, const 
 void LiveSamplerProcessor::setSlotCategory (int slot, int category)
 {
     if (slot < 0 || slot >= kNumPerfSlots) return;
-    slots[(size_t) slot].category = category;
-    if (slot == currentSlot) perf.category = category;
+    slots[(size_t) slot].category = categoryName (category);
+    if (slot == currentSlot) perf.category = slots[(size_t) slot].category;
     markSave();
     sendChangeMessage();
 }

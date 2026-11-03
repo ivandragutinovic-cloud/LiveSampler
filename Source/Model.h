@@ -149,7 +149,7 @@ struct Performance
     std::array<PerfPart, kNumParts> parts;
     MasterSettings master;
     bool used = false;
-    int category = -1;                  // indeks u listi kategorija (-1 = bez kategorije)
+    juce::String category;              // ime kategorije (prazno ili nepostojece = bez kategorije)
     juce::String kronosSource;          // kombi sa Kronosa od kog je napravljen: "bankId:broj"
 
     std::unique_ptr<juce::XmlElement> toXml() const;

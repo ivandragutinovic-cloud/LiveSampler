@@ -2549,7 +2549,7 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
     addAndMakeVisible (catFilter);
     categoriesButton.setButtonText (T ("KATEGORIJE..."));
     categoriesButton.setTooltip (T ("Izmeni, dodaj, obriši ili preuredi kategorije"));
-    categoriesButton.onClick = [this] { editCategories(); };
+    categoriesButton.onClick = [this] { categoriesMenu(); };
     addAndMakeVisible (categoriesButton);
     missingLabel.setFont (juce::FontOptions (12.5f, juce::Font::bold));
     missingLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff8a3d));
@@ -2593,7 +2593,7 @@ void ListsPage::refresh()
         for (int i = 0; i < kPerfPerBank; ++i)
         {
             const auto& s = proc.getSlot (b * kPerfPerBank + i);
-            if (s.used && s.category < 0) ++n;
+            if (s.used && proc.categoryIndex (s) < 0) ++n;
         }
         all += n;
         if (b == bank) here = n;
@@ -2609,8 +2609,8 @@ bool ListsPage::passesFilter (const Performance& s) const
 {
     const int id = catFilter.getSelectedId();
     if (id <= 1) return true;
-    if (id == 2) return s.category < 0;
-    return s.category == id - 10;
+    if (id == 2) return proc.categoryIndex (s) < 0;
+    return proc.categoryIndex (s) == id - 10;
 }
 
 juce::Rectangle<int> ListsPage::gridArea() const
@@ -2659,8 +2659,15 @@ void ListsPage::paint (juce::Graphics& g)
         if (s.used)
         {
             // kategorija desno (skraceno), ili narandzast okvir ako je nema
-            const bool missing = s.category < 0;
-            const auto cat = missing ? T ("BEZ KAT.") : proc.categoryName (s.category);
+            const int ci = proc.categoryIndex (s);
+            const bool missing = ci < 0;
+            const auto cat = missing ? T ("BEZ KAT.") : s.category;
+            if (! missing)
+            {
+                // boja kategorije (kao u Live Kontroleru): traka levo
+                g.setColour (proc.categoryColour (ci).withAlpha (dimmed ? 0.3f : 1.0f));
+                g.fillRoundedRectangle (cell.withWidth (5.0f), 2.0f);
+            }
             const float tw = juce::jmin (textArea.getWidth() * 0.4f, 80.0f);
             auto catArea = textArea.removeFromRight (tw);
             g.setFont (juce::FontOptions (10.5f, missing ? juce::Font::bold : juce::Font::plain));
@@ -2707,12 +2714,12 @@ void ListsPage::cellMenu (int i)
     {
         juce::PopupMenu cm;
         const auto& cats = proc.getCategories();
-        const int cur = proc.getSlot (slot).category;
+        const int cur = proc.categoryIndex (proc.getSlot (slot));
         for (int c = 0; c < cats.size(); ++c)
             cm.addItem (1000 + c, cats[c], true, cur == c);
         cm.addSeparator();
         cm.addItem (999, T ("Bez kategorije"), true, cur < 0);
-        cm.addItem (998, T ("Izmeni kategorije..."));
+        if (! proc.isKontrolerLinked()) cm.addItem (998, T ("Izmeni kategorije..."));
         m.addSubMenu (T ("Kategorija"), cm, used);
     }
     m.addItem (2, T ("Snimi trenutni performans ovde"));
@@ -2775,6 +2782,8 @@ namespace
         CategoryEditor (LiveSamplerProcessor& p) : proc (p)
         {
             names = proc.getCategories();
+            colours = proc.getCategoryColours();
+            colours.resize ((size_t) names.size(), juce::Colour (0xff8a93a6));
             for (int i = 0; i < names.size(); ++i) origin.push_back (i);
 
             list.setModel (this);
@@ -2791,6 +2800,7 @@ namespace
             btn (addB, T ("Dodaj"), [this]
             {
                 names.add (T ("Nova kategorija"));
+                colours.push_back (juce::Colour (0xff8a93a6));
                 origin.push_back (-1);
                 list.updateContent();
                 list.selectRow (names.size() - 1);
@@ -2802,25 +2812,23 @@ namespace
                 const int r = list.getSelectedRow();
                 if (r < 0 || r >= names.size()) return;
                 names.remove (r);
+                colours.erase (colours.begin() + r);
                 origin.erase (origin.begin() + r);
                 list.updateContent();
                 list.repaint();
             });
             btn (upB, T ("Gore"), [this] { move (-1); });
             btn (downB, T ("Dole"), [this] { move (1); });
-            btn (kronosB, T ("Imena sa Kronosa (PCG)"), [this]
+            btn (kronosB, T ("Boja..."), [this] { pickColour (list.getSelectedRow()); });
+            btn (factoryB, T ("Kao Live Kontroler"), [this]
             {
-                // ista mesta (0-17) kao na Kronosu, samo imena se preuzimaju
-                auto* pcg = proc.getKronosPcg();
-                if (pcg == nullptr || pcg->combiCategories.size() != 18)
-                {
-                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Kategorije"),
-                        T ("Prvo učitaj PCG na stranici KRONOS."));
-                    return;
-                }
-                takeKronos (pcg->combiCategories);
+                names = LiveSamplerProcessor::defaultCategories();
+                colours = LiveSamplerProcessor::defaultCategoryColours();
+                origin.clear();
+                for (int k = 0; k < names.size(); ++k) origin.push_back (proc.getCategories().indexOf (names[k], true));
+                list.updateContent();
+                list.repaint();
             });
-            btn (factoryB, T ("Fabričke Kronos"), [this] { takeKronos (LiveSamplerProcessor::kronosDefaultCategories()); });
             btn (okB, "OK", [this]
             {
                 std::vector<int> remap ((size_t) proc.getCategories().size(), -1);
@@ -2829,7 +2837,7 @@ namespace
                         remap[(size_t) origin[(size_t) i]] = i;
                 juce::StringArray clean;
                 for (auto& n : names) clean.add (n.trim().isEmpty() ? T ("Bez imena") : n.trim());
-                proc.setCategories (clean, remap);
+                proc.setCategories (clean, colours, remap);
                 close();
             });
             btn (cancelB, T ("Otkaži"), [this] { close(); });
@@ -2869,9 +2877,14 @@ namespace
             g.setColour (Pal::dim);
             g.setFont (juce::FontOptions (12.0f));
             g.drawText (juce::String (row + 1).paddedLeft ('0', 2), 6, 0, 28, h, juce::Justification::centredLeft);
+            if (row < (int) colours.size())
+            {
+                g.setColour (colours[(size_t) row]);
+                g.fillRoundedRectangle (34.0f, 5.0f, 16.0f, (float) h - 10.0f, 3.0f);
+            }
             g.setColour (Pal::text);
             g.setFont (juce::FontOptions (14.0f));
-            g.drawText (names[row], 38, 0, w - 44, h, juce::Justification::centredLeft, true);
+            g.drawText (names[row], 58, 0, w - 64, h, juce::Justification::centredLeft, true);
         }
         void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { renameRow (row); }
 
@@ -2900,24 +2913,33 @@ namespace
             if (r < 0 || t < 0 || t >= names.size()) return;
             names.move (r, t);
             std::swap (origin[(size_t) r], origin[(size_t) t]);
+            std::swap (colours[(size_t) r], colours[(size_t) t]);
             list.selectRow (t);
             list.repaint();
         }
 
-        void takeKronos (const juce::StringArray& src)
+        void pickColour (int row)
         {
-            // mesto k ostaje mesto k (kao broj kategorije na Kronosu); visak se brise
-            juce::StringArray nn;
-            std::vector<int> oo;
-            for (int k = 0; k < src.size(); ++k)
+            if (row < 0 || row >= (int) colours.size()) return;
+            auto cs = std::make_unique<juce::ColourSelector> (juce::ColourSelector::showColourspace | juce::ColourSelector::showColourAtTop);
+            cs->setCurrentColour (colours[(size_t) row]);
+            cs->setSize (300, 280);
+            juce::Component::SafePointer<CategoryEditor> safe (this);
+            struct Listener : juce::ChangeListener
             {
-                nn.add (src[k].isNotEmpty() ? src[k] : "Category " + juce::String (k));
-                oo.push_back (k < proc.getCategories().size() ? k : -1);
-            }
-            names = nn;
-            origin = oo;
-            list.updateContent();
-            list.repaint();
+                juce::Component::SafePointer<CategoryEditor> ed; int row;
+                void changeListenerCallback (juce::ChangeBroadcaster* b) override
+                {
+                    if (ed == nullptr) return;
+                    if (auto* sel = dynamic_cast<juce::ColourSelector*> (b))
+                        if (row < (int) ed->colours.size()) { ed->colours[(size_t) row] = sel->getCurrentColour(); ed->list.repaint(); }
+                }
+            };
+            listener = std::make_unique<Listener>();
+            static_cast<Listener*> (listener.get())->ed = safe;
+            static_cast<Listener*> (listener.get())->row = row;
+            cs->addChangeListener (listener.get());
+            juce::CallOutBox::launchAsynchronously (std::move (cs), kronosB.getScreenBounds(), nullptr);
         }
 
         void close()
@@ -2929,9 +2951,55 @@ namespace
         LiveSamplerProcessor& proc;
         juce::StringArray names;
         std::vector<int> origin;        // za svaki red: stari indeks (-1 = nova)
+        std::vector<juce::Colour> colours;
+        std::unique_ptr<juce::ChangeListener> listener;
         juce::ListBox list;
         juce::TextButton addB, renB, delB, upB, downB, kronosB, factoryB, okB, cancelB;
     };
+}
+
+void ListsPage::categoriesMenu()
+{
+    juce::PopupMenu m;
+    if (proc.isKontrolerLinked())
+    {
+        m.addSectionHeader (T ("Povezano sa Live Kontrolerom"));
+        m.addItem (99, proc.getKontrolerFile().getFullPathName(), false);
+        m.addItem (1, T ("Sinhronizuj sada"));
+        m.addItem (2, T ("Izaberi drugi fajl Live Kontrolera..."));
+        m.addSeparator();
+        m.addItem (3, T ("Prekini vezu (kategorije uređujem ovde)"));
+    }
+    else
+    {
+        m.addItem (4, T ("Uredi kategorije..."));
+        m.addSeparator();
+        m.addItem (2, T ("Poveži sa Live Kontrolerom (iste kategorije i boje)..."));
+    }
+    juce::Component::SafePointer<ListsPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (categoriesButton), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& pr = safe->proc;
+        auto show = [] (const juce::String& t) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Live Kontroler"), t); };
+        if (r == 1) { juce::String rep; pr.syncKontroler (&rep); show (rep); }
+        if (r == 3) pr.linkKontroler ({});
+        if (r == 4) safe->editCategories();
+        if (r == 2)
+        {
+            auto start = pr.getKontrolerFile().existsAsFile() ? pr.getKontrolerFile() : LiveSamplerProcessor::defaultKontrolerFile();
+            safe->chooser = std::make_unique<juce::FileChooser> (T ("Live Kontroler podešavanja (podesavanja-server.json)"), start, "*.json");
+            safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                [safe, show] (const juce::FileChooser& fc)
+                {
+                    if (safe == nullptr || ! fc.getResult().existsAsFile()) return;
+                    safe->proc.linkKontroler (fc.getResult());
+                    juce::String rep;
+                    safe->proc.syncKontroler (&rep);
+                    show (rep);
+                });
+        }
+    });
 }
 
 void ListsPage::editCategories()

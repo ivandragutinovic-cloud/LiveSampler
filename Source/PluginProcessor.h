@@ -77,19 +77,25 @@ public:
     void setBankName (int b, const juce::String& n);
     void clearPerformanceSlot (int slot);
 
-    // kategorije performansa (kao Combi Category na Kronosu); mogu da se menjaju i dodaju
+    // kategorije performansa (iste kao Kronos kategorije u Live Kontroleru); performans pamti ime kategorije
     const juce::StringArray& getCategories() const { return categories; }
     // nova lista; remap[stari indeks] = novi indeks ili -1 (obrisana)
     void setCategories (const juce::StringArray& names, const std::vector<juce::Colour>& colours, const std::vector<int>& remap);
-    void setSlotCategory (int slot, int category);
+    void setSlotCategory (int slot, int category);          // -1 = bez kategorije
+    int categoryIndex (const Performance& p) const { return p.category.isEmpty() ? -1 : categories.indexOf (p.category, true); }
+
+    // veza sa Live Kontrolerom: prati se njegov podesavanja-server.json; promena boje / kategorije tamo menja i ovde
+    bool isKontrolerLinked() const { return kontrolerLinked; }
+    juce::File getKontrolerFile() const { return kontrolerFile; }
+    void linkKontroler (const juce::File& f);              // File() = prekini vezu
+    bool syncKontroler (juce::String* report = nullptr);
+    static juce::File defaultKontrolerFile();
     juce::String categoryName (int c) const { return c >= 0 && c < categories.size() ? categories[c] : juce::String(); }
     juce::Colour categoryColour (int c) const { return c >= 0 && c < (int) categoryColours.size() ? categoryColours[(size_t) c] : juce::Colour (0xff8a93a6); }
     const std::vector<juce::Colour>& getCategoryColours() const { return categoryColours; }
     static juce::StringArray defaultCategories();             // kao Kronos kategorije u Live Kontroleru
     static std::vector<juce::Colour> defaultCategoryColours();
-    // uvoz iz Live Kontrolera (live-kontroler-podesavanja.json): kategorije, boje i koji kombi ide gde
-    bool importLiveKontroler (const juce::File& f, juce::String& report);
-    int categoryForCombi (juce::uint32 bankId, int number) const;
+    juce::String categoryForCombi (juce::uint32 bankId, int number) const;
 
     // set liste (velika dugmad za svirku)
     const SetList& getSetList (int i) const { return setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)]; }
@@ -252,6 +258,10 @@ private:
     std::vector<juce::Colour> categoryColours { defaultCategoryColours() };
     bool categoriesEdited = false;
     std::map<juce::String, juce::String> combiCategoryMap;   // "bankId:broj" -> ime kategorije (iz Live Kontrolera)
+    bool kontrolerLinked = false, kontrolerChecked = false;
+    juce::File kontrolerFile;
+    juce::Time kontrolerTime;
+    int kontrolerTick = 0;
     std::array<SetList, kNumSetLists> setLists;
     int currentSetList = 0, setListPage = 0, currentSetListSlot = -1, pcMode = 0;
     bool perfDirty = false;
