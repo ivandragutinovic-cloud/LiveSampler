@@ -1,7 +1,9 @@
-# Pikaso Workstation: automatski skida i raspakuje najnoviju verziju direktno u Desktop\Pikaso Workstation.
+﻿# Pikaso Workstation: automatski skida i raspakuje najnoviju verziju direktno u Desktop\Pikaso Workstation.
 # (ime skripte ostaje LiveSampler-AutoUpdate.ps1 jer ga zakazani zadatak tako poziva)
 # Pokrece ga zakazani zadatak svakih 15 minuta; radi samo kad postoji nova verzija.
+param([switch]$Pokazi)   # -Pokazi: rucna provera (PROVERI NOVU VERZIJU.cmd), ispisuje sta radi
 $ErrorActionPreference = 'Stop'
+function Say($t) { if ($Pokazi) { Write-Host $t } }
 $repo    = 'ivandragutinovic-cloud/LiveSampler'
 $desktop = [Environment]::GetFolderPath('Desktop')
 $target  = Join-Path $desktop 'Pikaso Workstation'
@@ -19,10 +21,12 @@ try {
 
 try {
     $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/latest" -Headers $ua
-} catch { exit 0 }
+} catch { Say 'Ne mogu da proverim GitHub (internet?).'; exit 0 }
 
 $id = "$($rel.id)"
-if ((Test-Path $state) -and ((Get-Content $state -Raw).Trim() -eq $id)) { exit 0 }
+Say ("Najnovija verzija: " + $rel.published_at + "  -  " + $rel.body)
+if ((Test-Path $state) -and ((Get-Content $state -Raw).Trim() -eq $id)) { Say 'Vec imas najnoviju verziju.'; exit 0 }
+Say 'Skidam novu verziju...'
 
 # stari folder (Live Sampler) postaje Pikaso Workstation
 if ((Test-Path $oldDir) -and -not (Test-Path $target)) {
@@ -58,8 +62,10 @@ foreach ($old in 'LiveSampler-Windows.zip','KronosAutosampler-Windows.zip','Live
 
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 if ($locked) {
+    Say 'Neki program je otvoren (Pikaso Workstation ili Pikaso Autosampler): zatvori ga i pokreni proveru ponovo.'
     Set-Content -Path (Join-Path $target 'NOVA VERZIJA.txt') -Value ("Nova verzija ceka ($stamp): zatvori Pikaso Workstation / Pikaso Autosampler, instalira se sama za najvise 15 minuta.`r`n`r`n" + $rel.body)
     exit 0
 }
 Set-Content -Path $state -Value $id
+Say ('Instalirano u ' + $target)
 Set-Content -Path (Join-Path $target 'NOVA VERZIJA.txt') -Value ("Instalirano: $stamp`r`n`r`n" + $rel.body)
