@@ -152,6 +152,7 @@ void KronosEnv::start (const EnvSettings& e, double sampleRate)
     env = e;
     sr = sampleRate;
     level = e.start;
+    expRelease = false;
     enter (Attack, e.attackLevel, e.attackTime);
 }
 
@@ -166,10 +167,21 @@ void KronosEnv::release()
         return;
     }
     enter (Release, env.releaseLevel, env.releaseTime);
+    // ka tisini: -60 dB za releaseTime, ravnomerno po dB (linearni pad jacine je zvucao 2-3 puta duze nego na Kronosu)
+    expRelease = env.releaseLevel <= 1.0e-4f && level > 1.0e-4f;
+    if (expRelease)
+        relMul = std::pow (10.0, -3.0 / juce::jmax (1.0, (double) env.releaseTime * sr));
 }
 
 float KronosEnv::advance (int n)
 {
+    if (stage == Release && expRelease)
+    {
+        level = (float) (level * std::pow (relMul, (double) n));
+        remaining -= n;
+        if (remaining <= 0 || level < 1.0e-4f) { stage = Idle; level = 0.0f; }
+        return level;
+    }
     while (n > 0 && stage != Idle && stage != Sustain)
     {
         const int k = juce::jmin (n, remaining);

@@ -281,7 +281,8 @@ private:
     juce::ListBox folders;
     juce::TextButton addButton, removeButton, rescanButton, backupButton, restoreButton;
     juce::ToggleButton c3Toggle;
-    juce::Label info, backupStatus;
+    juce::Label info, backupStatus, velCurveLabel;
+    juce::ComboBox velCurveBox;
     void timerCallback() override;
     std::unique_ptr<juce::FileChooser> chooser;
 };

@@ -2211,6 +2211,17 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     backupStatus.setColour (juce::Label::textColourId, Pal::lcdText);
     addAndMakeVisible (backupStatus);
 
+    velCurveLabel.setText (T ("Kriva jačine (velocity) ulaza:"), juce::dontSendNotification);
+    velCurveLabel.setColour (juce::Label::textColourId, Pal::text);
+    addAndMakeVisible (velCurveLabel);
+    {
+        const char* names[] = { "Normalno (bez promene)", "Lakše 1", "Lakše 2", "Lakše 3", "Lakše 4", "Teže 1", "Teže 2" };
+        for (int i = 0; i < 7; ++i) velCurveBox.addItem (T (names[i]), i + 1);
+    }
+    velCurveBox.setTooltip (T ("Ako na Impulse-u (ili drugoj klavijaturi) moraš jače da pritiskaš nego na Kronosu, izaberi Lakše 1-4"));
+    velCurveBox.onChange = [this] { proc.setVelocityCurve (velCurveBox.getSelectedId() - 1); };
+    addAndMakeVisible (velCurveBox);
+
     c3Toggle.setButtonText (T ("C3 = MIDI 60 (Yamaha/Korg). Isključeno: C4 = 60"));
     c3Toggle.onClick = [this] { proc.setC3Is60 (c3Toggle.getToggleState()); };
     addAndMakeVisible (c3Toggle);
@@ -2238,6 +2249,7 @@ void SettingsPage::refresh()
     folders.updateContent();
     folders.repaint();
     c3Toggle.setToggleState (proc.getC3Is60(), juce::dontSendNotification);
+    velCurveBox.setSelectedId (proc.getVelocityCurve() + 1, juce::dontSendNotification);
     info.setText (T ("Svaki folder se pretražuje sa podfolderima: WAV folderi, Korg KMP i Kontakt NKI postaju instrumenti.\n"
                      "USB stick: ubaci ga, klikni \"Dodaj folder / USB\" i izaberi stick. Ako ga izvadiš i vratiš, klikni \"Osveži\".\n"
                      "Zvučna kartica i MIDI klavijatura: dugme Options u gornjem levom uglu prozora.\n\n"
@@ -2283,6 +2295,12 @@ void SettingsPage::resized()
     }
     r.removeFromTop (12);
     c3Toggle.setBounds (r.removeFromTop (28));
+    r.removeFromTop (6);
+    {
+        auto row = r.removeFromTop (28);
+        velCurveLabel.setBounds (row.removeFromLeft (220));
+        velCurveBox.setBounds (row.removeFromLeft (240).reduced (0, 1));
+    }
     r.removeFromTop (16);
     info.setBounds (r);
 }

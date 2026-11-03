@@ -64,6 +64,8 @@ private:
     double sr = 44100.0;
     Stage stage = Idle;
     float level = 0.0f, target = 0.0f, step = 0.0f;
+    bool expRelease = false;     // release ka nuli ide ravnomerno po dB (kao Kronos), ne po jacini
+    double relMul = 1.0;
     int remaining = 0;
 };
 

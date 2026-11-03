@@ -168,6 +168,17 @@ public:
     // novi prazan (inicijalizovan) performans na mestu u listi
     void initPerformanceSlot (int slot);
 
+    // kriva jacine (velocity) za MIDI ulaz: da isti udarac na Impulse-u zvuci kao na Kronosu
+    int getVelocityCurve() const { return velocityCurve.load(); }
+    void setVelocityCurve (int c) { velocityCurve = juce::jlimit (0, 6, c); markSave(); }
+    int shapeVelocity (int v) const
+    {
+        static const float gamma[] = { 1.0f, 0.85f, 0.7f, 0.58f, 0.48f, 1.25f, 1.5f };
+        const float g = gamma[juce::jlimit (0, 6, velocityCurve.load())];
+        if (v <= 0 || g == 1.0f) return v;
+        return juce::jlimit (1, 127, (int) std::round (127.0f * std::pow ((float) v / 127.0f, g)));
+    }
+
     // BACKUP: ceo projekat (useri, performansi, liste, set liste...) + svi semplovi koje useri koriste,
     // u jedan folder; na drugom racunaru "VRATI BACKUP" ga ucita
     bool startBackup (const juce::File& destFolder);
@@ -286,6 +297,7 @@ private:
     std::atomic<float> vectorX { 0.0f }, vectorY { 0.0f };
     std::atomic<int> vectorCcX { 16 }, vectorCcY { 17 }, learnVector { 0 };
     std::atomic<bool> vectorUiDirty { false };
+    std::atomic<int> velocityCurve { 0 };
     juce::StringArray categories { defaultCategories() };
     std::vector<juce::Colour> categoryColours { defaultCategoryColours() };
     bool categoriesEdited = false;

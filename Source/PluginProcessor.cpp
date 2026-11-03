@@ -78,6 +78,7 @@ void LiveSamplerProcessor::saveNow()
 
     root.setAttribute ("pcMode", pcMode);
     root.setAttribute ("vectorCcX", vectorCcX.load());
+    root.setAttribute ("velocityCurve", velocityCurve.load());
     root.setAttribute ("vectorCcY", vectorCcY.load());
     root.setAttribute ("currentSetList", currentSetList);
     root.setAttribute ("setListPage", setListPage);
@@ -182,6 +183,7 @@ void LiveSamplerProcessor::loadData()
 
     pcMode = juce::jlimit (0, 1, xml->getIntAttribute ("pcMode", 0));
     vectorCcX = juce::jlimit (0, 127, xml->getIntAttribute ("vectorCcX", 16));
+    velocityCurve = juce::jlimit (0, 6, xml->getIntAttribute ("velocityCurve", 0));
     vectorCcY = juce::jlimit (0, 127, xml->getIntAttribute ("vectorCcY", 17));
     currentSetList = juce::jlimit (0, kNumSetLists - 1, xml->getIntAttribute ("currentSetList", 0));
     setListPage = juce::jlimit (0, kSetListSlots / 16 - 1, xml->getIntAttribute ("setListPage", 0));
@@ -754,7 +756,8 @@ int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
     sb.ampEg.attackTime = 0.001f;
     sb.ampEg.sustain = 1.0f;
     const float rel = library.kronosTag (prog.exiKey, "release").getFloatValue();
-    sb.ampEg.releaseTime = juce::jlimit (0.03f, 12.0f, rel > 0.0f ? rel : 0.3f);
+    // izmereno je vreme do -30 dB; release ide do -60 dB ravnomerno po dB, pa je duplo
+    sb.ampEg.releaseTime = juce::jlimit (0.05f, 20.0f, rel > 0.0f ? rel * 2.0f : 0.4f);
     sb.filterType = FilterType::Off;
     // vise velocity slojeva: dinamika je vec snimljena, pa jacina malo zavisi od udarca
     const int tagLayers = library.kronosTag (prog.exiKey, "layers").getIntValue();
@@ -1890,7 +1893,7 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
 
     if (m.isNoteOn())
     {
-        routeNoteOn (ch, m.getNoteNumber(), m.getVelocity(), c);
+        routeNoteOn (ch, m.getNoteNumber(), shapeVelocity (m.getVelocity()), c);
     }
     else if (m.isNoteOff())
     {
