@@ -129,6 +129,7 @@ struct PerfPart
     float reverbSend = 0.2f, delaySend = 0.0f;
     bool terca = false;                 // ovaj deo dobija terce
     bool sustainPedal = true;
+    bool expression = true;             // prima Expression (CC11)
     int vectorDir = 0;                  // vector joystick: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y (kao VJS Assign na Kronosu)
     float vectorCenter = 1.0f;          // jacina u centru joysticka (0..1, Volume Center)
 };

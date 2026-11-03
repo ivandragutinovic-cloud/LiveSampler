@@ -314,6 +314,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("delay", (double) p.delaySend);
         x->setAttribute ("terca", p.terca);
         x->setAttribute ("sustain", p.sustainPedal);
+        x->setAttribute ("expression", p.expression);
         if (p.vectorDir != 0) { x->setAttribute ("vjs", p.vectorDir); x->setAttribute ("vjsCenter", (double) p.vectorCenter); }
     }
     return e;
@@ -355,6 +356,7 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.delaySend = (float) x->getDoubleAttribute ("delay", 0.0);
         p.terca = x->getBoolAttribute ("terca", false);
         p.sustainPedal = x->getBoolAttribute ("sustain", true);
+        p.expression = x->getBoolAttribute ("expression", true);
         p.vectorDir = juce::jlimit (0, 4, x->getIntAttribute ("vjs", 0));
         p.vectorCenter = (float) juce::jlimit (0.0, 1.0, x->getDoubleAttribute ("vjsCenter", 1.0));
     }

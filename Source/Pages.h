@@ -26,7 +26,7 @@ private:
 
     void showEq();
     void showPartMenu();
-    juce::TextButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton;
+    juce::TextButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton;
     ValueKnob volume, pan, reverb, delay;
     juce::Slider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
     juce::Label labels[7];

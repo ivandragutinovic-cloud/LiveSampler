@@ -117,6 +117,14 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     sustainButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.sustainPedal = sustainButton.getToggleState(); }); };
     addAndMakeVisible (sustainButton);
 
+    exprButton.setButtonText ("EXPR");
+    exprButton.setClickingTogglesState (true);
+    exprButton.setColour (juce::TextButton::buttonOnColourId, Pal::dim);
+    exprButton.getProperties().set ("fontSize", 12.0f);
+    exprButton.setTooltip (T ("Expression (CC11) utiče na ovaj deo"));
+    exprButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.expression = exprButton.getToggleState(); }); };
+    addAndMakeVisible (exprButton);
+
     refresh();
 }
 
@@ -334,6 +342,7 @@ void PartStrip::refresh()
     keyHigh.updateText();
     tercaButton.setToggleState (p.terca, juce::dontSendNotification);
     sustainButton.setToggleState (p.sustainPedal, juce::dontSendNotification);
+    exprButton.setToggleState (p.expression, juce::dontSendNotification);
     setAlpha (p.on ? 1.0f : 0.55f);
 }
 
@@ -418,8 +427,10 @@ void PartStrip::resized()
     }
     r.removeFromTop (4);
     auto toggles = r.removeFromTop (24);
-    tercaButton.setBounds (toggles.removeFromLeft (toggles.getWidth() / 2).reduced (1, 0));
-    sustainButton.setBounds (toggles.reduced (1, 0));
+    const int tw = toggles.getWidth() / 3;
+    tercaButton.setBounds (toggles.removeFromLeft (tw).reduced (1, 0));
+    sustainButton.setBounds (toggles.removeFromLeft (tw).reduced (1, 0));
+    exprButton.setBounds (toggles.reduced (1, 0));
 }
 
 //==============================================================================

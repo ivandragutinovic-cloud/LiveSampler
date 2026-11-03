@@ -70,6 +70,7 @@ namespace Kronos
         int transpose = 0, detuneCents = 0;
         int keyLow = 0, keyHigh = 127, velLow = 1, velHigh = 127;
         int send1 = 0, send2 = 0;
+        bool damper = true, footPedal = true;    // MIDI Filter: Damper (sustain), Foot Pedal (expression)
         int vectorDir = 0;                       // VJS Assign: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y
         int vectorCenter = 4;                    // Volume Center: 0..4 = 0/25/50/75/100%
     };

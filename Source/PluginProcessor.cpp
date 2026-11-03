@@ -828,6 +828,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         part.detuneCents = (float) tm.detuneCents;
         part.keyLow = juce::jmin (tm.keyLow, tm.keyHigh);
         part.vectorDir = c.vectorVolume ? tm.vectorDir : 0;
+        part.sustainPedal = tm.damper;       // MIDI Filter u kombiju
+        part.expression = tm.footPedal;
         part.vectorCenter = (float) tm.vectorCenter * 0.25f;
         part.keyHigh = juce::jmax (tm.keyLow, tm.keyHigh);
         part.velLow = juce::jmin (tm.velLow, tm.velHigh);
@@ -1904,6 +1906,12 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         const float v = juce::jlimit (-1.0f, 1.0f, ((float) m.getControllerValue() - 64.0f) / (m.getControllerValue() >= 64 ? 63.0f : 64.0f));
         (m.getControllerNumber() == vectorCcX.load() ? vectorX : vectorY) = v;
         vectorUiDirty = true;
+    }
+    else if (m.isControllerOfType (11))      // Expression: samo delovi kojima je ukljucen EXPR
+    {
+        const float v = (float) m.getControllerValue() / 127.0f;
+        for (auto& p : parts)
+            p.setExpression (v);
     }
     else if (m.isControllerOfType (1))
     {

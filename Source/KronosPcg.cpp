@@ -173,6 +173,8 @@ namespace Kronos
             tm.keyLow = b[38];
             tm.velHigh = juce::jlimit (1, 127, (int) b[40]);
             tm.velLow = juce::jlimit (1, 127, (int) b[41]);
+            tm.damper = (b[32] & 0x04) != 0;       // (Filter) Damper
+            tm.footPedal = (b[34] & 0x08) != 0;    // (Filter) Foot Pedal
             tm.vectorDir = juce::jlimit (0, 4, (int) (b[52] & 0x07));     // CombiAndSongTimbreSet.txt: VJS Assign
             tm.vectorCenter = juce::jlimit (0, 4, (int) ((b[52] >> 3) & 0x07));
         }

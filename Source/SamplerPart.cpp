@@ -239,6 +239,8 @@ void SamplerPart::beginBlock (const PartRuntime* runtime, int numSamples)
     const auto& p = cfg->part;
     float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb, -60.0f) : 0.0f;
     // vector joystick (Kronos Vector Volume): u centru jacina = Volume Center, ka svom smeru raste do 100%, na suprotnu stranu pada ka 0
+    if (p.expression)
+        g *= expression * expression;   // CC11 (kriva ~ 40 log10, kao GM / Kronos)
     if (cfg->vectorOn && p.vectorDir > 0)
     {
         const float a = p.vectorDir == 1 ? vecX : p.vectorDir == 2 ? -vecX : p.vectorDir == 3 ? vecY : -vecY;
