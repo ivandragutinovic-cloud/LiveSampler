@@ -1724,10 +1724,19 @@ private:
             if (sustained)
             {
                 ++sustainedCount;
-                // od kad se zvuk smirio (ostaje unutar 3 dB od kraja)
-                int settle = offB - 1;
-                while (settle > peakB && std::abs (20.0 * std::log10 (env[(size_t) settle] / endHold)) < 3.0) --settle;
-                hold = juce::jlimit (2.5, 10.0, (settle - onset) * 0.01 + 2.0);
+                // kad je zvuk prvi put stigao do nivoa na kome drzi (posle attack-a i decay-a).
+                // Envelopa se izravna na 300 ms, da vibrato / tremolo / LFO ne produze procenu.
+                // Posle toga treba jos samo mesta za loop (~1.5 s), pa drzanje ide 2-5 s, ne 10.
+                std::vector<double> sm ((size_t) offB, 0.0);
+                for (int b = 0; b < offB; ++b)
+                {
+                    double acc = 0; int cnt = 0;
+                    for (int k = juce::jmax (0, b - 15); k < juce::jmin (offB, b + 15); ++k, ++cnt) acc += env[(size_t) k];
+                    sm[(size_t) b] = acc / juce::jmax (1, cnt);
+                }
+                int settle = peakB;
+                while (settle < offB - 1 && std::abs (20.0 * std::log10 (sm[(size_t) settle] / endHold)) > 3.0) ++settle;
+                hold = juce::jlimit (2.0, 5.0, (settle - onset) * 0.01 + 1.8);
             }
             else
             {
