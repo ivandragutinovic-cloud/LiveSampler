@@ -150,6 +150,7 @@ struct Performance
     MasterSettings master;
     bool used = false;
     int category = -1;                  // indeks u listi kategorija (-1 = bez kategorije)
+    juce::String kronosSource;          // kombi sa Kronosa od kog je napravljen: "bankId:broj"
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static Performance fromXml (const juce::XmlElement&);
