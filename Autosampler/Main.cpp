@@ -139,7 +139,18 @@ public:
     MainComponent() : juce::Thread ("autosampler")
     {
         juce::Logger::writeToLog ("MainComponent: audio");
-        const auto err = deviceManager.initialise (2, 2, nullptr, true);
+        // podesavanja se pamte (%APPDATA%\\LiveSampler\\autosampler.settings)
+        {
+            juce::PropertiesFile::Options o;
+            o.applicationName = "autosampler";
+            o.filenameSuffix = ".settings";
+            o.folderName = "LiveSampler";
+            o.osxLibrarySubFolder = "Application Support";
+            props = std::make_unique<juce::PropertiesFile> (o);
+        }
+        auto savedAudio = props->getXmlValue ("audio");
+        const auto err = deviceManager.initialise (2, 2, savedAudio.get(), true);
+        if (savedAudio == nullptr) chooseKronosAudioInput();
         if (err.isNotEmpty()) juce::Logger::writeToLog ("audio greska: " + err);
         deviceManager.addAudioCallback (&recorder);
 
@@ -372,6 +383,7 @@ public:
         help.setJustificationType (juce::Justification::topLeft);
         addAndMakeVisible (help);
 
+        loadSettings();
         startTimerHz (10);
         updateInfo();
         setSize (1180, 880);
@@ -415,9 +427,67 @@ public:
 
     ~MainComponent() override
     {
+        saveSettings();
         stopThread (4000);
         if (midiIn != nullptr) midiIn->stop();
         deviceManager.removeAudioCallback (&recorder);
+    }
+
+    // audio ulaz: uredjaj cije ime sadrzi KRONOS (npr. "Line (2- KRONOS)")
+    void chooseKronosAudioInput()
+    {
+        auto setup = deviceManager.getAudioDeviceSetup();
+        if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+        {
+            type->scanForDevices();
+            for (auto& name : type->getDeviceNames (true))
+                if (name.containsIgnoreCase ("kronos"))
+                {
+                    setup.inputDeviceName = name;
+                    setup.useDefaultInputChannels = false;
+                    setup.inputChannels.clear();
+                    setup.inputChannels.setRange (0, 2, true);
+                    deviceManager.setAudioDeviceSetup (setup, true);
+                    break;
+                }
+        }
+    }
+
+    void saveSettings()
+    {
+        if (props == nullptr) return;
+        if (auto x = deviceManager.createStateXml()) props->setValue ("audio", x.get());
+        props->setValue ("channel", (int) channel.getValue());
+        props->setValue ("midiOut", midiOut.getText());
+        props->setValue ("midiIn", midiInBox.getText());
+        props->setValue ("folder", outFolder.getFullPathName());
+        props->setValue ("low", (int) lowNote.getValue());
+        props->setValue ("high", (int) highNote.getValue());
+        props->setValue ("step", (int) step.getValue());
+        props->setValue ("hold", hold.getValue());
+        props->setValue ("release", release.getValue());
+        props->saveIfNeeded();
+    }
+
+    void loadSettings()
+    {
+        channel.setValue (props->getIntValue ("channel", 1), juce::dontSendNotification);
+        lowNote.setValue (props->getIntValue ("low", (int) lowNote.getValue()), juce::dontSendNotification);
+        highNote.setValue (props->getIntValue ("high", (int) highNote.getValue()), juce::dontSendNotification);
+        step.setValue (props->getIntValue ("step", (int) step.getValue()), juce::dontSendNotification);
+        hold.setValue (props->getDoubleValue ("hold", hold.getValue()), juce::dontSendNotification);
+        release.setValue (props->getDoubleValue ("release", release.getValue()), juce::dontSendNotification);
+        const auto f = props->getValue ("folder");
+        if (f.isNotEmpty()) { outFolder = juce::File (f); folderLabel.setText (outFolder.getFullPathName(), juce::dontSendNotification); }
+        auto pick = [] (juce::ComboBox& b, const juce::String& name)
+        {
+            if (name.isEmpty()) return false;
+            for (int k = 0; k < b.getNumItems(); ++k)
+                if (b.getItemText (k) == name) { b.setSelectedItemIndex (k, juce::sendNotification); return true; }
+            return false;
+        };
+        pick (midiOut, props->getValue ("midiOut"));
+        pick (midiInBox, props->getValue ("midiIn"));
     }
 
     void paint (juce::Graphics& g) override
@@ -688,8 +758,7 @@ private:
         fileLabel.setText (f.getFullPathName() + "   (" + juce::String ((int) pcg->programs.size()) + " programa, "
                            + juce::String ((int) pcg->combis.size()) + " kombija, MIDI kanal Kronosa " + juce::String (pcg->globalChannel) + ")",
                            juce::dontSendNotification);
-        channel.setValue (pcg->globalChannel);
-        if (outFolder == juce::File())
+        if (outFolder == juce::File() || props->getValue ("folder").isEmpty())
         {
             outFolder = f.getParentDirectory().getChildFile ("KRONOS ROM");
             folderLabel.setText (outFolder.getFullPathName(), juce::dontSendNotification);
@@ -1290,6 +1359,7 @@ private:
         exiVels.clear();
         for (auto& n : needed) exiVels.push_back (n.exi || n.external ? exiVelocities (n) : std::vector<int> {});
         outFolder.createDirectory();
+        saveSettings();
         analyzeOnly = false;
         autoAnalyze = autoAnalyzeToggle.getToggleState();
         startButton.setButtonText ("STOP");
@@ -1725,6 +1795,7 @@ private:
     }
 
     //==========================================================================
+    std::unique_ptr<juce::PropertiesFile> props;
     juce::AudioDeviceManager deviceManager;
     Recorder recorder;
     std::unique_ptr<juce::MidiOutput> midi;
