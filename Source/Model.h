@@ -103,6 +103,7 @@ struct UserProgram
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;
 
     float send1 = 1.0f, send2 = 1.0f;   // koliko ovaj zvuk salje u reverb / delay (mnozi send dela)
+    juce::String kronosPcg, kronosSource;   // napravljen od Kronos programa: ime PCG fajla i "bankId:broj"
 
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;
@@ -157,6 +158,7 @@ struct Performance
     bool vectorOn = false;              // vector joystick menja jacinu delova (Enable Volume Control)
     bool vectorEqualPower = false;      // pretapanje bez pada jacine u sredini
     juce::String kronosSource;          // kombi sa Kronosa od kog je napravljen: "bankId:broj"
+    juce::String kronosPcg;             // ... iz kog PCG fajla (ime fajla)
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static Performance fromXml (const juce::XmlElement&);

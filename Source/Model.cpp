@@ -41,6 +41,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
 {
     auto e = std::make_unique<juce::XmlElement> ("User");
     e->setAttribute ("name", name);
+    if (kronosSource.isNotEmpty()) { e->setAttribute ("kronosPcg", kronosPcg); e->setAttribute ("kronosSource", kronosSource); }
     e->setAttribute ("voiceMode", voiceMode);
     e->setAttribute ("priority", priority);
     e->setAttribute ("portaOn", portaOn);
@@ -115,6 +116,8 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     UserProgram u;
     auto f = [&e] (const char* n, float def) { return (float) e.getDoubleAttribute (n, def); };
     u.name = e.getStringAttribute ("name", u.name);
+    u.kronosPcg = e.getStringAttribute ("kronosPcg");
+    u.kronosSource = e.getStringAttribute ("kronosSource");
     u.fxType = e.getIntAttribute ("fxType", 0);
     u.fxRate = f ("fxRate", u.fxRate);
     u.fxDepth = f ("fxDepth", u.fxDepth);
@@ -288,6 +291,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
     if (vectorEqualPower) e->setAttribute ("vectorEqualPower", true);
     if (category.isNotEmpty()) e->setAttribute ("categoryName", category);
     if (kronosSource.isNotEmpty()) e->setAttribute ("kronosSource", kronosSource);
+    if (kronosPcg.isNotEmpty()) e->setAttribute ("kronosPcg", kronosPcg);
     masterToXml (master, *e->createNewChildElement ("Master"));
 
     for (int i = 0; i < kNumParts; ++i)
@@ -329,6 +333,7 @@ Performance Performance::fromXml (const juce::XmlElement& e)
     perf.vectorEqualPower = e.getBoolAttribute ("vectorEqualPower", false);
     perf.category = e.getStringAttribute ("categoryName");
     perf.kronosSource = e.getStringAttribute ("kronosSource");
+    perf.kronosPcg = e.getStringAttribute ("kronosPcg");
     if (auto* m = e.getChildByName ("Master"))
         perf.master = masterFromXml (*m);
 

@@ -610,3 +610,8 @@ void LiveSamplerEditor::timerCallback()
     learnButton.setToggleState (proc.isLearning(), juce::dontSendNotification);
     learnButton.setButtonText (proc.isLearning() ? T ("PRITISNI...") : "LEARN");
 }
+
+void LiveSamplerEditor::armListWrite()
+{
+    if (listsPage != nullptr) listsPage->armWrite();
+}

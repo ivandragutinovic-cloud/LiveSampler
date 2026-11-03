@@ -51,6 +51,7 @@ public:
 
 private:
     LiveSamplerProcessor& proc;
+    LiveSamplerEditor& editor;
     juce::Label nameLabel, nameEdit;
     juce::OwnedArray<PartStrip> strips;
     KeyRangeView ranges;
@@ -58,7 +59,7 @@ private:
     int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
     // vector joystick (kao na Kronosu): ukljuci, equal power, XY polje, CC za X i Y (LEARN)
     std::unique_ptr<juce::Component> vectorPad;
-    juce::TextButton vectorOn, vectorEqual, vectorCcX, vectorCcY;
+    juce::TextButton vectorOn, vectorEqual, vectorCcX, vectorCcY, saveButton;
     void updateVectorButtons();
     int learnAxis = -1;
 };
@@ -263,7 +264,8 @@ private:
 //  PODESAVANJA: folderi (disk, USB), C3
 //==============================================================================
 class SettingsPage : public juce::Component,
-                     private juce::ListBoxModel
+                     private juce::ListBoxModel,
+                     private juce::Timer
 {
 public:
     explicit SettingsPage (LiveSamplerProcessor&);
@@ -277,9 +279,10 @@ private:
 
     LiveSamplerProcessor& proc;
     juce::ListBox folders;
-    juce::TextButton addButton, removeButton, rescanButton;
+    juce::TextButton addButton, removeButton, rescanButton, backupButton, restoreButton;
     juce::ToggleButton c3Toggle;
-    juce::Label info;
+    juce::Label info, backupStatus;
+    void timerCallback() override;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
@@ -344,6 +347,9 @@ private:
     void cellMenu (int index);
     void editCategories();
     void categoriesMenu();
+public:
+    void armWrite();            // SNIMI ukljucen: sledeci klik na mesto cuva trenutni performans
+private:
     std::unique_ptr<juce::FileChooser> chooser;
     bool passesFilter (const Performance& s) const;
 

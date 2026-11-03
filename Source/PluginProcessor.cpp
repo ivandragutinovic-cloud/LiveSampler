@@ -30,6 +30,7 @@ LiveSamplerProcessor::~LiveSamplerProcessor()
         saveNow();
     loadPool.removeAllJobs (true, 10000);
     if (kontrolerPusher != nullptr) kontrolerPusher->stopThread (3000);
+    if (backupThread != nullptr) backupThread->stopThread (10000);
 }
 
 bool LiveSamplerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -49,6 +50,7 @@ juce::File LiveSamplerProcessor::getDataFile() const
 
 void LiveSamplerProcessor::saveNow()
 {
+    if (restorePending) return;
     juce::XmlElement root ("LiveSamplerData");
     root.setAttribute ("version", 3);
     root.setAttribute ("c3Is60", c3Is60);
@@ -729,6 +731,8 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
     u.bendUp = juce::jlimit (0, 24, std::abs (q1.bendUp));
     u.bendDown = juce::jlimit (0, 24, std::abs (q1.bendDown));
 
+    u.kronosPcg = kronosFile.getFileName();
+    u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
     const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
     loadNeededInstruments();
     for (auto& os : users[(size_t) idx].osc)
@@ -772,6 +776,8 @@ int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
     u.send1 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend1) / 127.0f : 1.0f;
     u.send2 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend2) / 127.0f : 1.0f;
 
+    u.kronosPcg = kronosFile.getFileName();
+    u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
     const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
     loadNeededInstruments();
     requestInstrument (inst, nullptr);
@@ -795,6 +801,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
     auto p = perf;
     p.name = c.name.isNotEmpty() ? c.name : c.id();
     p.kronosSource = juce::String (c.bankId) + ":" + juce::String (c.number);
+    p.kronosPcg = kronosFile.getFileName();
     p.vectorOn = c.vectorVolume;
     p.vectorEqualPower = c.vectorEqualPower;
     p.category = {};
@@ -2098,4 +2105,193 @@ juce::AudioProcessorEditor* LiveSamplerProcessor::createEditor()
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new LiveSamplerProcessor();
+}
+
+
+//==============================================================================
+//  BACKUP / VRATI BACKUP
+//==============================================================================
+namespace
+{
+    const char* kBackupLib = "Pikaso Biblioteka";
+    const char* kBackupData = "Pikaso podaci.xml";
+
+    // "Kontakt Library/Gudaci/Violina" -> isti put, ali svaki deo kao ispravno ime foldera
+    juce::String legalPath (const juce::String& name)
+    {
+        juce::StringArray parts;
+        parts.addTokens (name.replaceCharacter ('\\', '/'), "/", "");
+        parts.removeEmptyStrings();
+        for (auto& p : parts) p = juce::File::createLegalFileName (p.trim());
+        return parts.joinIntoString ("/");
+    }
+}
+
+class BackupThread : public juce::Thread
+{
+public:
+    BackupThread (LiveSamplerProcessor& p, juce::File d, std::vector<UserProgram> u, juce::File dataFile)
+        : juce::Thread ("backup"), proc (p), dest (std::move (d)), users (std::move (u)), data (std::move (dataFile)) {}
+
+    void run() override
+    {
+        const auto lib = dest.getChildFile (kBackupLib);
+        lib.createDirectory();
+        juce::StringArray names;
+        for (auto& u : users)
+            for (auto& o : u.osc)
+                if (o.on && o.instrument.isNotEmpty()) names.addIfNotAlreadyThere (o.instrument);
+
+        int done = 0, failed = 0;
+        juce::StringArray problems;
+        for (auto& name : names)
+        {
+            if (threadShouldExit()) { setStatus (T ("Backup prekinut.")); return; }
+            setStatus (T ("Backup: semplovi ") + juce::String (done + 1) + "/" + juce::String (names.size()) + "  " + name);
+            if (! exportInstrument (name, lib.getChildFile (legalPath (name))))
+            {
+                ++failed;
+                problems.add (name);
+            }
+            ++done;
+        }
+
+        // podaci: imena instrumenata u userima pokazuju na kopije u "Pikaso Biblioteka"
+        if (auto xml = juce::XmlDocument::parse (data))
+        {
+            if (auto* us = xml->getChildByName ("Users"))
+                for (auto* u : us->getChildWithTagNameIterator ("User"))
+                    for (auto* o : u->getChildIterator())
+                        if (o->hasAttribute ("instrument") && o->getStringAttribute ("instrument").isNotEmpty())
+                            o->setAttribute ("instrument", juce::String (kBackupLib) + "/" + legalPath (o->getStringAttribute ("instrument")));
+            if (auto* f = xml->getChildByName ("Folders")) f->deleteAllChildElements();
+            xml->setAttribute ("kronosPcg", juce::String());
+            xml->writeTo (dest.getChildFile (kBackupData));
+        }
+        dest.getChildFile ("KAKO VRATITI.txt").replaceWithText (
+            "Pikaso Workstation backup (" + juce::Time::getCurrentTime().toString (true, true) + ")\r\n\r\n"
+            "Na drugom racunaru: Pikaso Workstation > PODESAVANJA > VRATI BACKUP i izaberi ovaj folder.\r\n"
+            "Folder moze da ostane gde jeste (USB disk, drugi disk...): semplovi se citaju iz '" + juce::String (kBackupLib) + "'.\r\n");
+        data.deleteFile();
+        setStatus (T ("Backup gotov: ") + juce::String (names.size() - failed) + T (" instrumenata u ") + dest.getFullPathName()
+                   + (failed > 0 ? T ("  (nije uspelo: ") + problems.joinIntoString (", ") + ")" : juce::String()));
+    }
+
+    juce::String status() const { const juce::ScopedLock sl (lock); return text; }
+
+private:
+    void setStatus (const juce::String& t) { const juce::ScopedLock sl (lock); text = t; }
+
+    // instrument (WAV, Korg, Kontakt...) se upisuje kao WAV folder sa mapom (zone, loop, start/end, jacina)
+    bool exportInstrument (const juce::String& name, const juce::File& folder)
+    {
+        auto inst = proc.library.loadInstrument (name, proc.getC3Is60(), false);
+        if (inst == nullptr || inst->samples.empty()) return false;
+        folder.createDirectory();
+        juce::WavAudioFormat wav;
+        Instrument out;
+        out.name = name;
+        out.type = SourceType::WavFolder;
+        out.source = folder;
+        out.zones = inst->zones;
+        juce::StringArray used;
+        for (auto& sp : inst->samples)
+        {
+            auto base = juce::File::createLegalFileName (juce::File (sp->id.replaceCharacter ('\\', '/')).getFileNameWithoutExtension());
+            if (base.isEmpty()) base = "sempl";
+            auto fileName = base + ".wav";
+            for (int k = 2; used.contains (fileName, true); ++k) fileName = base + " " + juce::String (k) + ".wav";
+            used.add (fileName);
+            auto light = std::make_shared<SampleData>();
+            light->id = fileName;
+            out.samples.push_back (light);
+
+            const auto f = folder.getChildFile (fileName);
+            if (! f.existsAsFile())
+            {
+                const int len = sp->buffer.getNumSamples();
+                const bool mono = sp->buffer.getNumChannels() < 2
+                               || juce::FloatVectorOperations::findMaximum (sp->buffer.getReadPointer (0), len) == juce::FloatVectorOperations::findMaximum (sp->buffer.getReadPointer (1), len)
+                                  && std::memcmp (sp->buffer.getReadPointer (0), sp->buffer.getReadPointer (1), sizeof (float) * (size_t) len) == 0;
+                std::unordered_map<juce::String, juce::String> meta;
+                if (sp->fileRootKey >= 0) meta["MidiUnityNote"] = juce::String (sp->fileRootKey);
+                if (sp->hasLoop && sp->loopEnd > sp->loopStart + 16)
+                {
+                    meta["NumSampleLoops"] = "1";
+                    meta["Loop0Type"] = "0";
+                    meta["Loop0Start"] = juce::String (sp->loopStart);
+                    meta["Loop0End"] = juce::String (sp->loopEnd - 1);
+                }
+                std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (f);
+                auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sp->sampleRate).withNumChannels (mono ? 1 : 2)
+                                                      .withBitsPerSample (24).withMetadataValues (meta));
+                if (w == nullptr) return false;
+                w->writeFromAudioSampleBuffer (sp->buffer, 0, len);
+            }
+        }
+        // presemplovan Kronos zvuk: oznaka (release, slojevi) ide uz semplove
+        if (inst->type == SourceType::WavFolder)
+            for (auto* tagName : { "kronos-ms.txt" })
+                if (auto t = inst->source.getChildFile (tagName); t.existsAsFile())
+                    t.copyFileTo (folder.getChildFile (tagName));
+        return out.saveMap();
+    }
+
+    LiveSamplerProcessor& proc;
+    juce::File dest;
+    std::vector<UserProgram> users;
+    juce::File data;
+    juce::CriticalSection lock;
+    juce::String text;
+};
+
+bool LiveSamplerProcessor::startBackup (const juce::File& destFolder)
+{
+    if (isBackupRunning() || ! destFolder.createDirectory()) return false;
+    saveNow();
+    const auto snapshot = destFolder.getChildFile ("podaci-original.tmp");
+    getDataFile().copyFileTo (snapshot);
+    backupThread = std::make_unique<BackupThread> (*this, destFolder, users, snapshot);
+    backupThread->startThread();
+    return true;
+}
+
+bool LiveSamplerProcessor::isBackupRunning() const { return backupThread != nullptr && backupThread->isThreadRunning(); }
+
+juce::String LiveSamplerProcessor::getBackupStatus() const
+{
+    if (auto* b = dynamic_cast<BackupThread*> (backupThread.get())) return b->status();
+    return {};
+}
+
+bool LiveSamplerProcessor::restoreBackup (const juce::File& backupFolder, juce::String& report)
+{
+    const auto dataFile = backupFolder.getChildFile (kBackupData);
+    auto xml = juce::XmlDocument::parse (dataFile);
+    if (xml == nullptr || ! xml->hasTagName ("LiveSamplerData"))
+    {
+        report = T ("U ovom folderu nema backup-a (fajl \"") + juce::String (kBackupData) + "\").";
+        return false;
+    }
+    // biblioteka iz backup-a + postojeci folderi ovog racunara
+    auto* folders = xml->getChildByName ("Folders");
+    if (folders == nullptr) folders = xml->createNewChildElement ("Folders");
+    folders->deleteAllChildElements();
+    folders->createNewChildElement ("Folder")->setAttribute ("path", backupFolder.getChildFile (kBackupLib).getFullPathName());
+    for (auto& f : libraryFolders)
+        if (f != backupFolder.getChildFile (kBackupLib))
+            folders->createNewChildElement ("Folder")->setAttribute ("path", f.getFullPathName());
+
+    // dosadasnji podaci ostaju sacuvani pored
+    const auto cur = getDataFile();
+    if (cur.existsAsFile())
+        cur.copyFileTo (cur.getSiblingFile ("LiveSampler-podaci pre vracanja " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M") + ".xml"));
+    if (! xml->writeTo (cur))
+    {
+        report = T ("Ne mogu da upišem podatke u ") + cur.getFullPathName();
+        return false;
+    }
+    restorePending = true;
+    report = T ("Backup je vraćen. Zatvori i ponovo pokreni Pikaso Workstation.\nDosadašnji podaci su sačuvani pored (LiveSampler-podaci pre vracanja ...xml).");
+    return true;
 }

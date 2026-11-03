@@ -504,7 +504,7 @@ void KeyRangeView::paint (juce::Graphics& g)
 //  PerformancePage
 //==============================================================================
 PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
-    : proc (p), ranges (p)
+    : proc (p), editor (e), ranges (p)
 {
     styleLabel (nameLabel, T ("IME PERFORMANSA"), 12.5f);
     addAndMakeVisible (nameLabel);
@@ -534,6 +534,12 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         pageButtons[b].onClick = [this, b] { page = b; resized(); refresh(); };
         addAndMakeVisible (pageButtons[b]);
     }
+
+    saveButton.setButtonText (T ("SAČUVAJ"));
+    saveButton.setColour (juce::TextButton::buttonColourId, Pal::red.withAlpha (0.8f));
+    saveButton.setTooltip (T ("Otvara LISTE spremne za snimanje: klikni mesto gde da se sačuva ovaj performans"));
+    saveButton.onClick = [this] { editor.showTab (LiveSamplerEditor::TabLists); editor.armListWrite(); };
+    addAndMakeVisible (saveButton);
 
     auto* pad = new Vector::Pad (proc);
     pad->onMove = [this] { for (auto* s : strips) s->repaint(); };
@@ -599,7 +605,9 @@ void PerformancePage::resized()
     auto r = getLocalBounds();
     auto top = r.removeFromTop (32);
     nameLabel.setBounds (top.removeFromLeft (140));
-    nameEdit.setBounds (top.removeFromLeft (360).reduced (0, 2));
+    nameEdit.setBounds (top.removeFromLeft (300).reduced (0, 2));
+    top.removeFromLeft (6);
+    saveButton.setBounds (top.removeFromLeft (90).reduced (1, 2));
     pageButtons[1].setBounds (top.removeFromRight (130).reduced (2, 2));
     pageButtons[0].setBounds (top.removeFromRight (130).reduced (2, 2));
     top.removeFromLeft (12);
@@ -2156,6 +2164,53 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     for (auto* b : { &addButton, &removeButton, &rescanButton })
         addAndMakeVisible (b);
 
+    backupButton.setButtonText (T ("BACKUP CELOG PROJEKTA..."));
+    backupButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
+    backupButton.setTooltip (T ("Useri, performansi, liste, set liste, terce, kategorije i SVI semplovi koje useri koriste, u jedan folder"));
+    backupButton.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> (T ("Folder za backup (npr. USB disk)"),
+                                                       juce::File::getSpecialLocation (juce::File::userDesktopDirectory), "*");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+            [this] (const juce::FileChooser& fc)
+            {
+                auto f = fc.getResult();
+                if (f == juce::File()) return;
+                const auto dest = f.getChildFile ("Pikaso backup " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M"));
+                if (! proc.startBackup (dest))
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Backup", T ("Ne mogu da napravim folder ") + dest.getFullPathName());
+                startTimerHz (4);
+            });
+    };
+    restoreButton.setButtonText (T ("VRATI BACKUP..."));
+    restoreButton.setTooltip (T ("Na drugom računaru: izaberi folder \"Pikaso backup ...\""));
+    restoreButton.onClick = [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> (T ("Izaberi folder \"Pikaso backup ...\""),
+                                                       juce::File::getSpecialLocation (juce::File::userDesktopDirectory), "*");
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+            [this] (const juce::FileChooser& fc)
+            {
+                const auto folder = fc.getResult();
+                if (! folder.isDirectory()) return;
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Vrati backup"),
+                    T ("Useri, performansi, liste i ostala podešavanja ovog računara biće zamenjeni onima iz backup-a:\n")
+                        + folder.getFullPathName() + T ("\n\nDosadašnji podaci se čuvaju pored, kao kopija."),
+                    T ("Vrati"), T ("Otkaži"), nullptr,
+                    juce::ModalCallbackFunction::create ([this, folder] (int ok)
+                    {
+                        if (ok == 0) return;
+                        juce::String rep;
+                        const bool done = proc.restoreBackup (folder, rep);
+                        juce::AlertWindow::showMessageBoxAsync (done ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, T ("Vrati backup"), rep);
+                    }));
+            });
+    };
+    for (auto* b : { &backupButton, &restoreButton }) addAndMakeVisible (b);
+    backupStatus.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    backupStatus.setColour (juce::Label::textColourId, Pal::lcdText);
+    addAndMakeVisible (backupStatus);
+
     c3Toggle.setButtonText (T ("C3 = MIDI 60 (Yamaha/Korg). Isključeno: C4 = 60"));
     c3Toggle.onClick = [this] { proc.setC3Is60 (c3Toggle.getToggleState()); };
     addAndMakeVisible (c3Toggle);
@@ -2190,6 +2245,13 @@ void SettingsPage::refresh()
                   juce::dontSendNotification);
 }
 
+void SettingsPage::timerCallback()
+{
+    backupStatus.setText (proc.getBackupStatus(), juce::dontSendNotification);
+    backupButton.setEnabled (! proc.isBackupRunning());
+    if (! proc.isBackupRunning()) stopTimer();
+}
+
 void SettingsPage::paint (juce::Graphics& g)
 {
     g.setColour (Pal::panel);
@@ -2211,6 +2273,15 @@ void SettingsPage::resized()
     btns.removeFromTop (6);
     rescanButton.setBounds (btns.removeFromTop (34));
     r.removeFromTop (16);
+    {
+        auto row = r.removeFromTop (34);
+        backupButton.setBounds (row.removeFromLeft (240));
+        row.removeFromLeft (8);
+        restoreButton.setBounds (row.removeFromLeft (170));
+        row.removeFromLeft (12);
+        backupStatus.setBounds (row);
+    }
+    r.removeFromTop (12);
     c3Toggle.setBounds (r.removeFromTop (28));
     r.removeFromTop (16);
     info.setBounds (r);
@@ -2352,7 +2423,8 @@ void KronosPage::setMode (bool combis)
     h.setColumnName (kcName, combis ? T ("Kombi") : T ("Program"));
     h.setColumnName (kcOsc1, combis ? T ("Timbre-i (Play)") : T ("OSC1 multisempl"));
     h.setColumnName (kcOsc2, combis ? T ("Fabrički (ROM)") : T ("OSC2 multisempl"));
-    h.setColumnName (kcState, combis ? T ("Kanal") : T ("User"));
+    h.setColumnName (kcState, combis ? T ("U listi / kanal") : T ("User"));
+    h.setColumnWidth (kcState, combis ? 220 : 150);
     h.setColumnWidth (kcOsc1, combis ? 520 : 260);
     h.setColumnWidth (kcOsc2, combis ? 120 : 260);
     onlyUser.setButtonText (combis ? T ("Samo kombiji sa mojim semplovima") : T ("Samo programi sa mojim semplovima"));
@@ -2436,6 +2508,43 @@ void KronosPage::loadCombiRow (int row)
     const auto& combi = pcg->combis[(size_t) rows[(size_t) row]];
     const auto skipped = proc.loadKronosCombi (combi, keepChannels.getToggleState());
     editor.showTab (LiveSamplerEditor::TabPerformance);
+
+    // odmah pitaj gde da se sacuva (prvo prazno mesto u trenutnoj listi)
+    {
+        const int bank = proc.getCurrentBank();
+        int firstFree = 0;
+        while (firstFree < kPerfPerBank && proc.getSlot (bank * kPerfPerBank + firstFree).used) ++firstFree;
+        auto* aw = new juce::AlertWindow (T ("Sačuvaj performans"),
+            T ("Kombi \"") + combi.name + T ("\" je učitan. Gde da ga sačuvam?"), juce::MessageBoxIconType::QuestionIcon);
+        juce::StringArray lists;
+        for (int b = 0; b < kNumPerfBanks; ++b) lists.add (juce::String (b + 1) + "  " + proc.getBankName (b));
+        aw->addComboBox ("list", lists, T ("Lista:"));
+        aw->getComboBoxComponent ("list")->setSelectedItemIndex (bank);
+        aw->addTextEditor ("slot", juce::String (juce::jmin (kPerfPerBank, firstFree + 1)), T ("Mesto (1-128):"));
+        aw->addButton (T ("Sačuvaj"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton (T ("Samo učitaj"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<KronosPage> safe (this);
+        aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw] (int r)
+        {
+            if (safe == nullptr || r != 1) return;
+            auto& pr = safe->proc;
+            const int list = aw->getComboBoxComponent ("list")->getSelectedItemIndex();
+            const int slot = list * kPerfPerBank + juce::jlimit (1, kPerfPerBank, aw->getTextEditorContents ("slot").getIntValue()) - 1;
+            auto store = [safe, slot, list]
+            {
+                if (safe == nullptr) return;
+                safe->proc.storePerformance (slot);
+                safe->proc.setCurrentBank (list);
+                safe->table.repaint();
+            };
+            if (pr.getSlot (slot).used)
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Sačuvaj performans"),
+                    T ("Na mestu ") + juce::String (list + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3)
+                        + T (" je \"") + pr.getSlot (slot).name + T ("\". Zameniti?"),
+                    T ("Zameni"), T ("Otkaži"), nullptr, juce::ModalCallbackFunction::create ([store] (int ok) { if (ok) store(); }));
+            else store();
+        }), true);
+    }
     if (skipped.isEmpty())
         return;
     bool rom = false;
@@ -2675,8 +2784,33 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                     const auto s = tm.channel == 0 || tm.channel == pcg->globalChannel ? juce::String ("Gch") : juce::String (tm.channel);
                     if (tm.play && ! ch.contains (s)) ch.add (s);
                 }
-                t = ch.joinIntoString (", ");
-                c = Pal::dim;
+                // gde je ovaj kombi u listama (po kombiju od kog je performans napravljen, ili po imenu)
+                const auto key = juce::String (cb.bankId) + ":" + juce::String (cb.number);
+                juce::StringArray where;
+                for (int sl = 0; sl < kNumPerfSlots && where.size() < 3; ++sl)
+                {
+                    const auto& ps = proc.getSlot (sl);
+                    // samo iz ovog PCG-a (stariji performansi bez oznake PCG-a: po kombiju ili imenu)
+                    const bool samePcg = ps.kronosPcg.isEmpty() || ps.kronosPcg == pcg->file.getFileName();
+                    if (ps.used && samePcg && (ps.kronosSource == key || (ps.kronosSource.isEmpty() && ps.name == cb.name)))
+                        where.add (juce::String (sl / kPerfPerBank + 1) + "-" + juce::String (sl % kPerfPerBank + 1).paddedLeft ('0', 3));
+                }
+                const auto& cur = proc.getPerformance();
+                if (where.isEmpty() && cur.kronosSource == key && (cur.kronosPcg.isEmpty() || cur.kronosPcg == pcg->file.getFileName()))
+                {
+                    t = T ("● učitan, nije sačuvan");
+                    c = Pal::accent;
+                }
+                else if (! where.isEmpty())
+                {
+                    t = T ("✓ ") + where.joinIntoString (", ") + "   " + ch.joinIntoString (", ");
+                    c = juce::Colour (0xff3ddc84);
+                }
+                else
+                {
+                    t = ch.joinIntoString (", ");
+                    c = Pal::dim;
+                }
                 break;
             }
             default: break;
@@ -2714,9 +2848,19 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
         }
         case kcState:
         {
-            const int u = proc.findUser (p.name);
-            t = u >= 0 ? T ("✓ napravljen") : "";
-            c = juce::Colour (0xff3ddc84);
+            // user napravljen od ovog programa iz ovog PCG-a (stariji useri bez oznake: po imenu)
+            const auto key = juce::String (p.bankId) + ":" + juce::String (p.number);
+            const auto pcgName = pcg->file.getFileName();
+            bool mine = false, otherPcg = false;
+            for (int u = 0; u < proc.getNumUsers(); ++u)
+            {
+                const auto& us = proc.getUser (u);
+                if (us.kronosSource == key && us.kronosPcg == pcgName) mine = true;
+                else if (us.kronosSource.isEmpty() && us.name == p.name) mine = true;
+                else if (us.name == p.name) otherPcg = true;
+            }
+            t = mine ? T ("✓ napravljen") : otherPcg ? T ("isto ime iz drugog PCG-a") : juce::String();
+            c = mine ? juce::Colour (0xff3ddc84) : Pal::dim;
             break;
         }
         default: break;
@@ -2852,6 +2996,12 @@ void ListsPage::refresh()
     repaint();
 }
 
+void ListsPage::armWrite()
+{
+    writeButton.setToggleState (true, juce::dontSendNotification);
+    repaint();
+}
+
 bool ListsPage::passesFilter (const Performance& s) const
 {
     const int id = catFilter.getSelectedId();
@@ -2957,6 +3107,17 @@ void ListsPage::cellMenu (int i)
     const int slot = proc.getCurrentBank() * kPerfPerBank + i;
     const bool used = proc.getSlot (slot).used;
     juce::PopupMenu m;
+    {
+        const auto& sp = proc.getSlot (slot);
+        if (used && sp.kronosSource.isNotEmpty())
+        {
+            // iz kog PCG-a (seta) i kog kombija je ovaj performans
+            const auto bankId = (juce::uint32) sp.kronosSource.upToFirstOccurrenceOf (":", false, false).getLargeIntValue();
+            const int num = sp.kronosSource.fromFirstOccurrenceOf (":", false, false).getIntValue();
+            m.addSectionHeader (T ("Iz: ") + (sp.kronosPcg.isNotEmpty() ? sp.kronosPcg : T ("Kronos PCG")) + "  "
+                                + Kronos::combiBankName (bankId) + " " + juce::String (num).paddedLeft ('0', 3));
+        }
+    }
     m.addItem (1, T ("Učitaj"), used);
     {
         juce::PopupMenu cm;

@@ -168,6 +168,14 @@ public:
     // novi prazan (inicijalizovan) performans na mestu u listi
     void initPerformanceSlot (int slot);
 
+    // BACKUP: ceo projekat (useri, performansi, liste, set liste...) + svi semplovi koje useri koriste,
+    // u jedan folder; na drugom racunaru "VRATI BACKUP" ga ucita
+    bool startBackup (const juce::File& destFolder);
+    bool isBackupRunning() const;
+    juce::String getBackupStatus() const;
+    bool restoreBackup (const juce::File& backupFolder, juce::String& report);
+    bool isRestorePending() const { return restorePending; }
+
     // vector joystick: X / Y dolaze kao MIDI CC (iPad, Impulse...), -1..1; LEARN uzima prvi CC koji stigne
     float getVectorX() const { return vectorX.load(); }
     float getVectorY() const { return vectorY.load(); }
@@ -286,6 +294,9 @@ private:
     friend class KontrolerPusher;
     std::unique_ptr<juce::Thread> kontrolerPusher;
     juce::String kontrolerStatus;
+    friend class BackupThread;
+    std::unique_ptr<juce::Thread> backupThread;
+    bool restorePending = false;   // backup vracen: ne snimaj preko njega dok se program ne pokrene ponovo
     bool kontrolerLinked = false, kontrolerChecked = false;
     juce::File kontrolerFile;
     juce::Time kontrolerTime;

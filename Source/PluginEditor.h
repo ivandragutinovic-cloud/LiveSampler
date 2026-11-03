@@ -98,6 +98,7 @@ public:
 
     enum Tab { TabPerformance = 0, TabSetList, TabLists, TabUser, TabMapping, TabTerce, TabEffects, TabKronos, TabSettings, NumTabs };
     void showTab (int tab);
+    void armListWrite();       // LISTE: SNIMI ukljucen (dugme SACUVAJ na PERFORMANS)
     void editUser (const juce::String& userName);            // otvori USER stranicu za ovog usera
     void editMapping (const juce::String& userName, int osc);
     void showMapping (bool show) { showTab (show ? TabMapping : TabPerformance); }
