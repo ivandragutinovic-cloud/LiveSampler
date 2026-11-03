@@ -822,8 +822,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
             skipped.add ("Timbre " + juce::String (t + 1) + ": "
                          + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
                          + (prog != nullptr && prog->exi ? " (EXi " + prog->engineText() + juce::String::fromUTF8 (" sinteza, nije presemplovana)")
-                            : prog != nullptr && prog->drumKit ? " (drum kit, još nije podržan)"
-                            : prog != nullptr && ! prog->usesUser() ? " (fabrički ROM, nije presemplovan)" : ""));
+                            : prog != nullptr && prog->drumKit ? T (" (drum kit, još nije podržan)")
+                            : prog != nullptr && ! prog->usesUser() ? T (" (fabrički ROM, nije presemplovan)") : juce::String()));
             continue;
         }
 

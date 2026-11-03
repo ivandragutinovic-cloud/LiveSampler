@@ -1086,7 +1086,7 @@ private:
             NeededMs hd; ensureKronosKind (hd);
             reply = sysexCall (body, 0x24, 2000);
             if (reply && reply->size() > 5 && (*reply)[5] != 0)
-                setStatus ("Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]));
+                setStatus (juce::String::fromUTF8 ("Kronos javlja grešku ") + juce::String::toHexString ((int) (*reply)[5]));
         }
         return true;
     }
@@ -1164,7 +1164,7 @@ private:
         }
         if (reply && reply->size() > 5 && (*reply)[5] != 0)
         {
-            err = "Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]) + juce::String::fromUTF8 (" za EXi program (") + n.programId + ")";
+            err = juce::String::fromUTF8 ("Kronos javlja grešku ") + juce::String::toHexString ((int) (*reply)[5]) + juce::String::fromUTF8 (" za EXi program (") + n.programId + ")";
             return false;
         }
         return true;

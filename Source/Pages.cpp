@@ -593,7 +593,7 @@ void PerformancePage::refresh()
         for (int i = b * 8; i < b * 8 + 8; ++i)
             any = any || (proc.getPerformance().parts[(size_t) i].on && proc.getPerformance().parts[(size_t) i].user.isNotEmpty());
         pageButtons[b].setToggleState (b == page, juce::dontSendNotification);
-        pageButtons[b].setButtonText (juce::String (b == 0 ? "DELOVI 1-8" : "DELOVI 9-16") + (any ? " ●" : ""));
+        pageButtons[b].setButtonText (juce::String (b == 0 ? "DELOVI 1-8" : "DELOVI 9-16") + (any ? juce::String::fromUTF8 (" \xe2\x97\x8f") : juce::String()));
     }
     ranges.repaint();
 }
@@ -2548,7 +2548,7 @@ void KronosPage::loadCombiRow (int row)
     if (skipped.isEmpty())
         return;
     bool rom = false;
-    for (auto& s : skipped) rom = rom || s.contains (T ("fabrički ROM")) || s.contains ("EXi ");
+    for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("presemplovan");
     const auto msg = T ("Ovi timbre-i nisu preneti:\n\n") + skipped.joinIntoString ("\n");
     if (! rom)
     {
@@ -2604,7 +2604,7 @@ void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
             ++slot;
             ++loaded;
             bool rom = false;
-            for (auto& s : skipped) rom = rom || s.contains (T ("fabrički ROM")) || s.contains ("EXi ");
+            for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("presemplovan");
             if (! skipped.isEmpty()) skippedAll.add (combi.id() + " " + combi.name + ": " + juce::String (skipped.size()) + " timbre");
             if (rom) { needSampling = true; args << " --combi " << juce::String (combi.bankId) << ":" << juce::String (combi.number); }
         }
