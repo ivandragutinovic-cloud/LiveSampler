@@ -1429,27 +1429,65 @@ private:
     // inace javlja "bank conflict". Zato se pre slanja izabere program odgovarajuceg tipa (Program Change).
     int lastKind = 0;   // 0 nepoznato, 1 HD-1, 2 EXi
 
-    void selectKronosProgram (juce::uint32 bankId, int number)
+    // trenutni program na Kronosu: ime i velicina (HD-1 = 3706 bajtova, EXi = 4960)
+    juce::String readCurrentProgram (int& size)
     {
-        // Kronos bank select za programe: CC0 = 0, CC32: INT-A..F = 0..5, USER-A..G = 8..14, USER-AA..GG = 15..21
-        const int hi = (int) (bankId >> 16), lo = (int) (bankId & 0xffff);
-        int lsb = -1;
-        if (hi == 0 && lo <= 5) lsb = lo;
-        if (hi == 2 && lo <= 13) lsb = 8 + lo;
-        if (lsb < 0 || number < 0 || number > 127) return;
-        const int ch = settings.channel;
-        sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
-        send (juce::MidiMessage::controllerEvent (ch, 0, 0));
-        send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
-        send (juce::MidiMessage::programChange (ch, number));
-        wait (700);
+        size = 0;
+        auto r = sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x74, 0x00 }, 0x75, 2000);
+        if (! r || r->size() < 8) return {};
+        const auto dec = unpack7 (r->data() + 6, (int) r->size() - 6);
+        size = (int) dec.size();
+        juce::String nm;
+        for (int k = 0; k < 24 && k < (int) dec.size() && dec[(size_t) k] != 0; ++k) nm << (juce::juce_wchar) dec[(size_t) k];
+        return nm.trim();
     }
 
-    void ensureKronosKind (const NeededMs& n)
+    int userBankBase = -1;   // CC32 za USER-A (8 ili 6, zavisi od Kronosa); nadje se proverom imena programa
+
+    // izaberi program na Kronosu (Bank Select + Program Change) i proveri da je stvarno izabran (ime i vrsta)
+    bool selectKronosProgram (juce::uint32 bankId, int number, const juce::String& expectedName, bool wantExi)
+    {
+        const int hi = (int) (bankId >> 16), lo = (int) (bankId & 0xffff);
+        std::vector<int> lsbs;
+        if (hi == 0 && lo <= 6) lsbs.push_back (lo);
+        if (hi == 2)
+        {
+            if (userBankBase >= 0) lsbs.push_back (userBankBase + lo);
+            for (int base : { 8, 6, 7 }) if (base != userBankBase) lsbs.push_back (base + lo);
+        }
+        if (lsbs.empty() || number < 0 || number > 127) return false;
+        const int ch = settings.channel;
+        sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
+        for (int lsb : lsbs)
+        {
+            send (juce::MidiMessage::controllerEvent (ch, 0, 0));
+            send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
+            send (juce::MidiMessage::programChange (ch, number));
+            // Kronos-u treba malo vremena da ucita program (EXi duze)
+            for (int t = 0; t < 8 && ! threadShouldExit(); ++t)
+            {
+                wait (500);
+                int size = 0;
+                const auto nm = readCurrentProgram (size);
+                const bool isExi = size >= 4900;
+                if (size > 0 && isExi == wantExi && (expectedName.isEmpty() || nm.equalsIgnoreCase (expectedName.trim())))
+                {
+                    if (hi == 2) userBankBase = lsb - lo;
+                    return true;
+                }
+                if (size > 0 && ! nm.equalsIgnoreCase (expectedName.trim()) && t >= 2) break;   // izabran je neki drugi program: probaj drugi CC32
+            }
+        }
+        return false;
+    }
+
+    // Kronos prima program istog tipa kao banka u kojoj je; vraca false ako nije uspelo da prebaci
+    bool ensureKronosKind (const NeededMs& n, juce::String* err = nullptr)
     {
         const int kind = n.exi ? 2 : 1;
-        if (kind == lastKind || pcg == nullptr) return;
-        if (n.exi) selectKronosProgram (n.progBank, n.progNum);
+        if (kind == lastKind || pcg == nullptr) return true;
+        bool ok = false;
+        if (n.exi) ok = selectKronosProgram (n.progBank, n.progNum, n.usedBy, true);
         else
         {
             // HD-1 program: "Init..." iz PCG-a, inace prvi HD-1 program
@@ -1457,15 +1495,28 @@ private:
             for (auto& p : pcg->programs)
                 if (p.hd1 && ! p.drumKit && (pick == nullptr || (p.name.startsWithIgnoreCase ("init") && ! pick->name.startsWithIgnoreCase ("init"))))
                     pick = &p;
-            if (pick != nullptr) selectKronosProgram (pick->bankId, pick->number);
+            if (pick != nullptr) ok = selectKronosProgram (pick->bankId, pick->number, pick->name, false);
         }
-        lastKind = kind;
+        if (! ok)
+        {
+            // mozda je Kronos vec u pravoj vrsti banke
+            int size = 0;
+            readCurrentProgram (size);
+            ok = size > 0 && (size >= 4900) == n.exi;
+        }
+        if (ok) lastKind = kind;
+        else if (err != nullptr)
+            *err = juce::String::fromUTF8 ("Kronos nije prešao na ") + (n.exi ? "EXi" : "HD-1")
+                 + juce::String::fromUTF8 (" program. Proveri na Kronosu GLOBAL > MIDI: da prima Program Change i Bank Change (filteri uključeni), "
+                                           "i da je PCG isti kao na Kronosu. Ili ručno izaberi ")
+                 + (n.exi ? juce::String::fromUTF8 ("bilo koji EXi program (npr. INT-A 000)") : juce::String::fromUTF8 ("Init Program (HD-1)")) + ".";
+        return ok;
     }
 
     bool selectJob (const NeededMs& n, juce::String& err, bool& fatal)
     {
         fatal = false;
-        if (! n.external) ensureKronosKind (n);
+        if (! n.external && ! ensureKronosKind (n, &err)) return false;
         if (n.external)
         {
             const int ch = settings.channel;
