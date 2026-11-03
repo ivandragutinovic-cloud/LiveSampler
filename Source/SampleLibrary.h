@@ -87,6 +87,8 @@ public:
 
     const juce::StringArray& getInstrumentNames() const { return names; }
     bool contains (const juce::String& name) const { const juce::ScopedLock sl (lock); return entries.count (name) > 0; }
+    // folder / fajl instrumenta na disku (prazno ako ga nema)
+    juce::File instrumentFile (const juce::String& name) const { const juce::ScopedLock sl (lock); auto it = entries.find (name); return it != entries.end() ? it->second.file : juce::File(); }
     static juce::String rootLabel (const juce::File& root);
 
     // Kronos: instrument za multisempl broj 'index' iz KSC kolekcije sa datim UUID-om

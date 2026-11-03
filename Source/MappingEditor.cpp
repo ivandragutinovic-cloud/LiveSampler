@@ -294,7 +294,27 @@ WaveEditor::WaveEditor()
     autoAllButton.setButtonText (T ("AUTO LOOP SVE ZONE"));
     autoAllButton.setTooltip (T ("Auto loop za sve zone ovog instrumenta (zvuci koji ne drže ostaju bez loop-a)"));
     autoAllButton.onClick = [this] { if (onAutoAll) onAutoAll(); };
-    for (auto* b : { &autoButton, &autoAllButton }) { b->getProperties().set ("fontSize", 12.0f); addAndMakeVisible (b); }
+    autoStartButton.setButtonText (T ("AUTO START"));
+    autoStartButton.setTooltip (T ("Start na početak tona (odseca tišinu i šum pre tona)"));
+    autoStartButton.onClick = [this]
+    {
+        if (sample == nullptr) return;
+        auto np = pts;
+        np.start = AutoLoop::findOnset (sample->buffer, sample->buffer.getNumSamples(), sample->sampleRate);
+        if (np.loop && np.start >= np.loopStart) np.start = 0;
+        apply (np, true);
+    };
+    autoStartAllButton.setButtonText (T ("AUTO START SVE ZONE"));
+    autoStartAllButton.setTooltip (T ("Za sve zone: start na početak tona (npr. tihe jačine koje kasne)"));
+    autoStartAllButton.onClick = [this] { if (onAutoStartAll) onAutoStartAll(); };
+    vPlus.setButtonText (T ("Visina +"));
+    vMinus.setButtonText (T ("Visina -"));
+    vFit.setButtonText (T ("Visina auto"));
+    vPlus.setTooltip (T ("Zum talasa po visini (ili Ctrl + točkić)"));
+    vPlus.onClick = [this] { vZoom = juce::jlimit (1.0f, 1000.0f, vZoom * 2.0f); repaint(); };
+    vMinus.onClick = [this] { vZoom = juce::jlimit (1.0f, 1000.0f, vZoom * 0.5f); repaint(); };
+    vFit.onClick = [this] { fitHeight(); repaint(); };
+    for (auto* b : { &autoButton, &autoAllButton, &autoStartButton, &autoStartAllButton, &vPlus, &vMinus, &vFit }) { b->getProperties().set ("fontSize", 12.0f); addAndMakeVisible (b); }
 
     auto setupMs = [this] (juce::Slider& s, juce::Label& l, const juce::String& name, double lo, double hi, double def)
     {
@@ -512,7 +532,7 @@ void WaveEditor::paint (juce::Graphics& g)
 
     const auto* d = sample->buffer.getReadPointer (0);
     const int len = sample->buffer.getNumSamples();
-    const float cy = (float) a.getCentreY(), hh = a.getHeight() * 0.46f;
+    const float cy = (float) a.getCentreY(), hh = a.getHeight() * 0.46f * vZoom;
 
     // oblik talasa (min/max po pikselu)
     auto drawWave = [&] (juce::Colour c)
@@ -528,7 +548,9 @@ void WaveEditor::paint (juce::Graphics& g)
             float mn = 1.0f, mx = -1.0f;
             const int step = juce::jmax (1, (i1 - i0) / 64);
             for (int i = i0; i < i1; i += step) { mn = juce::jmin (mn, d[i]); mx = juce::jmax (mx, d[i]); }
-            g.drawVerticalLine (px, cy - mx * hh, cy - mn * hh + 1.0f);
+            const float top = juce::jlimit ((float) a.getY(), (float) a.getBottom(), cy - mx * hh);
+            const float bot = juce::jlimit ((float) a.getY(), (float) a.getBottom(), cy - mn * hh + 1.0f);
+            g.drawVerticalLine (px, top, juce::jmax (top + 1.0f, bot));
         }
     };
 
@@ -587,7 +609,8 @@ void WaveEditor::paint (juce::Graphics& g)
 
     g.setColour (Pal::dim);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText (juce::String (len / sample->sampleRate, 2) + " s  |  " + juce::String (len) + T (" semplova"),
+    g.drawText ((vZoom > 1.01f ? T ("visina x") + juce::String (vZoom, 1) + "  |  " : juce::String())
+                + juce::String (len / sample->sampleRate, 2) + " s  |  " + juce::String (len) + T (" semplova"),
                 a.reduced (6, 2), juce::Justification::bottomRight);
 }
 
@@ -608,6 +631,11 @@ void WaveEditor::resized()
     auto row2 = getLocalBounds().withTrimmedTop (31).removeFromTop (28);
     autoButton.setBounds (row2.removeFromLeft (100).reduced (1, 2));
     autoAllButton.setBounds (row2.removeFromLeft (150).reduced (1, 2));
+    autoStartButton.setBounds (row2.removeFromLeft (90).reduced (1, 2));
+    autoStartAllButton.setBounds (row2.removeFromLeft (150).reduced (1, 2));
+    vFit.setBounds (row2.removeFromRight (90).reduced (1, 2));
+    vPlus.setBounds (row2.removeFromRight (70).reduced (1, 2));
+    vMinus.setBounds (row2.removeFromRight (70).reduced (1, 2));
     row2.removeFromLeft (6);
     for (auto [l, s] : { std::pair<juce::Label*, juce::Slider*> { &xfadeLabel, &xfadeMs }, { &minLabel, &minLoopMs }, { &maxLabel, &maxLoopMs } })
     {
@@ -667,10 +695,27 @@ void WaveEditor::mouseMove (const juce::MouseEvent& e)
     setMouseCursor (markerAt ((float) e.x) != None ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
 }
 
+void WaveEditor::fitHeight()
+{
+    if (sample == nullptr) return;
+    const int len = sample->buffer.getNumSamples();
+    const int i0 = juce::jlimit (0, len, (int) viewStart), i1 = juce::jlimit (i0, len, (int) (viewStart + viewLen));
+    float pk = 0;
+    for (int c = 0; c < juce::jmin (2, sample->buffer.getNumChannels()); ++c)
+        if (i1 > i0) pk = juce::jmax (pk, sample->buffer.getMagnitude (c, i0, i1 - i0));
+    vZoom = pk > 1.0e-6f ? juce::jlimit (1.0f, 1000.0f, 0.95f / pk) : 1.0f;
+}
+
 void WaveEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
     if (sample == nullptr) return;
     const double factor = w.deltaY > 0 ? 0.8 : 1.25;
+    if (e.mods.isCtrlDown() || e.mods.isCommandDown())   // Ctrl + tockic: zum po visini
+    {
+        vZoom = juce::jlimit (1.0f, 1000.0f, vZoom * (w.deltaY > 0 ? 1.25f : 0.8f));
+        repaint();
+        return;
+    }
     if (loopView)
     {
         seamHalf = juce::jlimit (16, 48000, (int) std::round (seamHalf * factor));
@@ -724,6 +769,23 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         commit (z, true);
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto loop",
             T ("Loop nađen za ") + juce::String (found) + T (" od ") + juce::String (total) + T (" zona. Sačuvaj mapu dugmetom Sačuvaj."));
+    };
+    waveEditor.onAutoStartAll = [this]
+    {
+        if (inst == nullptr) return;
+        auto z = zones;
+        int changed = 0;
+        for (auto& zz : z)
+        {
+            if (zz.sample < 0 || zz.sample >= (int) inst->samples.size()) continue;
+            const auto& s = *inst->samples[(size_t) zz.sample];
+            int st = AutoLoop::findOnset (s.buffer, s.buffer.getNumSamples(), s.sampleRate);
+            if (zz.loop && st >= zz.loopStart) st = 0;
+            if (st != zz.sampleStart) { zz.sampleStart = juce::jmax (1, st); ++changed; }
+        }
+        commit (z, true);
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto start",
+            T ("Start pomeren na početak tona za ") + juce::String (changed) + T (" zona. Sačuvaj mapu dugmetom Sačuvaj."));
     };
     waveEditor.onChange = [this] (const WaveEditor::Points& p, bool)
     {

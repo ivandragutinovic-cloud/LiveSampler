@@ -1720,10 +1720,7 @@ private:
         if (peak < 0.0005f) return false;   // tisina (nota van opsega multisempla)
 
         // isecanje tisine na pocetku (ostavi 2 ms) i na kraju, kratki fade na kraju
-        const float thr = juce::jmax (0.0003f, peak * 0.002f);
-        int start = 0;
-        while (start < len && std::abs (buf.getSample (0, start)) < thr && std::abs (buf.getSample (1, start)) < thr) ++start;
-        start = juce::jmax (0, start - (int) (sr * 0.002));
+        int start = AutoLoop::findOnset (buf, len, sr);     // tisina / sum pre tona se odseca (i kod tihih jacina)
         int end = len;
         const float endThr = peak * 0.0003f;
         while (end > start + 64 && std::abs (buf.getSample (0, end - 1)) < endThr && std::abs (buf.getSample (1, end - 1)) < endThr) --end;

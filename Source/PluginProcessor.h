@@ -157,6 +157,14 @@ public:
     }
     int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
     int createUserFromKronosExi (const Kronos::Program& p);
+    // velocity slojevi presemplovanog zvuka (iz imena fajlova "060 v127.wav"): jacine od najjace
+    std::vector<int> velocityLayersOf (const juce::String& instrument) const;
+    // brise jedan velocity sloj sa diska; susedni sloj preuzima njegov opseg (i u mapi i u MS-ovima usera)
+    bool deleteVelocityLayer (int userIndex, int oscIndex, juce::String& report);
+    // jedan MS sa vise slojeva -> svaki sloj na svoj MS u istom OSC-u
+    bool splitVelocityLayers (int userIndex, int oscIndex, juce::String& report);
+    // novi prazan (inicijalizovan) performans na mestu u listi
+    void initPerformanceSlot (int slot);
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)

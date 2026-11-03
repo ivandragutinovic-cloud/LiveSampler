@@ -60,6 +60,7 @@ public:
     // finished = pusten mis / upisana vrednost (za undo)
     std::function<void (const Points&, bool finished)> onChange;
     std::function<void()> onAutoAll;        // auto loop za sve zone instrumenta
+    std::function<void()> onAutoStartAll;   // auto start (odseci tisinu pre tona) za sve zone
     AutoLoop::Settings autoSettings() const;
     void runAutoLoop();
 
@@ -92,7 +93,10 @@ private:
     double panStartView = 0.0;
     float panStartX = 0.0f;
 
-    juce::TextButton sampleMode, loopMode, fitButton, autoButton, autoAllButton;
+    juce::TextButton sampleMode, loopMode, fitButton, autoButton, autoAllButton, autoStartButton, autoStartAllButton;
+    juce::TextButton vPlus, vMinus, vFit;
+    float vZoom = 1.0f;                         // zum po visini (1 = ceo opseg)
+    void fitHeight();
     juce::Slider xfadeMs, minLoopMs, maxLoopMs;
     juce::Label xfadeLabel, minLabel, maxLabel, autoInfo;
     juce::ToggleButton loopToggle, zeroToggle;

@@ -745,13 +745,21 @@ int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
     sb.ampEg.releaseTime = juce::jlimit (0.03f, 12.0f, rel > 0.0f ? rel : 0.3f);
     sb.filterType = FilterType::Off;
     // vise velocity slojeva: dinamika je vec snimljena, pa jacina malo zavisi od udarca
-    const int layers = library.kronosTag (prog.exiKey, "layers").getIntValue();
-    sb.velSens = layers > 1 ? 0.25f : 0.6f;
+    const int tagLayers = library.kronosTag (prog.exiKey, "layers").getIntValue();
+    sb.velSens = tagLayers > 1 ? 0.25f : 0.6f;
 
-    auto& os = u.osc[0];
-    os.on = true;
-    os.instrument = inst;
-    os.block = 0;
+    // svaki velocity sloj ide na svoj MS (MS1 = najjaci, kao na Kronosu), da moze posebno da se podesi ili obrise
+    auto layers = velocityLayersOf (inst);
+    if (layers.size() < 2 || layers.size() > (size_t) kMsPerOsc) layers = { 127 };
+    for (size_t k = 0; k < layers.size(); ++k)
+    {
+        auto& os = u.osc[k];
+        os.on = true;
+        os.instrument = inst;
+        os.block = 0;
+        os.velHigh = k == 0 ? 127 : layers[k];
+        os.velLow = k + 1 < layers.size() ? layers[k + 1] + 1 : 1;
+    }
 
     u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
     u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
@@ -956,6 +964,153 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     rebuildConfig();
     loadNeededInstruments();
     sendChangeMessage();
+}
+
+void LiveSamplerProcessor::initPerformanceSlot (int slot)
+{
+    if (slot < 0 || slot >= kNumPerfSlots) return;
+    auto p = Performance::makeDefault (users.empty() ? juce::String() : users[0].name);
+    p.name = "Init";
+    p.used = true;
+    slots[(size_t) slot] = p;
+    markSave();
+    sendChangeMessage();
+    kontrolerChanged();
+}
+
+std::vector<int> LiveSamplerProcessor::velocityLayersOf (const juce::String& instrument) const
+{
+    std::vector<int> out;
+    const auto dir = library.instrumentFile (instrument);
+    if (! dir.isDirectory()) return out;
+    for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.wav"))
+    {
+        int note = -1, layer = 0;
+        if (SampleLibrary::parseFileName (f.getFileNameWithoutExtension(), true, note, layer) && layer > 0 && layer <= 127
+            && std::find (out.begin(), out.end(), layer) == out.end())
+            out.push_back (layer);
+    }
+    std::sort (out.begin(), out.end(), std::greater<int>());
+    if (! out.empty() && out.front() <= 16) out.clear();     // brojevi slojeva (v1, v2...), ne jacine
+    return out;
+}
+
+bool LiveSamplerProcessor::splitVelocityLayers (int userIndex, int oscIndex, juce::String& report)
+{
+    if (userIndex < 0 || userIndex >= (int) users.size() || oscIndex < 0 || oscIndex >= kNumOsc) return false;
+    auto user = users[(size_t) userIndex];
+    const auto src = user.osc[(size_t) oscIndex];
+    const auto layers = velocityLayersOf (src.instrument);
+    if (layers.size() < 2) { report = T ("Ovaj zvuk ima samo jedan velocity sloj."); return false; }
+    if (layers.size() > (size_t) kMsPerOsc) { report = T ("Previše slojeva za jedan OSC (najviše 8)."); return false; }
+    const int block = oscIndex / kMsPerOsc;
+    for (int m = 0; m < kMsPerOsc; ++m)
+    {
+        const auto& o = user.osc[(size_t) (block * kMsPerOsc + m)];
+        if (block * kMsPerOsc + m != oscIndex && o.on && o.instrument != src.instrument)
+        {
+            report = T ("U ovom OSC-u ima i drugih MS-ova. Napravi slojeve u praznom OSC-u (kopiraj MS tamo).");
+            return false;
+        }
+    }
+    for (int m = 0; m < kMsPerOsc; ++m)
+    {
+        auto& o = user.osc[(size_t) (block * kMsPerOsc + m)];
+        if (m < (int) layers.size())
+        {
+            o = src;
+            o.velHigh = m == 0 ? 127 : layers[(size_t) m];
+            o.velLow = m + 1 < (int) layers.size() ? layers[(size_t) m + 1] + 1 : 1;
+        }
+        else { o = OscSettings(); o.block = block; }
+    }
+    updateUser (userIndex, user);
+    report = juce::String ((int) layers.size()) + T (" velocity sloja je sada MS1-MS") + juce::String ((int) layers.size()) + T (" (MS1 najjači).");
+    return true;
+}
+
+bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juce::String& report)
+{
+    if (userIndex < 0 || userIndex >= (int) users.size() || oscIndex < 0 || oscIndex >= kNumOsc) return false;
+    const auto os = users[(size_t) userIndex].osc[(size_t) oscIndex];
+    const auto dir = library.instrumentFile (os.instrument);
+    const auto layers = velocityLayersOf (os.instrument);
+    if (! dir.isDirectory() || layers.size() < 2)
+    {
+        report = T ("Ovaj MS nema više velocity slojeva (treba presemplovan zvuk sa fajlovima \"060 v127.wav\").");
+        return false;
+    }
+    // sloj ovog MS-a: jacina snimka unutar opsega MS-a
+    int layer = -1, inRange = 0;
+    for (int v : layers) if (v >= os.velLow && v <= os.velHigh) { if (layer < 0) layer = v; ++inRange; }
+    if (inRange > 1)
+    {
+        report = T ("Ovaj MS svira više slojeva odjednom. Prvo izaberi \"Razloži slojeve na MS\", pa obriši sloj koji ne treba.");
+        return false;
+    }
+    if (layer < 0) { report = T ("Opseg ovog MS-a ne odgovara nijednom snimljenom sloju."); return false; }
+    const auto idx = (size_t) (std::find (layers.begin(), layers.end(), layer) - layers.begin());
+    // opseg sloja u fajlovima: od (sledeci slabiji + 1) do ove jacine (najjaci do 127)
+    const int lo = idx + 1 < layers.size() ? layers[idx + 1] + 1 : 1;
+    const int hi = idx == 0 ? 127 : layer;
+    const bool top = idx == 0;
+
+    // 1) fajlovi tog sloja
+    int deleted = 0;
+    juce::StringArray removedIds;
+    for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.wav"))
+    {
+        int note = -1, l = 0;
+        if (SampleLibrary::parseFileName (f.getFileNameWithoutExtension(), true, note, l) && l == layer)
+        {
+            removedIds.add (f.getFileName());
+            if (f.deleteFile()) ++deleted;
+        }
+    }
+    // 2) sacuvana mapa: zone tog sloja nestaju, susedni sloj preuzima opseg
+    //    (brise se najjaci -> slabiji ide do 127; inace jaci sloj ide nanize)
+    const auto mapFile = dir.getChildFile ("LiveSampler-mapa.xml");
+    if (auto xml = juce::XmlDocument::parse (mapFile))
+    {
+        for (int i = xml->getNumChildElements(); --i >= 0;)
+        {
+            auto* z = xml->getChildElement (i);
+            const auto id = z->getStringAttribute ("sample");
+            bool gone = false;
+            for (auto& r : removedIds) gone = gone || id.endsWithIgnoreCase (r) || id.endsWithIgnoreCase (juce::File (r).getFileNameWithoutExtension());
+            if (gone) { xml->removeChildElement (z, true); continue; }
+            if (top && z->getIntAttribute ("highVel") == lo - 1) z->setAttribute ("highVel", 127);
+            if (! top && z->getIntAttribute ("lowVel") == hi + 1) z->setAttribute ("lowVel", lo);
+        }
+        xml->writeTo (mapFile);
+    }
+    // 3) broj slojeva u oznaci
+    const auto tag = dir.getChildFile ("kronos-ms.txt");
+    if (tag.existsAsFile())
+    {
+        auto lines = juce::StringArray::fromLines (tag.loadFileAsString());
+        for (auto& l : lines) if (l.startsWith ("layers=")) l = "layers=" + juce::String ((int) layers.size() - 1);
+        tag.replaceWithText (lines.joinIntoString ("\n"));
+    }
+    // 4) svi useri koji koriste ovaj instrument: MS tog sloja se gasi, susedni MS preuzima opseg
+    for (int u = 0; u < (int) users.size(); ++u)
+    {
+        auto user = users[(size_t) u];
+        bool changed = false;
+        for (auto& o : user.osc)
+        {
+            if (! o.on || o.instrument != os.instrument) continue;
+            if (o.velLow >= lo && o.velHigh <= hi) { const int b = o.block; o = OscSettings(); o.block = b; changed = true; continue; }
+            if (top && o.velHigh == lo - 1) { o.velHigh = 127; changed = true; }
+            if (! top && o.velLow == hi + 1) { o.velLow = lo; changed = true; }
+        }
+        if (changed) updateUser (u, user);
+    }
+    reloadInstrument (os.instrument, false);
+    report = T ("Obrisano ") + juce::String (deleted) + T (" fajlova (sloj jačine ") + juce::String (layer) + T (", opseg ")
+           + juce::String (lo) + "-" + juce::String (hi) + T ("). ")
+           + (top ? T ("Slabiji sloj sada ide do 127.") : T ("Jači sloj sada ide naniže od ") + juce::String (lo) + ".");
+    return true;
 }
 
 void LiveSamplerProcessor::setCurrentBank (int b)

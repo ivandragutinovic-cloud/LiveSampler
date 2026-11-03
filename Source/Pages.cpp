@@ -576,10 +576,45 @@ void OscRow::showMenu()
     m.addItem (2, T ("Nalepi MS"), Clip::ms.has_value());
     m.addSeparator();
     m.addItem (3, T ("Obriši MS"));
+    {
+        const auto& cur = proc.getUser (u).osc[(size_t) oscIndex()];
+        const auto layers = cur.on ? proc.velocityLayersOf (cur.instrument) : std::vector<int>();
+        if (layers.size() > 1)
+        {
+            m.addSeparator();
+            m.addSectionHeader (T ("Velocity slojevi (") + juce::String ((int) layers.size()) + ")");
+            m.addItem (4, T ("Razloži slojeve na MS1-MS") + juce::String ((int) layers.size()));
+            m.addItem (5, T ("Obriši ovaj velocity sloj sa diska (") + juce::String (cur.velLow) + "-" + juce::String (cur.velHigh) + ")...");
+        }
+    }
     juce::Component::SafePointer<OscRow> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&menuButton), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
+        auto info = [] (const juce::String& t) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Velocity slojevi"), t); };
+        if (r == 4)
+        {
+            juce::String rep;
+            safe->proc.splitVelocityLayers (safe->userIndex(), safe->oscIndex(), rep);
+            info (rep);
+            return;
+        }
+        if (r == 5)
+        {
+            const auto& o = safe->proc.getUser (safe->userIndex()).osc[(size_t) safe->oscIndex()];
+            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Obriši velocity sloj"),
+                T ("Trajno brišem sa diska sve semplove ovog sloja (jačina ") + juce::String (o.velLow) + "-" + juce::String (o.velHigh)
+                    + T (") za:\n") + o.instrument + T ("\n\nSusedni sloj preuzima njegov opseg. Ovo važi za sve usere koji koriste ovaj zvuk."),
+                T ("Obriši"), T ("Otkaži"), nullptr,
+                juce::ModalCallbackFunction::create ([safe, info] (int ok)
+                {
+                    if (safe == nullptr || ok == 0) return;
+                    juce::String rep;
+                    safe->proc.deleteVelocityLayer (safe->userIndex(), safe->oscIndex(), rep);
+                    info (rep);
+                }));
+            return;
+        }
         const auto& cur = safe->proc.getUser (safe->userIndex()).osc[(size_t) safe->oscIndex()];
         if (r == 1) Clip::ms = cur;
         if (r == 2 && Clip::ms) safe->edit ([] (OscSettings& s) { const int b = s.block; s = *Clip::ms; s.block = b; });
@@ -2723,6 +2758,7 @@ void ListsPage::cellMenu (int i)
         m.addSubMenu (T ("Kategorija"), cm, used);
     }
     m.addItem (2, T ("Snimi trenutni performans ovde"));
+    m.addItem (5, T ("Nov prazan (inicijalizovan) performans ovde"));
     m.addItem (3, T ("Dodaj u set listu (prvo prazno mesto)"), used);
     m.addSeparator();
     m.addItem (4, T ("Obriši"), used);
@@ -2737,6 +2773,24 @@ void ListsPage::cellMenu (int i)
         if (r == 1) pr.recallPerformance (slot);
         if (r == 2) pr.storePerformance (slot);
         if (r == 4) pr.clearPerformanceSlot (slot);
+        if (r == 5)
+        {
+            if (pr.getSlot (slot).used)
+            {
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("Nov performans"),
+                    T ("Na ovom mestu je \"") + pr.getSlot (slot).name + T ("\". Zameniti ga praznim performansom?"),
+                    T ("Zameni"), T ("Otkaži"), nullptr,
+                    juce::ModalCallbackFunction::create ([safe, slot] (int ok)
+                    {
+                        if (safe == nullptr || ok == 0) return;
+                        safe->proc.initPerformanceSlot (slot);
+                        safe->proc.recallPerformance (slot);
+                    }));
+                return;
+            }
+            pr.initPerformanceSlot (slot);
+            pr.recallPerformance (slot);
+        }
         if (r == 3)
         {
             auto sl = pr.getSetList (pr.getCurrentSetList());
