@@ -67,6 +67,7 @@ namespace
         bool external = false;
         juce::String extName;
         int msb = -1, lsb = -1, pc = -1, layers = 1;
+        juce::uint32 progBank = 0; int progNum = -1;     // EXi: program u PCG-u (bira se na Kronosu pre slanja)
         // procena (dugme Proceni): koliko drzati tone, release, da li treba loop
         bool analyzed = false, anLoop = true;
         double anHold = 0, anRelease = 0;
@@ -356,11 +357,13 @@ public:
             }
             else if (needed[0].exi)
             {
+                lastKind = 0;
+                ensureKronosKind (needed[0]);
                 juce::String err;
                 if (! sendExiSysex (needed[0], err)) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "EXi", err); return; }
                 send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 100)); juce::Thread::sleep (1200); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60));
             }
-            else if (sysexMode.getToggleState()) { sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
+            else if (sysexMode.getToggleState()) { lastKind = 0; ensureKronosKind (needed[0]); sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
             else if (needed[0].slot >= 0) selectProgram (needed[0].slot);
         };
         addAndMakeVisible (testButton);
@@ -854,6 +857,8 @@ private:
             n.engine = p.engineText();
             n.alg = p.exiAlg;
             n.programId = p.id();
+            n.progBank = p.bankId;
+            n.progNum = p.number;
             n.usedBy = p.name;
             n.program.assign (raw, raw + Kronos::programSize);
             needed.push_back (std::move (n));
@@ -1075,7 +1080,14 @@ private:
         body.insert (body.end(), packed.begin(), packed.end());
         auto reply = sysexCall (body, 0x24, 2000);
         if (reply && reply->size() > 5 && (*reply)[5] != 0)
-            setStatus ("Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]));
+        {
+            // npr. bank conflict: izaberi HD-1 program pa posalji ponovo
+            lastKind = 0;
+            NeededMs hd; ensureKronosKind (hd);
+            reply = sysexCall (body, 0x24, 2000);
+            if (reply && reply->size() > 5 && (*reply)[5] != 0)
+                setStatus ("Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]));
+        }
         return true;
     }
 
@@ -1144,6 +1156,12 @@ private:
         body.insert (body.end(), packed.begin(), packed.end());
         sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
         auto reply = sysexCall (body, 0x24, 3000);
+        if (reply && reply->size() > 5 && (*reply)[5] != 0)
+        {
+            lastKind = 0;
+            ensureKronosKind (n);
+            reply = sysexCall (body, 0x24, 3000);
+        }
         if (reply && reply->size() > 5 && (*reply)[5] != 0)
         {
             err = "Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]) + juce::String::fromUTF8 (" za EXi program (") + n.programId + ")";
@@ -1407,9 +1425,47 @@ private:
     }
 
     // izabere zvuk za posao: druga klavijatura (Program Change), EXi (SysEx), ROM multisempl (SysEx ili PCG)
+    // Kronos: edit buffer prima samo program istog tipa kao banka u kojoj je (EXi banka ili HD-1 banka),
+    // inace javlja "bank conflict". Zato se pre slanja izabere program odgovarajuceg tipa (Program Change).
+    int lastKind = 0;   // 0 nepoznato, 1 HD-1, 2 EXi
+
+    void selectKronosProgram (juce::uint32 bankId, int number)
+    {
+        // Kronos bank select za programe: CC0 = 0, CC32: INT-A..F = 0..5, USER-A..G = 8..14, USER-AA..GG = 15..21
+        const int hi = (int) (bankId >> 16), lo = (int) (bankId & 0xffff);
+        int lsb = -1;
+        if (hi == 0 && lo <= 5) lsb = lo;
+        if (hi == 2 && lo <= 13) lsb = 8 + lo;
+        if (lsb < 0 || number < 0 || number > 127) return;
+        const int ch = settings.channel;
+        sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
+        send (juce::MidiMessage::controllerEvent (ch, 0, 0));
+        send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
+        send (juce::MidiMessage::programChange (ch, number));
+        wait (700);
+    }
+
+    void ensureKronosKind (const NeededMs& n)
+    {
+        const int kind = n.exi ? 2 : 1;
+        if (kind == lastKind || pcg == nullptr) return;
+        if (n.exi) selectKronosProgram (n.progBank, n.progNum);
+        else
+        {
+            // HD-1 program: "Init..." iz PCG-a, inace prvi HD-1 program
+            const Kronos::Program* pick = nullptr;
+            for (auto& p : pcg->programs)
+                if (p.hd1 && ! p.drumKit && (pick == nullptr || (p.name.startsWithIgnoreCase ("init") && ! pick->name.startsWithIgnoreCase ("init"))))
+                    pick = &p;
+            if (pick != nullptr) selectKronosProgram (pick->bankId, pick->number);
+        }
+        lastKind = kind;
+    }
+
     bool selectJob (const NeededMs& n, juce::String& err, bool& fatal)
     {
         fatal = false;
+        if (! n.external) ensureKronosKind (n);
         if (n.external)
         {
             const int ch = settings.channel;
@@ -1441,6 +1497,7 @@ private:
     void run() override
     {
         const int total = (int) needed.size();
+        lastKind = 0;
         if (analyzeOnly)
         {
             int ok = 0;

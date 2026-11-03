@@ -156,7 +156,12 @@ private:
     juce::Label userLabel;
     juce::ComboBox userBox;          // koji user se mapira
     juce::StringArray shownUsers;
-    juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton;
+    juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton, toolsButton;
+    void toolsMenu();
+    void trimToDisk (bool onlySelected);
+    void normalizeFiles();
+    void equalizeZones();
+    bool rewriteWav (const juce::File& f, const SampleData& s, int from, int to, float gain, int loopStart, int loopEnd, juce::String& err);
 
     ZoneMapView mapView;
     WaveEditor waveEditor;

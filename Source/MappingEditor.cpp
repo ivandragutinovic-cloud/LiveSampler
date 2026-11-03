@@ -879,7 +879,10 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     closeButton.setButtonText (T ("Zatvori"));
     closeButton.onClick = [this] { if (onClose) onClose(); };
 
-    for (auto* b : { &undoButton, &saveButton, &revertButton, &resetButton, &closeButton })
+    toolsButton.setButtonText (T ("ALATI"));
+    toolsButton.setTooltip (T ("Skrati semplove na disku, normalizuj WAV, izjednači jačinu zona"));
+    toolsButton.onClick = [this] { toolsMenu(); };
+    for (auto* b : { &undoButton, &saveButton, &revertButton, &resetButton, &closeButton, &toolsButton })
         addAndMakeVisible (b);
 
     // grafik
@@ -1438,6 +1441,8 @@ void MappingEditor::resized()
     saveButton.setBounds (header.removeFromRight (92));
     header.removeFromRight (4);
     undoButton.setBounds (header.removeFromRight (80));
+    header.removeFromRight (4);
+    toolsButton.setBounds (header.removeFromRight (70));
 
     r.removeFromTop (6);
     auto infoRow = r.removeFromTop (24);
@@ -1497,4 +1502,236 @@ void MappingEditor::resized()
     octDownButton.setBounds (b2.removeFromLeft (bw).reduced (2, 0));
     octUpButton.setBounds (b2.removeFromLeft (bw).reduced (2, 0));
     rangesButton.setBounds (b2.reduced (2, 0));
+}
+
+
+//==============================================================================
+//  ALATI: skracivanje WAV fajlova na disku, normalizacija, izjednacavanje jacine zona
+//==============================================================================
+void MappingEditor::toolsMenu()
+{
+    const bool wav = inst != nullptr && inst->type == SourceType::WavFolder;
+    juce::PopupMenu m;
+    m.addSectionHeader (T ("Na disku (WAV, uz potvrdu)"));
+    m.addItem (1, T ("Skrati izabranu zonu (briše pre Start-a i posle End / Loop end)"), wav && selected >= 0);
+    m.addItem (2, T ("Skrati sve zone"), wav);
+    m.addItem (3, T ("Normalizuj WAV fajlove (isto pojačanje za sve, dinamika ostaje)"), wav);
+    m.addSeparator();
+    m.addSectionHeader (T ("U mapi (ne dira fajlove)"));
+    m.addItem (4, T ("Izjednači jačinu zona (po velocity sloju)"), inst != nullptr);
+    m.addItem (5, T ("Vrati jačinu svih zona na 0 dB"), inst != nullptr);
+    if (! wav) m.addItem (99, T ("Alati za disk rade samo za WAV foldere"), false);
+    juce::Component::SafePointer<MappingEditor> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (toolsButton), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 1 || r == 2) safe->trimToDisk (r == 1);
+        if (r == 3) safe->normalizeFiles();
+        if (r == 4) safe->equalizeZones();
+        if (r == 5)
+        {
+            auto z = safe->zones;
+            for (auto& zz : z) zz.gainDb = 0.0f;
+            safe->commit (z, true);
+        }
+    });
+}
+
+// upisuje deo [from, to) sempla u isti WAV (isti broj kanala, bitova i sample rate), sa loop tackama i root notom
+bool MappingEditor::rewriteWav (const juce::File& f, const SampleData& s, int from, int to, float gain, int loopStart, int loopEnd, juce::String& err)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    int chans = 2, bits = 24;
+    double sr = s.sampleRate;
+    {
+        std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+        if (r == nullptr) { err = T ("ne mogu da pročitam ") + f.getFileName(); return false; }
+        chans = juce::jlimit (1, 2, (int) r->numChannels);
+        bits = juce::jlimit (16, 32, (int) r->bitsPerSample);
+        if (r->usesFloatingPointData) bits = 32;
+        sr = r->sampleRate;
+    }
+    const int len = s.buffer.getNumSamples();
+    from = juce::jlimit (0, len, from);
+    to = juce::jlimit (from + 1, len, to);
+    juce::AudioBuffer<float> out (chans, to - from);
+    for (int c = 0; c < chans; ++c)
+    {
+        out.copyFrom (c, 0, s.buffer, juce::jmin (c, s.buffer.getNumChannels() - 1), from, to - from);
+        if (std::abs (gain - 1.0f) > 1.0e-6f) out.applyGain (c, 0, to - from, gain);
+    }
+    std::unordered_map<juce::String, juce::String> meta;
+    if (s.fileRootKey >= 0) meta["MidiUnityNote"] = juce::String (s.fileRootKey);
+    if (loopEnd > loopStart + 16)
+    {
+        meta["NumSampleLoops"] = "1";
+        meta["Loop0Type"] = "0";
+        meta["Loop0Start"] = juce::String (loopStart - from);
+        meta["Loop0End"] = juce::String (loopEnd - from - 1);
+    }
+    const auto tmp = f.getSiblingFile (f.getFileNameWithoutExtension() + ".tmp-pikaso.wav");
+    tmp.deleteFile();
+    {
+        std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (tmp);
+        juce::WavAudioFormat wavFmt;
+        auto w = wavFmt.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (chans)
+                                                 .withBitsPerSample (bits).withMetadataValues (meta));
+        if (w == nullptr) { err = T ("ne mogu da upišem ") + f.getFileName(); tmp.deleteFile(); return false; }
+        w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples());
+    }
+    if (! tmp.moveFileTo (f)) { err = T ("ne mogu da zamenim ") + f.getFileName(); tmp.deleteFile(); return false; }
+    return true;
+}
+
+void MappingEditor::trimToDisk (bool onlySelected)
+{
+    if (inst == nullptr || inst->type != SourceType::WavFolder) return;
+    // za svaki sempl: najraniji Start (ili pocetak crossfade-a pred loop-om) i najkasniji End / Loop end svih zona koje ga koriste
+    struct Cut { int from = std::numeric_limits<int>::max(), to = 0, loopStart = -1, loopEnd = -1; };
+    std::map<int, Cut> cuts;
+    for (int i = 0; i < (int) zones.size(); ++i)
+    {
+        if (onlySelected && i != selected) continue;
+        const auto& z = zones[(size_t) i];
+        if (z.sample < 0 || z.sample >= (int) inst->samples.size()) continue;
+        const auto& smp = *inst->samples[(size_t) z.sample];
+        const int len = smp.buffer.getNumSamples();
+        int ls = -1, le = -1;
+        if (z.loop && z.hasOwnLoop()) { ls = z.loopStart; le = z.loopEnd; }
+        else if (z.loop && smp.hasLoop) { ls = smp.loopStart; le = smp.loopEnd; }
+        int from = juce::jmax (0, z.sampleStart);
+        int to = le > 0 ? le : (z.sampleEnd > 0 ? z.sampleEnd : (smp.endPoint > 0 ? smp.endPoint : len));
+        if (ls >= 0) from = juce::jmin (from, juce::jmax (0, ls - z.loopXfade));
+        auto& c = cuts[z.sample];
+        c.from = juce::jmin (c.from, from);
+        c.to = juce::jmax (c.to, juce::jmin (len, to));
+        if (ls >= 0 && c.loopStart < 0) { c.loopStart = ls; c.loopEnd = le; }
+    }
+    // koliko se stedi
+    double saved = 0, total = 0;
+    int files = 0;
+    for (auto& [si, c] : cuts)
+    {
+        const auto& smp = *inst->samples[(size_t) si];
+        const double perSample = (double) inst->source.getChildFile (smp.id).getSize() / juce::jmax (1, smp.buffer.getNumSamples());
+        total += (double) inst->source.getChildFile (smp.id).getSize();
+        const int keep = juce::jmax (0, c.to - c.from);
+        if (keep < smp.buffer.getNumSamples() - 32) { saved += perSample * (smp.buffer.getNumSamples() - keep); ++files; }
+    }
+    if (files == 0)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Skrati"), T ("Nema šta da se skrati: semplovi već počinju na Start-u i završavaju se na End / Loop end."));
+        return;
+    }
+    const auto msg = T ("Trajno presnimavam ") + juce::String (files) + T (" WAV fajlova u\n") + inst->source.getFullPathName()
+                   + T ("\n\nBriše se deo pre Start-a i posle End-a (kod loop-a posle Loop end-a). Oslobađa se oko ")
+                   + juce::String (saved / (1024.0 * 1024.0), 1) + " MB od " + juce::String (total / (1024.0 * 1024.0), 1) + " MB."
+                   + T ("\n\nOvo ne može da se poništi.");
+    juce::Component::SafePointer<MappingEditor> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Skrati semplove na disku"), msg, T ("Presnimi"), T ("Otkaži"), nullptr,
+        juce::ModalCallbackFunction::create ([safe, cuts] (int ok)
+        {
+            if (safe == nullptr || ok == 0 || safe->inst == nullptr) return;
+            auto& me = *safe;
+            juce::StringArray errors;
+            auto z = me.zones;
+            for (auto& [si, c] : cuts)
+            {
+                const auto& smp = *me.inst->samples[(size_t) si];
+                if (c.to - c.from >= smp.buffer.getNumSamples() - 32) continue;
+                juce::String err;
+                if (! me.rewriteWav (me.inst->source.getChildFile (smp.id), smp, c.from, c.to, 1.0f, c.loopStart, c.loopEnd, err)) { errors.add (err); continue; }
+                // zone tog sempla: tacke se pomeraju za odseceni pocetak
+                for (auto& zz : z)
+                {
+                    if (zz.sample != si) continue;
+                    if (zz.sampleStart > 0) zz.sampleStart = juce::jmax (1, zz.sampleStart - c.from);
+                    if (zz.sampleEnd > 0) zz.sampleEnd = juce::jmax (1, zz.sampleEnd - c.from);
+                    if (zz.hasOwnLoop()) { zz.loopStart -= c.from; zz.loopEnd -= c.from; }
+                }
+            }
+            me.commit (z, false);
+            me.proc.saveMap (me.instName);      // mapa mora da odgovara novim fajlovima
+            me.dirtyNames.erase (me.instName);
+            me.undoStack.clear();
+            me.proc.reloadInstrument (me.instName, false);
+            juce::AlertWindow::showMessageBoxAsync (errors.isEmpty() ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon,
+                T ("Skrati"), errors.isEmpty() ? T ("Gotovo. Semplovi su skraćeni i mapa je sačuvana.") : T ("Neki fajlovi nisu presnimljeni:\n") + errors.joinIntoString ("\n"));
+        }));
+}
+
+void MappingEditor::normalizeFiles()
+{
+    if (inst == nullptr || inst->type != SourceType::WavFolder || inst->samples.empty()) return;
+    float peak = 0.0f;
+    for (auto& sp : inst->samples)
+        for (int c = 0; c < sp->buffer.getNumChannels(); ++c)
+            peak = juce::jmax (peak, sp->buffer.getMagnitude (c, 0, sp->buffer.getNumSamples()));
+    if (peak < 1.0e-6f) return;
+    const float gain = juce::Decibels::decibelsToGain (-0.3f) / peak;
+    const float gainDb = juce::Decibels::gainToDecibels (gain);
+    if (std::abs (gainDb) < 0.1f)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Normalizuj"), T ("Semplovi su već normalizovani (najglasniji je na -0.3 dB)."));
+        return;
+    }
+    juce::Component::SafePointer<MappingEditor> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Normalizuj WAV"),
+        T ("Trajno presnimavam ") + juce::String ((int) inst->samples.size()) + T (" WAV fajlova sa pojačanjem ")
+            + (gainDb > 0 ? "+" : "") + juce::String (gainDb, 1) + T (" dB (najglasniji sempl ide na -0.3 dB).\nSvi semplovi dobijaju isto pojačanje, pa razlika između tihih i jakih slojeva ostaje.\n\nOvo ne može da se poništi."),
+        T ("Presnimi"), T ("Otkaži"), nullptr,
+        juce::ModalCallbackFunction::create ([safe, gain] (int ok)
+        {
+            if (safe == nullptr || ok == 0 || safe->inst == nullptr) return;
+            auto& me = *safe;
+            juce::StringArray errors;
+            for (auto& sp : me.inst->samples)
+            {
+                juce::String err;
+                if (! me.rewriteWav (me.inst->source.getChildFile (sp->id), *sp, 0, sp->buffer.getNumSamples(), gain,
+                                     sp->hasLoop ? sp->loopStart : -1, sp->hasLoop ? sp->loopEnd : -1, err))
+                    errors.add (err);
+            }
+            me.proc.reloadInstrument (me.instName, false);
+            juce::AlertWindow::showMessageBoxAsync (errors.isEmpty() ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon,
+                T ("Normalizuj"), errors.isEmpty() ? T ("Gotovo.") : T ("Neki fajlovi nisu presnimljeni:\n") + errors.joinIntoString ("\n"));
+        }));
+}
+
+// u mapi: zone istog velocity sloja dobijaju jacinu tako da im glasnoca (pocetak tona, 0.3 s) bude ista
+void MappingEditor::equalizeZones()
+{
+    if (inst == nullptr) return;
+    auto z = zones;
+    std::map<std::pair<int, int>, std::vector<std::pair<size_t, float>>> groups;
+    for (size_t i = 0; i < z.size(); ++i)
+    {
+        if (z[i].sample < 0 || z[i].sample >= (int) inst->samples.size()) continue;
+        const auto& smp = *inst->samples[(size_t) z[i].sample];
+        const int len = smp.buffer.getNumSamples();
+        const int on = z[i].sampleStart > 0 ? z[i].sampleStart : AutoLoop::findOnset (smp.buffer, len, smp.sampleRate);
+        const int n = juce::jmin (len - on, (int) (smp.sampleRate * 0.3));
+        if (n <= 0) continue;
+        float rms = 0;
+        for (int c = 0; c < juce::jmin (2, smp.buffer.getNumChannels()); ++c) rms += smp.buffer.getRMSLevel (c, on, n) * 0.5f;
+        if (rms > 1.0e-6f) groups[{ z[i].lowVel, z[i].highVel }].push_back ({ i, juce::Decibels::gainToDecibels (rms) });
+    }
+    int changed = 0;
+    for (auto& [k, v] : groups)
+    {
+        if (v.size() < 2) continue;
+        std::vector<float> lv;
+        for (auto& p : v) lv.push_back (p.second);
+        std::sort (lv.begin(), lv.end());
+        const float target = lv[lv.size() / 2];
+        for (auto& [i, db] : v)
+        {
+            z[i].gainDb = juce::jlimit (-12.0f, 12.0f, std::round ((target - db) * 10.0f) / 10.0f);
+            ++changed;
+        }
+    }
+    commit (z, true);
+    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Izjednači jačinu"),
+        T ("Jačina podešena za ") + juce::String (changed) + T (" zona (kolona Jačina). Tihi i jaki slojevi ostaju različiti.\nPoslušaj, pa klikni Sačuvaj (ili Poništi)."));
 }
