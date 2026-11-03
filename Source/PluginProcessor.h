@@ -167,6 +167,15 @@ public:
     bool layoutVelocityLayers (UserProgram& user, int block, const OscSettings& proto, const std::vector<int>& layers);
     // novi prazan (inicijalizovan) performans na mestu u listi
     void initPerformanceSlot (int slot);
+
+    // vector joystick: X / Y dolaze kao MIDI CC (iPad, Impulse...), -1..1; LEARN uzima prvi CC koji stigne
+    float getVectorX() const { return vectorX.load(); }
+    float getVectorY() const { return vectorY.load(); }
+    void setVectorXY (float x, float y) { vectorX = juce::jlimit (-1.0f, 1.0f, x); vectorY = juce::jlimit (-1.0f, 1.0f, y); vectorUiDirty = true; }
+    int getVectorCc (int axis) const { return axis == 0 ? vectorCcX.load() : vectorCcY.load(); }
+    void learnVectorCc (int axis) { learnVector = axis + 1; }      // 0 = X, 1 = Y
+    bool isLearningVector() const { return learnVector.load() != 0; }
+    bool takeVectorUiDirty() { return vectorUiDirty.exchange (false); }
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)
@@ -266,6 +275,9 @@ private:
     Performance perf;
     int currentSlot = -1, currentBank = 0;
     std::array<juce::String, kNumPerfBanks> bankNames;
+    std::atomic<float> vectorX { 0.0f }, vectorY { 0.0f };
+    std::atomic<int> vectorCcX { 16 }, vectorCcY { 17 }, learnVector { 0 };
+    std::atomic<bool> vectorUiDirty { false };
     juce::StringArray categories { defaultCategories() };
     std::vector<juce::Colour> categoryColours { defaultCategoryColours() };
     bool categoriesEdited = false;

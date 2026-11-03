@@ -11,6 +11,7 @@ struct PartRuntime
     UserProgram user;
     std::array<InstrumentPtr, kNumOsc> inst;
     bool active = false;   // ukljucen i ima usera
+    bool vectorOn = false, vectorEqualPower = false;   // iz performansa
 };
 
 //==============================================================================
@@ -82,6 +83,7 @@ public:
     void setPitchBend (float minus1to1) { bend = minus1to1; }
     void setModWheel (float v) { modWheel = v; }
     void setAftertouch (float v) { aftertouch = v; }
+    void setVector (float x, float y) { vecX = x; vecY = y; }
     void allNotesOff (bool immediate);
     void renderVoices (int startSample, int numSamples);
     void endBlock (juce::AudioBuffer<float>& mainOut, juce::AudioBuffer<float>& reverbSend,
@@ -158,6 +160,7 @@ private:
     std::array<juce::uint32, numIds> polyMaskOf {};    // koji OSC-ovi su svirali poly za ovaj id
     bool sustainDown = false;
     float bend = 0.0f, modWheel = 0.0f, aftertouch = 0.0f;
+    float vecX = 0.0f, vecY = 0.0f;
     double lastPitch = -1.0;
     int polyHeld = 0;
     std::array<int, numIds> idPitch {}, idVel {};

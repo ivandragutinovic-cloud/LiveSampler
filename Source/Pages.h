@@ -12,6 +12,7 @@ public:
     PartStrip (LiveSamplerProcessor&, LiveSamplerEditor&, int index);
     void refresh();
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
 private:
@@ -55,6 +56,11 @@ private:
     KeyRangeView ranges;
     juce::TextButton pageButtons[2];
     int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
+    // vector joystick (kao na Kronosu): ukljuci, equal power, XY polje, CC za X i Y (LEARN)
+    std::unique_ptr<juce::Component> vectorPad;
+    juce::TextButton vectorOn, vectorEqual, vectorCcX, vectorCcY;
+    void updateVectorButtons();
+    int learnAxis = -1;
 };
 
 //==============================================================================
@@ -296,6 +302,7 @@ private:
     void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
     void playRow (int row);
     void loadCombiRow (int row);
+    void loadCombisToList (const juce::SparseSet<int>& rows);   // vise kombija odjednom -> mesta u listi
     void offerAutosample (const juce::String& message, const juce::String& args);
     static juce::File findAutosampler();
     void setMode (bool combis);

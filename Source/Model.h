@@ -129,6 +129,8 @@ struct PerfPart
     float reverbSend = 0.2f, delaySend = 0.0f;
     bool terca = false;                 // ovaj deo dobija terce
     bool sustainPedal = true;
+    int vectorDir = 0;                  // vector joystick: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y (kao VJS Assign na Kronosu)
+    float vectorCenter = 1.0f;          // jacina u centru joysticka (0..1, Volume Center)
 };
 
 struct SetListSlot
@@ -151,6 +153,8 @@ struct Performance
     MasterSettings master;
     bool used = false;
     juce::String category;              // ime kategorije (prazno ili nepostojece = bez kategorije)
+    bool vectorOn = false;              // vector joystick menja jacinu delova (Enable Volume Control)
+    bool vectorEqualPower = false;      // pretapanje bez pada jacine u sredini
     juce::String kronosSource;          // kombi sa Kronosa od kog je napravljen: "bankId:broj"
 
     std::unique_ptr<juce::XmlElement> toXml() const;

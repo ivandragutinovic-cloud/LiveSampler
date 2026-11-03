@@ -70,6 +70,8 @@ namespace Kronos
         int transpose = 0, detuneCents = 0;
         int keyLow = 0, keyHigh = 127, velLow = 1, velHigh = 127;
         int send1 = 0, send2 = 0;
+        int vectorDir = 0;                       // VJS Assign: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y
+        int vectorCenter = 4;                    // Volume Center: 0..4 = 0/25/50/75/100%
     };
 
     struct Combi
@@ -81,6 +83,7 @@ namespace Kronos
         std::array<Timbre, 16> timbres;
         int return1 = 127, return2 = 127;   // MFX1 / MFX2 Return
         int category = 0;                   // Combi Category 0-17 (imena u Pcg::combiCategories)
+        bool vectorVolume = false, vectorEqualPower = false;   // Vector Control: Enable Volume Control, Equal Power
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
     };
 

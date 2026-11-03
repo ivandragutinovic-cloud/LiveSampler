@@ -237,7 +237,17 @@ void SamplerPart::beginBlock (const PartRuntime* runtime, int numSamples)
         return;
 
     const auto& p = cfg->part;
-    const float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb, -60.0f) : 0.0f;
+    float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb, -60.0f) : 0.0f;
+    // vector joystick (Kronos Vector Volume): u centru jacina = Volume Center, ka svom smeru raste do 100%, na suprotnu stranu pada ka 0
+    if (cfg->vectorOn && p.vectorDir > 0)
+    {
+        const float a = p.vectorDir == 1 ? vecX : p.vectorDir == 2 ? -vecX : p.vectorDir == 3 ? vecY : -vecY;
+        const float c = juce::jlimit (0.0f, 1.0f, p.vectorCenter);
+        float v = a >= 0.0f ? c + (1.0f - c) * a : c * (1.0f + a);
+        v = juce::jlimit (0.0f, 1.0f, v);
+        if (cfg->vectorEqualPower) v = std::sin (v * juce::MathConstants<float>::halfPi);
+        g *= v;
+    }
     gainL.setTargetValue (g * juce::jmin (1.0f, 1.0f - p.pan));
     gainR.setTargetValue (g * juce::jmin (1.0f, 1.0f + p.pan));
 }

@@ -172,6 +172,57 @@ namespace
     };
 }
 
+namespace Vector
+{
+    const char* dirName (int d) { static const char* n[] = { "Off", "+X", "-X", "+Y", "-Y" }; return n[juce::jlimit (0, 4, d)]; }
+
+    // ista formula kao u zvuku (SamplerPart): jacina dela za trenutni polozaj joysticka
+    float gain (const Performance& perf, const PerfPart& p, float x, float y)
+    {
+        if (! perf.vectorOn || p.vectorDir == 0) return 1.0f;
+        const float a = p.vectorDir == 1 ? x : p.vectorDir == 2 ? -x : p.vectorDir == 3 ? y : -y;
+        const float c = p.vectorCenter;
+        float v = juce::jlimit (0.0f, 1.0f, a >= 0.0f ? c + (1.0f - c) * a : c * (1.0f + a));
+        if (perf.vectorEqualPower) v = std::sin (v * juce::MathConstants<float>::halfPi);
+        return v;
+    }
+
+    // XY polje: prevuci misem / prstom; prikazuje polozaj koji stize preko CC-a
+    struct Pad : public juce::Component, private juce::Timer
+    {
+        Pad (LiveSamplerProcessor& p) : proc (p) { startTimerHz (30); }
+        std::function<void()> onMove, onTick;
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (1.0f);
+            const bool on = proc.getPerformance().vectorOn;
+            g.setColour (Pal::bg);
+            g.fillRoundedRectangle (r, 4.0f);
+            g.setColour (on ? Pal::accent.withAlpha (0.6f) : Pal::dim.withAlpha (0.4f));
+            g.drawRoundedRectangle (r, 4.0f, 1.0f);
+            g.setColour (Pal::panelHi);
+            g.drawHorizontalLine ((int) r.getCentreY(), r.getX(), r.getRight());
+            g.drawVerticalLine ((int) r.getCentreX(), r.getY(), r.getBottom());
+            const float px = r.getCentreX() + proc.getVectorX() * (r.getWidth() * 0.5f - 4.0f);
+            const float py = r.getCentreY() - proc.getVectorY() * (r.getHeight() * 0.5f - 4.0f);
+            g.setColour (on ? Pal::lcdText : Pal::dim);
+            g.fillEllipse (px - 4.0f, py - 4.0f, 8.0f, 8.0f);
+        }
+        void mouseDown (const juce::MouseEvent& e) override { move (e); }
+        void mouseDrag (const juce::MouseEvent& e) override { move (e); }
+        void mouseDoubleClick (const juce::MouseEvent&) override { proc.setVectorXY (0.0f, 0.0f); changed(); }
+        void move (const juce::MouseEvent& e)
+        {
+            auto r = getLocalBounds().toFloat().reduced (5.0f);
+            proc.setVectorXY ((e.position.x - r.getCentreX()) / (r.getWidth() * 0.5f), (r.getCentreY() - e.position.y) / (r.getHeight() * 0.5f));
+            changed();
+        }
+        void changed() { repaint(); if (onMove) onMove(); }
+        void timerCallback() override { if (proc.takeVectorUiDirty()) changed(); if (onTick) onTick(); }
+        LiveSamplerProcessor& proc;
+    };
+}
+
 void PartStrip::showPartMenu()
 {
     juce::PopupMenu m;
@@ -179,10 +230,22 @@ void PartStrip::showPartMenu()
     m.addItem (2, T ("Nalepi deo"), Clip::part.has_value());
     m.addSeparator();
     m.addItem (3, T ("Isprazni deo"));
+    {
+        const auto& pp = proc.getPerformance().parts[(size_t) index];
+        juce::PopupMenu vm;
+        for (int d = 0; d <= 4; ++d) vm.addItem (100 + d, T ("Smer: ") + Vector::dirName (d), true, pp.vectorDir == d);
+        vm.addSeparator();
+        for (int c = 0; c <= 4; ++c) vm.addItem (110 + c, T ("Jačina u centru: ") + juce::String (c * 25) + "%", pp.vectorDir != 0,
+                                                 std::abs (pp.vectorCenter - c * 0.25f) < 0.01f);
+        m.addSeparator();
+        m.addSubMenu (T ("Vector joystick (") + Vector::dirName (pp.vectorDir) + ")", vm);
+    }
     juce::Component::SafePointer<PartStrip> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&partMenu), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
+        if (r >= 100 && r <= 104) { safe->edit ([r] (PerfPart& pp) { pp.vectorDir = r - 100; }); return; }
+        if (r >= 110 && r <= 114) { safe->edit ([r] (PerfPart& pp) { pp.vectorCenter = (float) (r - 110) * 0.25f; }); return; }
         if (r == 1) { Clip::part = safe->proc.getPerformance().parts[(size_t) safe->index]; return; }
         safe->edit ([r] (PerfPart& pp) { pp = (r == 2 && Clip::part) ? *Clip::part : PerfPart(); });
     });
@@ -279,8 +342,32 @@ void PartStrip::paint (juce::Graphics& g)
     auto r = getLocalBounds().toFloat();
     g.setColour (Pal::panel);
     g.fillRoundedRectangle (r, 8.0f);
+    const auto& perf = proc.getPerformance();
+    const auto& p = perf.parts[(size_t) index];
+    // vector: traka u boji dela pokazuje trenutnu jacinu od joysticka
+    const float vg = Vector::gain (perf, p, proc.getVectorX(), proc.getVectorY());
+    auto bar = r.removeFromTop (4.0f).reduced (8.0f, 0.0f);
+    g.setColour (colour.withAlpha (0.25f));
+    g.fillRoundedRectangle (bar, 2.0f);
     g.setColour (colour);
-    g.fillRoundedRectangle (r.removeFromTop (4.0f).reduced (8.0f, 0.0f), 2.0f);
+    g.fillRoundedRectangle (bar.withWidth (bar.getWidth() * vg), 2.0f);
+}
+
+void PartStrip::paintOverChildren (juce::Graphics& g)
+{
+    const auto& perf = proc.getPerformance();
+    const auto& p = perf.parts[(size_t) index];
+    if (! perf.vectorOn || p.vectorDir == 0) return;
+    const float vg = Vector::gain (perf, p, proc.getVectorX(), proc.getVectorY());
+    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    g.setColour (Pal::lcdText);
+    g.drawText ("VJS " + juce::String (Vector::dirName (p.vectorDir)) + " " + juce::String ((int) std::round (vg * 100.0f)) + "%",
+                getLocalBounds().removeFromTop (14).reduced (10, 0), juce::Justification::centredRight);
+    if (vg < 0.05f)
+    {
+        g.setColour (juce::Colours::black.withAlpha (0.35f));     // utisan joystickom
+        g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    }
 }
 
 void PartStrip::resized()
@@ -436,6 +523,42 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         pageButtons[b].onClick = [this, b] { page = b; resized(); refresh(); };
         addAndMakeVisible (pageButtons[b]);
     }
+
+    auto* pad = new Vector::Pad (proc);
+    pad->onMove = [this] { for (auto* s : strips) s->repaint(); };
+    pad->onTick = [this] { if (learnAxis >= 0 && ! proc.isLearningVector()) updateVectorButtons(); };
+    vectorPad.reset (pad);
+    addAndMakeVisible (*vectorPad);
+    vectorOn.setButtonText ("VECTOR");
+    vectorOn.setClickingTogglesState (true);
+    vectorOn.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+    vectorOn.setTooltip (T ("Vector joystick menja jačinu delova (kao Vector Volume Control na Kronosu)"));
+    vectorOn.onClick = [this] { auto perf = proc.getPerformance(); perf.vectorOn = vectorOn.getToggleState(); proc.updatePerformance (perf); };
+    vectorEqual.setButtonText ("EQ.POW");
+    vectorEqual.setClickingTogglesState (true);
+    vectorEqual.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+    vectorEqual.setTooltip (T ("Equal Power: pretapanje bez pada jačine u sredini"));
+    vectorEqual.onClick = [this] { auto perf = proc.getPerformance(); perf.vectorEqualPower = vectorEqual.getToggleState(); proc.updatePerformance (perf); };
+    for (int a = 0; a < 2; ++a)
+    {
+        auto& b = a == 0 ? vectorCcX : vectorCcY;
+        b.setTooltip (T ("Klikni pa pomeri kontrolu na iPad-u / Impulse-u (LEARN)"));
+        b.onClick = [this, a] { learnAxis = a; proc.learnVectorCc (a); updateVectorButtons(); };
+        addAndMakeVisible (b);
+    }
+    for (auto* b : { &vectorOn, &vectorEqual, &vectorCcX, &vectorCcY }) { b->getProperties().set ("fontSize", 11.5f); addAndMakeVisible (b); }
+    updateVectorButtons();
+}
+
+void PerformancePage::updateVectorButtons()
+{
+    const auto& perf = proc.getPerformance();
+    vectorOn.setToggleState (perf.vectorOn, juce::dontSendNotification);
+    vectorEqual.setToggleState (perf.vectorEqualPower, juce::dontSendNotification);
+    const bool learning = proc.isLearningVector();
+    if (! learning) learnAxis = -1;
+    vectorCcX.setButtonText (learnAxis == 0 ? T ("pomeri...") : "X: CC " + juce::String (proc.getVectorCc (0)));
+    vectorCcY.setButtonText (learnAxis == 1 ? T ("pomeri...") : "Y: CC " + juce::String (proc.getVectorCc (1)));
 }
 
 void PerformancePage::refresh()
@@ -444,6 +567,8 @@ void PerformancePage::refresh()
         nameEdit.setText (proc.getPerformance().name, juce::dontSendNotification);
     for (auto* s : strips)
         s->refresh();
+    updateVectorButtons();
+    if (vectorPad != nullptr) vectorPad->repaint();
     for (int b = 0; b < 2; ++b)
     {
         // oznaci stranu na kojoj ima ukljucenih delova
@@ -466,6 +591,12 @@ void PerformancePage::resized()
     nameEdit.setBounds (top.removeFromLeft (360).reduced (0, 2));
     pageButtons[1].setBounds (top.removeFromRight (130).reduced (2, 2));
     pageButtons[0].setBounds (top.removeFromRight (130).reduced (2, 2));
+    top.removeFromLeft (12);
+    vectorOn.setBounds (top.removeFromLeft (70).reduced (1, 2));
+    vectorEqual.setBounds (top.removeFromLeft (64).reduced (1, 2));
+    vectorPad->setBounds (top.removeFromLeft (56).reduced (2, 0));
+    vectorCcX.setBounds (top.removeFromLeft (76).reduced (1, 2));
+    vectorCcY.setBounds (top.removeFromLeft (76).reduced (1, 2));
 
     // sirok ekran (ceo ekran): svih 16 delova odjednom
     const bool all16 = r.getWidth() >= 1440;
@@ -2155,7 +2286,13 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     };
     playButton.setButtonText (T ("Sviraj (PART 1)"));
     playButton.setTooltip (T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
-    playButton.onClick = [this] { const int r = table.getSelectedRow(); if (r < 0) return; if (combiMode) loadCombiRow (r); else playRow (r); };
+    playButton.onClick = [this]
+    {
+        const int r = table.getSelectedRow();
+        if (r < 0) return;
+        if (combiMode && table.getNumSelectedRows() > 1) { loadCombisToList (table.getSelectedRows()); return; }
+        if (combiMode) loadCombiRow (r); else playRow (r);
+    };
     const char* modeNames[] = { "PROGRAMI", "KOMBIJI" };
     for (int b = 0; b < 2; ++b)
     {
@@ -2209,7 +2346,8 @@ void KronosPage::setMode (bool combis)
     h.setColumnWidth (kcOsc2, combis ? 120 : 260);
     onlyUser.setButtonText (combis ? T ("Samo kombiji sa mojim semplovima") : T ("Samo programi sa mojim semplovima"));
     playButton.setButtonText (combis ? T ("Učitaj u performans") : T ("Sviraj (PART 1)"));
-    playButton.setTooltip (combis ? T ("Kombi postaje trenutni performans (16 delova). Može i dupli klik. Sačuvaj ga dugmetom SNIMI.")
+    playButton.setTooltip (combis ? T ("Jedan kombi postaje trenutni performans (16 delova); može i dupli klik. "
+                                       "Više izabranih (Ctrl / Shift + klik) se učitava odjednom u listu performansa.")
                                   : T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
     createSelected.setVisible (! combis);
     keepChannels.setVisible (combis);
@@ -2299,6 +2437,69 @@ void KronosPage::loadCombiRow (int row)
     }
     offerAutosample (msg + T ("\n\nDa ih presemplujem sa Kronosa (Pikaso Autosampler)? ROM programima se snimaju multisemplovi, a EXi programima (AL-1, CX-3, SGX-2...) ceo zvuk."),
                      "--pcg \"" + pcg->file.getFullPathName() + "\" --combi " + juce::String (combi.bankId) + ":" + juce::String (combi.number));
+}
+
+void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
+{
+    auto* pcg = proc.getKronosPcg();
+    if (pcg == nullptr) return;
+    std::vector<int> combis;
+    for (int i = 0; i < sel.size(); ++i)
+        if (sel[i] >= 0 && sel[i] < (int) rows.size()) combis.push_back (rows[(size_t) sel[i]]);
+    if (combis.empty()) return;
+
+    auto* aw = new juce::AlertWindow (T ("Učitaj kombije u listu"),
+        juce::String ((int) combis.size()) + T (" kombija postaje performans u listi. Izaberi listu i od kog mesta."), juce::MessageBoxIconType::QuestionIcon);
+    juce::StringArray lists;
+    for (int b = 0; b < kNumPerfBanks; ++b) lists.add (juce::String (b + 1) + "  " + proc.getBankName (b));
+    aw->addComboBox ("list", lists, T ("Lista:"));
+    aw->getComboBoxComponent ("list")->setSelectedItemIndex (proc.getCurrentBank());
+    aw->addTextEditor ("from", "1", T ("Od mesta (1-128):"));
+    aw->addComboBox ("mode", { T ("Samo prazna mesta (zauzeta se preskaču)"), T ("Redom, preko postojećih") }, T ("Mesta:"));
+    aw->getComboBoxComponent ("mode")->setSelectedItemIndex (0);
+    aw->addButton (T ("Učitaj"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton (T ("Otkaži"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<KronosPage> safe (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw, combis] (int r)
+    {
+        if (safe == nullptr || r != 1) return;
+        auto& pr = safe->proc;
+        auto* pcg2 = pr.getKronosPcg();
+        if (pcg2 == nullptr) return;
+        const int list = aw->getComboBoxComponent ("list")->getSelectedItemIndex();
+        const bool onlyEmpty = aw->getComboBoxComponent ("mode")->getSelectedItemIndex() == 0;
+        int slot = list * kPerfPerBank + juce::jlimit (1, kPerfPerBank, aw->getTextEditorContents ("from").getIntValue()) - 1;
+        const int end = (list + 1) * kPerfPerBank;
+        int loaded = 0;
+        juce::StringArray skippedAll, notPlaced;
+        juce::String args;
+        bool needSampling = false;
+        for (int ci : combis)
+        {
+            const auto& combi = pcg2->combis[(size_t) ci];
+            while (onlyEmpty && slot < end && pr.getSlot (slot).used) ++slot;
+            if (slot >= end) { notPlaced.add (combi.id() + " " + combi.name); continue; }
+            const auto skipped = pr.loadKronosCombi (combi, safe->keepChannels.getToggleState());
+            pr.storePerformance (slot);
+            ++slot;
+            ++loaded;
+            bool rom = false;
+            for (auto& s : skipped) rom = rom || s.contains (T ("fabrički ROM")) || s.contains ("EXi ");
+            if (! skipped.isEmpty()) skippedAll.add (combi.id() + " " + combi.name + ": " + juce::String (skipped.size()) + " timbre");
+            if (rom) { needSampling = true; args << " --combi " << juce::String (combi.bankId) << ":" << juce::String (combi.number); }
+        }
+        pr.setCurrentBank (list);
+        safe->editor.showTab (LiveSamplerEditor::TabLists);
+        juce::String msg = T ("Učitano ") + juce::String (loaded) + T (" kombija u listu ") + juce::String (list + 1) + ".";
+        if (! notPlaced.isEmpty()) msg << T ("\n\nNema mesta u listi za: ") << notPlaced.joinIntoString (", ");
+        if (! skippedAll.isEmpty()) msg << T ("\n\nNisu preneti svi timbre-i:\n") << skippedAll.joinIntoString ("\n");
+        if (needSampling)
+            safe->offerAutosample (msg + T ("\n\nDa presemplujem sa Kronosa sve što fali u ovim kombijima, odjednom (Pikaso Autosampler)?"
+                                            " Posle snimanja klikni Osveži (PODEŠAVANJA) i učitaj ove kombije ponovo."),
+                                   "--pcg \"" + pcg2->file.getFullPathName() + "\"" + args);
+        else
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
+    }), true);
 }
 
 void KronosPage::playRow (int row)

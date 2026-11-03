@@ -75,6 +75,8 @@ void LiveSamplerProcessor::saveNow()
     }
 
     root.setAttribute ("pcMode", pcMode);
+    root.setAttribute ("vectorCcX", vectorCcX.load());
+    root.setAttribute ("vectorCcY", vectorCcY.load());
     root.setAttribute ("currentSetList", currentSetList);
     root.setAttribute ("setListPage", setListPage);
     auto* cats = root.createNewChildElement ("Categories");
@@ -177,6 +179,8 @@ void LiveSamplerProcessor::loadData()
         }
 
     pcMode = juce::jlimit (0, 1, xml->getIntAttribute ("pcMode", 0));
+    vectorCcX = juce::jlimit (0, 127, xml->getIntAttribute ("vectorCcX", 16));
+    vectorCcY = juce::jlimit (0, 127, xml->getIntAttribute ("vectorCcY", 17));
     currentSetList = juce::jlimit (0, kNumSetLists - 1, xml->getIntAttribute ("currentSetList", 0));
     setListPage = juce::jlimit (0, kSetListSlots / 16 - 1, xml->getIntAttribute ("setListPage", 0));
     if (auto* cats = xml->getChildByName ("Categories"))
@@ -484,6 +488,8 @@ void LiveSamplerProcessor::rebuildConfig()
                     pr.inst[(size_t) o] = getLoadedInstrument (pr.user.osc[(size_t) o].instrument);
         }
         pr.active = pr.part.on && u >= 0;
+        pr.vectorOn = perf.vectorOn;
+        pr.vectorEqualPower = perf.vectorEqualPower;
     }
     cfg->master = perf.master;
     cfg->globalDb = globalDb;
@@ -537,6 +543,7 @@ void LiveSamplerProcessor::timerCallback()
 
 void LiveSamplerProcessor::handleAsyncUpdate()
 {
+    if (! isLearningVector()) { markSave(); }    // posle LEARN-a vector CC-a
     const int msb = pendingBankMsb.exchange (-1);
     if (msb >= 0)
     {
@@ -788,6 +795,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
     auto p = perf;
     p.name = c.name.isNotEmpty() ? c.name : c.id();
     p.kronosSource = juce::String (c.bankId) + ":" + juce::String (c.number);
+    p.vectorOn = c.vectorVolume;
+    p.vectorEqualPower = c.vectorEqualPower;
     p.category = {};
     p.master.reverbLevel = (float) c.return1 / 127.0f;   // MFX1 Return
     p.master.delayLevel = (float) c.return2 / 127.0f;    // MFX2 Return
@@ -818,6 +827,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         part.transpose = tm.transpose;
         part.detuneCents = (float) tm.detuneCents;
         part.keyLow = juce::jmin (tm.keyLow, tm.keyHigh);
+        part.vectorDir = c.vectorVolume ? tm.vectorDir : 0;
+        part.vectorCenter = (float) tm.vectorCenter * 0.25f;
         part.keyHigh = juce::jmax (tm.keyLow, tm.keyHigh);
         part.velLow = juce::jmin (tm.velLow, tm.velHigh);
         part.velHigh = juce::jmax (tm.velLow, tm.velHigh);
@@ -958,6 +969,8 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     perf = slots[(size_t) slot];
     currentSlot = slot;
     currentBank = slot / kPerfPerBank;
+    vectorX = 0.0f; vectorY = 0.0f;     // joystick krece iz centra, kao na Kronosu
+    vectorUiDirty = true;
     perfDirty = false;
     markSave();
     rebuildConfig();
@@ -1879,6 +1892,19 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         for (auto& p : parts)
             p.setSustain (m.isSustainPedalOn());
     }
+    else if (m.isController() && learnVector.load() != 0)
+    {
+        // LEARN: prvi CC koji stigne postaje X ili Y vector joysticka
+        (learnVector.load() == 1 ? vectorCcX : vectorCcY) = m.getControllerNumber();
+        learnVector = 0;
+        triggerAsyncUpdate();
+    }
+    else if (m.isController() && (m.getControllerNumber() == vectorCcX.load() || m.getControllerNumber() == vectorCcY.load()))
+    {
+        const float v = juce::jlimit (-1.0f, 1.0f, ((float) m.getControllerValue() - 64.0f) / (m.getControllerValue() >= 64 ? 63.0f : 64.0f));
+        (m.getControllerNumber() == vectorCcX.load() ? vectorX : vectorY) = v;
+        vectorUiDirty = true;
+    }
     else if (m.isControllerOfType (1))
     {
         const float v = (float) m.getControllerValue() / 127.0f;
@@ -1958,7 +1984,10 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         const int len = juce::jmin (maxBlock, n - start);
 
         for (int p = 0; p < kNumParts; ++p)
+        {
+            parts[p].setVector (vectorX.load(), vectorY.load());
             parts[p].beginBlock (&c.parts[(size_t) p], len);
+        }
 
         int pos = 0;
         for (const auto meta : midi)

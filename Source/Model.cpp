@@ -284,6 +284,8 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
     auto e = std::make_unique<juce::XmlElement> ("Performance");
     e->setAttribute ("name", name);
     e->setAttribute ("used", used);
+    if (vectorOn) e->setAttribute ("vector", true);
+    if (vectorEqualPower) e->setAttribute ("vectorEqualPower", true);
     if (category.isNotEmpty()) e->setAttribute ("categoryName", category);
     if (kronosSource.isNotEmpty()) e->setAttribute ("kronosSource", kronosSource);
     masterToXml (master, *e->createNewChildElement ("Master"));
@@ -312,6 +314,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("delay", (double) p.delaySend);
         x->setAttribute ("terca", p.terca);
         x->setAttribute ("sustain", p.sustainPedal);
+        if (p.vectorDir != 0) { x->setAttribute ("vjs", p.vectorDir); x->setAttribute ("vjsCenter", (double) p.vectorCenter); }
     }
     return e;
 }
@@ -321,6 +324,8 @@ Performance Performance::fromXml (const juce::XmlElement& e)
     Performance perf;
     perf.name = e.getStringAttribute ("name", perf.name);
     perf.used = e.getBoolAttribute ("used", true);
+    perf.vectorOn = e.getBoolAttribute ("vector", false);
+    perf.vectorEqualPower = e.getBoolAttribute ("vectorEqualPower", false);
     perf.category = e.getStringAttribute ("categoryName");
     perf.kronosSource = e.getStringAttribute ("kronosSource");
     if (auto* m = e.getChildByName ("Master"))
@@ -350,6 +355,8 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.delaySend = (float) x->getDoubleAttribute ("delay", 0.0);
         p.terca = x->getBoolAttribute ("terca", false);
         p.sustainPedal = x->getBoolAttribute ("sustain", true);
+        p.vectorDir = juce::jlimit (0, 4, x->getIntAttribute ("vjs", 0));
+        p.vectorCenter = (float) juce::jlimit (0.0, 1.0, x->getDoubleAttribute ("vjsCenter", 1.0));
     }
     return perf;
 }
