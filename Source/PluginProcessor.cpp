@@ -584,6 +584,8 @@ namespace
 
 int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
 {
+    if (prog.exi)
+        return createUserFromKronosExi (prog);
     UserProgram u;
     int n = 0;
     const int numOsc = prog.doubleMode ? 2 : 1;
@@ -676,6 +678,42 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
     return idx;
 }
 
+// EXi program je snimljen ceo (envelope, filter, LFO su vec u snimku): user samo svira snimak,
+// a release i jacinu (velocity) uzima iz onoga sto je autosampler izmerio
+int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
+{
+    const auto inst = resolveKronosExi (prog);
+    if (inst.isEmpty())
+        return -1;
+
+    UserProgram u;
+    auto& sb = u.block[0];
+    sb.ampEg = EnvSettings();
+    sb.ampEg.attackTime = 0.001f;
+    sb.ampEg.sustain = 1.0f;
+    const float rel = library.kronosTag (prog.exiKey, "release").getFloatValue();
+    sb.ampEg.releaseTime = juce::jlimit (0.03f, 12.0f, rel > 0.0f ? rel : 0.3f);
+    sb.filterType = FilterType::Off;
+    // vise velocity slojeva: dinamika je vec snimljena, pa jacina malo zavisi od udarca
+    const int layers = library.kronosTag (prog.exiKey, "layers").getIntValue();
+    sb.velSens = layers > 1 ? 0.25f : 0.6f;
+
+    auto& os = u.osc[0];
+    os.on = true;
+    os.instrument = inst;
+    os.block = 0;
+
+    u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
+    u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
+    u.send1 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend1) / 127.0f : 1.0f;
+    u.send2 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend2) / 127.0f : 1.0f;
+
+    const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
+    loadNeededInstruments();
+    requestInstrument (inst, nullptr);
+    return idx;
+}
+
 int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
 {
     const int existing = findUser (p.name);
@@ -708,7 +746,8 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         {
             skipped.add ("Timbre " + juce::String (t + 1) + ": "
                          + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
-                         + (prog != nullptr && prog->drumKit ? " (drum kit, još nije podržan)"
+                         + (prog != nullptr && prog->exi ? " (EXi " + prog->engineText() + juce::String::fromUTF8 (" sinteza, nije presemplovana)")
+                            : prog != nullptr && prog->drumKit ? " (drum kit, još nije podržan)"
                             : prog != nullptr && ! prog->usesUser() ? " (fabrički ROM, nije presemplovan)" : ""));
             continue;
         }

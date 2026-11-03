@@ -156,6 +156,7 @@ void SampleLibrary::scan (const juce::Array<juce::File>& rootFolders)
     names.clear();
     entries.clear();
     kronosMs.clear();
+    kronosTags.clear();
 
     for (auto& r : roots)
         if (r.isDirectory())
@@ -169,6 +170,13 @@ juce::String SampleLibrary::findKronosRom (const juce::String& romKey) const
     const juce::ScopedLock sl (lock);
     auto it = kronosMs.find (romKey.toLowerCase());
     return it != kronosMs.end() ? it->second : juce::String();
+}
+
+juce::String SampleLibrary::kronosTag (const juce::String& key, const juce::String& name) const
+{
+    const juce::ScopedLock sl (lock);
+    auto it = kronosTags.find (key.toLowerCase());
+    return it != kronosTags.end() ? it->second.getValue (name, {}) : juce::String();
 }
 
 juce::String SampleLibrary::findKronosMultisample (const juce::String& uuid, int index) const
@@ -245,9 +253,23 @@ void SampleLibrary::scanRoot (const juce::File& root)
             // presemplovan Kronos ROM multisempl (Kronos Autosampler upisuje kronos-ms.txt)
             const auto tag = d.getChildFile ("kronos-ms.txt");
             if (tag.existsAsFile())
+            {
+                juce::String key;
+                juce::StringPairArray vals;
                 for (auto& l : juce::StringArray::fromLines (tag.loadFileAsString()))
-                    if (l.trim().startsWith ("rom:"))
-                        kronosMs[l.trim().toLowerCase()] = names[names.size() - 1];
+                {
+                    const auto t = l.trim();
+                    if (t.startsWith ("rom:") || t.startsWith ("exi:"))
+                    {
+                        key = t.toLowerCase();
+                        kronosMs[key] = names[names.size() - 1];
+                    }
+                    else if (t.containsChar ('='))
+                        vals.set (t.upToFirstOccurrenceOf ("=", false, false).trim(), t.fromFirstOccurrenceOf ("=", false, false).trim());
+                }
+                if (key.isNotEmpty() && vals.size() > 0)
+                    kronosTags[key] = vals;
+            }
         }
     }
 

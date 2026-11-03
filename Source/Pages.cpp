@@ -2252,14 +2252,14 @@ void KronosPage::loadCombiRow (int row)
     if (skipped.isEmpty())
         return;
     bool rom = false;
-    for (auto& s : skipped) rom = rom || s.contains (T ("fabrički ROM"));
+    for (auto& s : skipped) rom = rom || s.contains (T ("fabrički ROM")) || s.contains ("EXi ");
     const auto msg = T ("Ovi timbre-i nisu preneti:\n\n") + skipped.joinIntoString ("\n");
     if (! rom)
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
         return;
     }
-    offerAutosample (msg + T ("\n\nDa presemplujem njihove ROM multisemplove sa Kronosa (Kronos Autosampler)?"),
+    offerAutosample (msg + T ("\n\nDa ih presemplujem sa Kronosa (Kronos Autosampler)? ROM programima se snimaju multisemplovi, a EXi programima (AL-1, CX-3, SGX-2...) ceo zvuk."),
                      "--pcg \"" + pcg->file.getFullPathName() + "\" --combi " + juce::String (combi.bankId) + ":" + juce::String (combi.number));
 }
 
@@ -2274,7 +2274,11 @@ void KronosPage::playRow (int row)
     {
         bool rom = false;
         for (auto& o : prog.osc) for (auto& z : o) rom = rom || z.romKey.isNotEmpty();
-        if (prog.drumKit)
+        if (prog.exi)
+            offerAutosample (T ("Program \"") + prog.name + T ("\" je EXi program (") + prog.engineText()
+                             + T (" sinteza) i još nije presemplovan.\n\nDa ga presemplujem sa Kronosa (Kronos Autosampler)? Snima se ceo zvuk programa, svaki treći ton, u više jačina."),
+                             "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
+        else if (prog.drumKit)
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", T ("Ovo je drum kit program; drum kitovi još nisu podržani."));
         else if (rom)
             offerAutosample (T ("Program \"") + prog.name + T ("\" koristi fabričke ROM multisemplove koji još nisu presemplovani.\n\nDa ih presemplujem sa Kronosa (Kronos Autosampler)?"),
@@ -2315,7 +2319,7 @@ void KronosPage::rebuildRows()
         for (size_t i = 0; i < pcg->programs.size(); ++i)
         {
             const auto& p = pcg->programs[i];
-            if (! p.hd1) continue;
+            if (! p.hd1 && ! p.exi) continue;
             if (onlyUser.getToggleState() && ! proc.kronosProgramPlayable (p)) continue;
             if (q.isNotEmpty() && ! p.name.containsIgnoreCase (q)) continue;
             rows.push_back ((int) i);
@@ -2346,14 +2350,15 @@ void KronosPage::refresh()
         return;
     }
 
-    int hd1 = 0, user = 0;
+    int hd1 = 0, user = 0, exi = 0;
     for (auto& p : pcg->programs)
     {
         if (p.hd1) ++hd1;
+        if (p.exi) ++exi;
         if (p.usesUser()) ++user;
     }
     fileLabel.setText (pcg->file.getFileName(), juce::dontSendNotification);
-    infoLabel.setText (juce::String ((int) pcg->programs.size()) + T (" programa (") + juce::String (hd1) + T (" HD-1), ")
+    infoLabel.setText (juce::String ((int) pcg->programs.size()) + T (" programa (") + juce::String (hd1) + T (" HD-1, ") + juce::String (exi) + T (" EXi), ")
                        + juce::String (user) + T (" sa tvojim semplovima  |  ") + juce::String ((int) pcg->combis.size()) + T (" kombija  |  ")
                        + juce::String (pcg->drumKits) + T (" bubanj kitova") + (proc.isScanning() ? T ("  |  pretražujem semplove...") : juce::String()),
                        juce::dontSendNotification);
@@ -2440,6 +2445,14 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
         case kcOsc1:
         case kcOsc2:
         {
+            if (p.exi)
+            {
+                const auto inst = proc.resolveKronosExi (p);
+                if (col == kcOsc1) t = "EXi " + p.engineText();
+                else t = inst.isNotEmpty() ? T ("presemplovan") : T ("nije presemplovan");
+                if (inst.isEmpty()) c = Pal::dim;
+                break;
+            }
             const int o = col == kcOsc1 ? 0 : 1;
             const int z = p.firstUserZone (o);
             t = z >= 0 ? msText (p.osc[(size_t) o][(size_t) z]) : (p.osc[(size_t) o][0].used ? msText (p.osc[(size_t) o][0]) : "-");

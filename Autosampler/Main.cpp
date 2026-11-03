@@ -3,6 +3,8 @@
 // 2) napravi PCG sa po jednim programom za svaki multisempl (OSC1 MS1 = taj multisempl, bez efekata)
 // 3) preko MIDI-ja bira te programe na Kronosu, svira svaki treci ton i snima preko USB audio ulaza
 // 4) cuva WAV fajlove + kronos-ms.txt, pa ih Live Sampler koristi umesto ROM zvuka.
+// EXi programi (AL-1, CX-3, STR-1, MS-20EX, PolysixEX, MOD-7, SGX-2, EP-1) nemaju multisemplove:
+// ceo program se salje u edit buffer (SysEx), bez efekata, i snima se svaki treci ton u vise jacina.
 #include <JuceHeader.h>
 #include "KronosPcg.h"
 #include "KronosNames.h"
@@ -16,7 +18,7 @@ namespace
     juce::String noteName (int n) { return juce::MidiMessage::getMidiNoteName (n, true, true, 3); }
 
     // sirovi pristup programima u PCG-u (za citanje sablona i upis novih programa)
-    struct RawBank { juce::uint32 bankId = 0; size_t firstItem = 0; int count = 0, itemSize = 0; };
+    struct RawBank { juce::uint32 bankId = 0; size_t firstItem = 0; int count = 0, itemSize = 0; bool exi = false; };
 
     std::vector<RawBank> findProgramBanks (const juce::MemoryBlock& mb)
     {
@@ -32,13 +34,14 @@ namespace
                 const size_t size = be32 (i + 4), content = i + 12;
                 if (content + size > e || size == 0) break;
                 if (id == "PCG1" || id == "PRG1") walk (content, content + size);
-                else if (id == "PBK1" && size >= 12)
+                else if ((id == "PBK1" || id == "MBK1") && size >= 12)
                 {
                     RawBank b;
                     b.count = (int) be32 (content);
                     b.itemSize = (int) be32 (content + 4);
                     b.bankId = be32 (content + 8);
                     b.firstItem = content + 12;
+                    b.exi = id == "MBK1";
                     if (b.itemSize == Kronos::programSize) out.push_back (b);
                 }
                 i = content + size;
@@ -54,8 +57,15 @@ namespace
         std::array<juce::uint8, 20> zone {};
         juce::String usedBy;
         int slot = -1;                  // broj programa u napravljenoj banci
+        // EXi program: snima se ceo program
+        bool exi = false;
+        juce::String engine;            // npr. "AL-1" ili "AL-1+STR-1"
+        juce::String programId;         // npr. "INT-D 049"
+        std::array<int, 2> alg {};
+        std::vector<juce::uint8> program;   // 4960 bajtova iz PCG-a
         juce::String label() const
         {
+            if (exi) return "EXi " + engine + " " + programId;
             const int type = zone[0] & 3, bankByte = zone[16], index = zone[18] | (zone[19] << 8);
             const int bank = bankByte >> 1;
             const bool stereo = (bankByte & 1) != 0;
@@ -258,6 +268,18 @@ public:
         midiLabel.setColour (juce::Label::textColourId, dim);
         addAndMakeVisible (midiLabel);
 
+        exiIfxToggle.setButtonText (juce::String::fromUTF8 ("EXi: snimaj sa insert efektima (IFX)"));
+        exiIfxToggle.setTooltip (juce::String::fromUTF8 ("Isključeno: suv zvuk sinteze (efekte dodaješ u Live Sampleru). Uključeno: zvuk sa IFX efektima programa (chorus, phaser, delay...). Master efekti (reverb) su uvek isključeni."));
+        addAndMakeVisible (exiIfxToggle);
+        exiVelLabel.setText (juce::String::fromUTF8 ("EXi jačine:"), juce::dontSendNotification);
+        exiVelLabel.setColour (juce::Label::textColourId, dim);
+        addAndMakeVisible (exiVelLabel);
+        exiVelBox.addItem (juce::String::fromUTF8 ("Auto (klavir 6, EP 5, STR-1 4, orgulje 1, sint 2)"), 1);
+        for (int n : { 1, 2, 3, 4, 6, 8 }) exiVelBox.addItem (juce::String (n) + (n == 1 ? juce::String::fromUTF8 (" jačina (127)") : juce::String::fromUTF8 (" jačina")), 100 + n);
+        exiVelBox.setSelectedId (1, juce::dontSendNotification);
+        exiVelBox.onChange = [this] { updateInfo(); };
+        addAndMakeVisible (exiVelBox);
+
         autoLoopToggle.setButtonText (juce::String::fromUTF8 ("Auto loop (za zvuke koji drže)"));
         autoLoopToggle.setToggleState (true, juce::dontSendNotification);
         addAndMakeVisible (autoLoopToggle);
@@ -280,11 +302,17 @@ public:
         folderLabel.setColour (juce::Label::textColourId, lcd);
         addAndMakeVisible (folderLabel);
 
-        testButton.setButtonText ("Test (prvi multisempl)");
+        testButton.setButtonText ("Test (prvi na listi)");
         testButton.onClick = [this]
         {
             if (needed.empty()) return;
-            if (sysexMode.getToggleState()) { sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
+            if (needed[0].exi)
+            {
+                juce::String err;
+                if (! sendExiSysex (needed[0], err)) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "EXi", err); return; }
+                send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 100)); juce::Thread::sleep (1200); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60));
+            }
+            else if (sysexMode.getToggleState()) { sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
             else if (needed[0].slot >= 0) selectProgram (needed[0].slot);
         };
         addAndMakeVisible (testButton);
@@ -298,7 +326,9 @@ public:
         help.setText (juce::String::fromUTF8 (
             "Redosled: 1) učitaj PCG i dodaj programe/kombije  2) Napravi PCG, pa ga na Kronosu učitaj u izabranu banku "
             "(Load PCG → samo tu banku)  3) izaberi Kronos USB audio ulaz i MIDI izlaz, podesi Bank CC0/CC32 tako da Test "
-            "na Kronosu izabere prvi novi program, pa START. Snimanje se može prekinuti i nastaviti: postojeći fajlovi se preskaču."),
+            "na Kronosu izabere prvi novi program, pa START. Snimanje se može prekinuti i nastaviti: postojeći fajlovi se preskaču.\n"
+            "EXi programi (AL-1, CX-3, SGX-2...) idu samo direktno preko SysEx-a (treba i MIDI ulaz sa Kronosa); šablon za njih ne treba. "
+            "Na Kronosu isključi KARMA i Drum Track dugme. Za klavir i EP stavi Drži na 8-10 s."),
             juce::dontSendNotification);
         help.setColour (juce::Label::textColourId, dim);
         help.setJustificationType (juce::Justification::topLeft);
@@ -458,6 +488,11 @@ public:
         minLoopLabel.setBounds (rl.removeFromLeft (110));
         minLoopMs.setBounds (rl.removeFromLeft (110).reduced (0, 2));
         c.removeFromTop (4);
+        auto re = c.removeFromTop (30);
+        exiIfxToggle.setBounds (re.removeFromLeft (300));
+        exiVelLabel.setBounds (re.removeFromLeft (80));
+        exiVelBox.setBounds (re.removeFromLeft (360).reduced (0, 2));
+        c.removeFromTop (4);
         auto r3 = c.removeFromTop (32);
         folderButton.setBounds (r3.removeFromLeft (180));
         r3.removeFromLeft (10);
@@ -551,7 +586,7 @@ private:
 
         bankBox.clear();
         for (auto& b : banks)
-            if ((b.bankId >> 16) == 2)
+            if ((b.bankId >> 16) == 2 && ! b.exi)
                 bankBox.addItem (Kronos::programBankName (b.bankId), (int) b.bankId + 1);
         bankBox.setSelectedItemIndex (juce::jmax (0, bankBox.getNumItems() - 1));
         rebuildSource();
@@ -559,6 +594,11 @@ private:
 
     juce::String sourceText (int code) const
     {
+        if (code >= 0 && code < 100000 && pcg->programs[(size_t) code].exi)
+        {
+            const auto& p = pcg->programs[(size_t) code];
+            return p.id() + "  " + p.name + "   [EXi " + p.engineText() + "]";
+        }
         if (code >= 100000)
         {
             const auto& c = pcg->combis[(size_t) (code - 100000)];
@@ -570,6 +610,7 @@ private:
 
     bool programHasRom (const Kronos::Program& p) const
     {
+        if (p.exi) return true;
         if (! p.hd1 || p.drumKit) return false;
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
             for (auto& z : p.osc[(size_t) o])
@@ -609,6 +650,23 @@ private:
     void addProgram (const Kronos::Program& p)
     {
         if (! programHasRom (p)) return;
+        if (p.exi)
+        {
+            for (auto& n : needed)
+                if (n.romKey == p.exiKey) return;
+            auto* raw = rawProgram (p);
+            if (raw == nullptr) return;
+            NeededMs n;
+            n.exi = true;
+            n.romKey = p.exiKey;
+            n.engine = p.engineText();
+            n.alg = p.exiAlg;
+            n.programId = p.id();
+            n.usedBy = p.name;
+            n.program.assign (raw, raw + Kronos::programSize);
+            needed.push_back (std::move (n));
+            return;
+        }
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
             for (int z = 0; z < 8; ++z)
             {
@@ -650,10 +708,15 @@ private:
 
     void updateInfo()
     {
-        int done = 0;
-        for (auto& n : needed) if (isDone (n)) ++done;
-        info.setText (juce::String ((int) needed.size()) + " multisemplova, presemplovano " + juce::String (done)
-                      + juce::String::fromUTF8 ("  (procena: ~") + juce::String ((int) needed.size() * estimateSecondsPerMs() / 60) + " min)",
+        int done = 0, exi = 0, seconds = 0;
+        for (auto& n : needed)
+        {
+            if (isDone (n)) { ++done; continue; }
+            if (n.exi) ++exi;
+            seconds += estimateSecondsPerMs() * (n.exi ? (int) exiVelocities (n).size() : 1);
+        }
+        info.setText (juce::String ((int) needed.size() - exi) + " multisemplova + " + juce::String (exi) + " EXi programa, gotovo " + juce::String (done)
+                      + juce::String::fromUTF8 ("  (preostalo: ~") + juce::String (seconds / 60) + " min)",
                       juce::dontSendNotification);
     }
 
@@ -724,7 +787,7 @@ private:
     const juce::uint8* rawProgram (const Kronos::Program& p) const
     {
         for (auto& b : banks)
-            if (b.bankId == p.bankId && p.number < b.count)
+            if (b.bankId == p.bankId && b.exi == p.exi && p.number < b.count)
                 return (const juce::uint8*) pcgData.getData() + b.firstItem + (size_t) p.number * Kronos::programSize;
         return nullptr;
     }
@@ -824,6 +887,79 @@ private:
         return true;
     }
 
+    // jacine za EXi program (velocity slojevi)
+    std::vector<int> exiVelocities (const NeededMs& n) const
+    {
+        int layers = exiVelBox.getSelectedId() - 100;
+        if (layers <= 0)
+        {
+            auto has = [&n] (int a) { return n.alg[0] == a || n.alg[1] == a; };
+            layers = has (8) ? 6 : has (9) ? 5 : has (4) ? 4 : (n.alg[0] == 3 && (n.alg[1] == 0 || n.alg[1] == 3)) ? 1 : 2;
+        }
+        std::vector<int> v;
+        for (int i = 1; i <= layers; ++i) v.push_back (juce::jlimit (1, 127, (int) std::round (127.0 * i / layers)));
+        return v;
+    }
+
+    // EXi program bez efekata (Prog_EXi_Common.txt): IFX 1-12, MFX, TFX iskljuceni, Bus L/R,
+    // sendovi 0, Drum Track i Hold iskljuceni. Sve ostalo (sinteza, envelope, filter) ostaje kako jeste.
+    static void makeExiDry (juce::uint8* p, bool keepIfx)
+    {
+        if (! keepIfx)
+        {
+            for (int i = 0; i < 12; ++i) p[89 + 74 * i] &= (juce::uint8) ~0x40;
+            p[2565] &= (juce::uint8) ~0x1f;                 // Bus Select L/R
+        }
+        else
+        {
+            // IFX ostaju; zvuk koji ide u IFX izlazi na L/R (bus IFX-a), a ne u sub izlaze
+            for (int i = 0; i < 12; ++i) p[93 + 74 * i] &= (juce::uint8) ~0x0f;   // izlaz IFX-a: L/R (ne sub izlazi)
+            if ((p[2565] & 0x1f) > 12) p[2565] &= (juce::uint8) ~0x1f;          // program na sub izlazu -> L/R
+        }
+        for (int o : { 977, 1045, 1117, 1185 }) p[o] &= (juce::uint8) ~0x40;   // MFX1, MFX2, TFX1, TFX2
+        p[1048] = 0; p[1049] = 0;                           // MFX return
+        p[2864] = 0; p[2865] = 0; p[3916] = 0; p[3917] = 0; // EXi1 / EXi2 send MFX
+        p[1295] &= (juce::uint8) ~0x10;                     // Drum Track Off
+        p[2558] &= (juce::uint8) ~0x40;                     // Hold Off
+    }
+
+    // zaglavlje za Current Object Dump (verzija programa) - uzima se iz odgovora Kronosa
+    bool ensureSysexHeader (juce::String& err)
+    {
+        if (! sxHeader.empty()) return true;
+        if (midiIn == nullptr || midi == nullptr) { err = juce::String::fromUTF8 ("Za EXi programe izaberi MIDI ulaz i izlaz Kronosa."); return false; }
+        sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);
+        auto r = sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x74, 0x00 }, 0x75, 3000);
+        if (! r || r->size() < 8)
+        {
+            err = juce::String::fromUTF8 ("Kronos nije odgovorio na SysEx. Proveri MIDI kanal, PROGRAM mod i GLOBAL > MIDI > Exclusive.");
+            return false;
+        }
+        sxHeader.assign (r->begin(), r->begin() + 6);
+        sxHeader[3] = 0x75;
+        return true;
+    }
+
+    bool sendExiSysex (const NeededMs& n, juce::String& err)
+    {
+        if (! ensureSysexHeader (err)) return false;
+        auto data = n.program;
+        makeExiDry (data.data(), exiIfxToggle.getToggleState());
+        auto body = sxHeader;
+        body[1] = sysexChannelByte();
+        body[4] = 0x00;
+        auto packed = pack7 (data);
+        body.insert (body.end(), packed.begin(), packed.end());
+        sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
+        auto reply = sysexCall (body, 0x24, 3000);
+        if (reply && reply->size() > 5 && (*reply)[5] != 0)
+        {
+            err = "Kronos javlja grešku " + juce::String::toHexString ((int) (*reply)[5]) + juce::String::fromUTF8 (" za EXi program (") + n.programId + ")";
+            return false;
+        }
+        return true;
+    }
+
     //==========================================================================
     void makePcg()
     {
@@ -831,13 +967,13 @@ private:
         const int tIdx = templateBox.getSelectedId() - 1;
         const juce::uint32 bankId = (juce::uint32) (bankBox.getSelectedId() - 1);
         const RawBank* target = nullptr;
-        for (auto& b : banks) if (b.bankId == bankId) target = &b;
+        for (auto& b : banks) if (b.bankId == bankId && ! b.exi) target = &b;
         if (tIdx < 0 || target == nullptr) return;
 
         // sablon: sirovi bajtovi izabranog programa
         const auto& tp = pcg->programs[(size_t) tIdx];
         const RawBank* tb = nullptr;
-        for (auto& b : banks) if (b.bankId == tp.bankId) tb = &b;
+        for (auto& b : banks) if (b.bankId == tp.bankId && ! b.exi) tb = &b;
         if (tb == nullptr) return;
         auto* data = (juce::uint8*) pcgData.getData();
         std::vector<juce::uint8> tpl (data + tb->firstItem + (size_t) tp.number * Kronos::programSize,
@@ -850,6 +986,7 @@ private:
         juce::StringArray mapLines;
         for (auto& n : needed)
         {
+            if (n.exi) continue;    // EXi ide samo preko SysEx-a
             if (slot >= target->count) { n.slot = -1; continue; }
             auto prg = tpl;
             patchProgram (prg.data(), n);
@@ -966,13 +1103,21 @@ private:
             return;
         }
         useSysex = sysexMode.getToggleState();
-        if (useSysex && sxTemplate.empty())
+        bool anyRom = false, anyExi = false;
+        for (auto& n : needed) { anyRom = anyRom || (! n.exi && ! isDone (n)); anyExi = anyExi || (n.exi && ! isDone (n)); }
+        if (anyExi && midiIn == nullptr)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
+                juce::String::fromUTF8 ("EXi programi se šalju preko SysEx-a: izaberi i MIDI ulaz sa Kronosa."));
+            return;
+        }
+        if (useSysex && anyRom && sxTemplate.empty())
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
                 juce::String::fromUTF8 ("Na Kronosu izaberi Init Program (npr. USER-FF 006) pa klikni \"Pročitaj šablon sa Kronosa\"."));
             return;
         }
-        bool anySlot = useSysex;
+        bool anySlot = useSysex || ! anyRom;
         for (auto& n : needed) anySlot = anySlot || n.slot >= 0;
         if (! anySlot)
         {
@@ -990,6 +1135,8 @@ private:
         settings.autoLoop = autoLoopToggle.getToggleState();
         settings.xfadeMs = xfadeMs.getValue();
         settings.minLoopMs = minLoopMs.getValue();
+        exiVels.clear();
+        for (auto& n : needed) exiVels.push_back (n.exi ? exiVelocities (n) : std::vector<int> {});
         outFolder.createDirectory();
         startButton.setButtonText ("STOP");
         startThread();
@@ -1012,6 +1159,16 @@ private:
             auto n = needed[(size_t) i];
             if (isDone (n)) continue;
             setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  (" + n.usedBy + ")");
+            if (n.exi)
+            {
+                juce::String err;
+                if (! sendExiSysex (n, err)) { setStatus (err); continue; }
+                wait (1500);
+                recordExi (n, i, total, exiVels[(size_t) i]);
+                if (threadShouldExit()) break;
+                juce::MessageManager::callAsync ([this] { neededList.repaint(); updateInfo(); });
+                continue;
+            }
             if (useSysex)
             {
                 if (! sendProgramSysex (n)) break;
@@ -1043,7 +1200,44 @@ private:
         setStatus (threadShouldExit() ? "Zaustavljeno." : juce::String::fromUTF8 ("Gotovo. U Live Sampleru klikni Osveži (PODEŠAVANJA) pa ponovo napravi usere od Kronos programa."));
     }
 
-    bool recordNote (int note, const juce::File& file)
+    // ceo EXi program: svaki korak note x svaka jacina; release se meri i upisuje u kronos-ms.txt
+    void recordExi (const NeededMs& n, int i, int total, const std::vector<int>& vels)
+    {
+        const auto folder = msFolder (n);
+        folder.createDirectory();
+        int written = 0;
+        std::vector<double> releases;
+        for (int note = settings.low; note <= settings.high && ! threadShouldExit(); note += settings.step)
+            for (size_t v = 0; v < vels.size() && ! threadShouldExit(); ++v)
+            {
+                const int vel = vels[v];
+                setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  nota " + noteName (note)
+                           + juce::String::fromUTF8 ("  jačina ") + juce::String (vel));
+                // ime: nota (broj) + v<jacina>; Live Sampler od toga pravi velocity zone
+                const auto f = folder.getChildFile (juce::String (note).paddedLeft ('0', 3) + " v" + juce::String (vel).paddedLeft ('0', 3) + ".wav");
+                double rel = -1.0;
+                if (f.existsAsFile()) { ++written; continue; }
+                if (recordNote (note, f, vel, &rel))
+                {
+                    ++written;
+                    if (rel >= 0.0 && v + 1 == vels.size()) releases.push_back (rel);
+                }
+            }
+        if (threadShouldExit()) return;
+        if (written == 0) { folder.deleteRecursively(); return; }
+        double release = 0.3;
+        if (! releases.empty())
+        {
+            std::sort (releases.begin(), releases.end());
+            release = releases[releases.size() / 2];
+        }
+        folder.getChildFile ("kronos-ms.txt").replaceWithText (n.romKey + "\n" + n.label() + "\n" + n.usedBy + "\n"
+                                                               + "release=" + juce::String (release, 3) + "\n"
+                                                               + "layers=" + juce::String ((int) vels.size()) + "\n"
+                                                               + "engine=" + n.engine + "\n");
+    }
+
+    bool recordNote (int note, const juce::File& file, int velocityOverride = -1, double* releaseSec = nullptr)
     {
         const double sr = recorder.sampleRate;
         // sacekaj tisinu pre note
@@ -1052,8 +1246,10 @@ private:
         recorder.writePos = 0;
         recorder.recording = true;
         wait (40);
-        send (juce::MidiMessage::noteOn (settings.channel, note, (juce::uint8) settings.velocity));
+        const int vel = velocityOverride > 0 ? velocityOverride : settings.velocity;
+        send (juce::MidiMessage::noteOn (settings.channel, note, (juce::uint8) vel));
         wait ((int) (settings.hold * 1000.0));
+        const int offPos = recorder.writePos.load();
         send (juce::MidiMessage::noteOff (settings.channel, note));
         // release: dok ne utihne ili do maksimuma
         const auto t0 = juce::Time::getMillisecondCounter();
@@ -1081,6 +1277,24 @@ private:
         const float endThr = peak * 0.0003f;
         while (end > start + 64 && std::abs (buf.getSample (0, end - 1)) < endThr && std::abs (buf.getSample (1, end - 1)) < endThr) --end;
         const int outLen = end - start;
+        const int holdLen = juce::jlimit (0, outLen, offPos - start);   // deo pre pustanja tastera
+        if (releaseSec != nullptr && holdLen > 0)
+        {
+            // vreme za koje zvuk posle pustanja tastera padne 30 dB
+            auto rms = [&] (int from, int w)
+            {
+                double e = 0; int cnt = 0;
+                for (int k = juce::jmax (0, from); k < juce::jmin (len, from + w); ++k, ++cnt)
+                    e += 0.5 * (buf.getSample (0, k) * buf.getSample (0, k) + buf.getSample (1, k) * buf.getSample (1, k));
+                return cnt > 0 ? std::sqrt (e / cnt) : 0.0;
+            };
+            const int w = (int) (sr * 0.01);
+            const double l0 = rms (offPos - 2 * w, 2 * w);
+            int k = offPos;
+            if (l0 > 1.0e-5)
+                while (k < end && rms (k, w) > l0 * 0.0316) k += w;
+            *releaseSec = (double) (k - offPos) / sr;
+        }
         const int fade = juce::jmin (outLen / 4, (int) (sr * 0.01));
         juce::AudioBuffer<float> outBuf (2, outLen);
         for (int c = 0; c < 2; ++c)
@@ -1101,7 +1315,7 @@ private:
             ls.crossfadeSec = settings.xfadeMs * 0.001;
             ls.minLoopSec = settings.minLoopMs * 0.001;
             ls.maxLoopSec = juce::jmax (ls.minLoopSec + 0.1, settings.hold * 0.6);
-            const auto lr = AutoLoop::find (outBuf, outLen, sr, ls);
+            const auto lr = AutoLoop::find (outBuf, holdLen > 0 ? holdLen : outLen, sr, ls);
             if (lr.found)
             {
                 AutoLoop::bakeCrossfade (outBuf, lr.start, lr.end, lr.crossfade);
@@ -1152,7 +1366,10 @@ private:
     juce::TextEditor search;
     juce::ListBox sourceList, neededList;
     juce::ComboBox templateBox, bankBox, midiOut, midiInBox;
-    juce::ToggleButton sysexMode, autoLoopToggle;
+    juce::ToggleButton sysexMode, autoLoopToggle, exiIfxToggle;
+    juce::Label exiVelLabel;
+    juce::ComboBox exiVelBox;
+    std::vector<std::vector<int>> exiVels;
     juce::Slider xfadeMs, minLoopMs;
     juce::Label xfadeLabel, minLoopLabel;
     juce::TextButton readTemplateButton;

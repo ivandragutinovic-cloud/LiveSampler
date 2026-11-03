@@ -18,6 +18,32 @@ namespace Kronos
         return -1;
     }
 
+    juce::String exiEngineName (int a)
+    {
+        static const char* names[] = { "Off", "HD-1", "AL-1", "CX-3", "STR-1", "MS-20EX", "PolysixEX", "MOD-7", "SGX-2", "EP-1" };
+        return a >= 0 && a < 10 ? juce::String (names[a]) : "EXi " + juce::String (a);
+    }
+
+    juce::String makeExiKey (const juce::uint8* program)
+    {
+        // FNV-1a 64 dva puta (razliciti pocetak) = 128-bitni otisak programa
+        juce::uint64 a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+        for (int i = 0; i < programSize; ++i)
+        {
+            a = (a ^ program[i]) * 0x100000001b3ull;
+            b = (b ^ program[programSize - 1 - i]) * 0x100000001b3ull;
+        }
+        return "exi:" + juce::String::toHexString ((juce::int64) a).paddedLeft ('0', 16) + juce::String::toHexString ((juce::int64) b).paddedLeft ('0', 16);
+    }
+
+    juce::String Program::engineText() const
+    {
+        if (! exi) return hd1 ? "HD-1" : "?";
+        juce::String s = exiEngineName (exiAlg[0]);
+        if (exiAlg[1] != 0) s << "+" << exiEngineName (exiAlg[1]);
+        return s;
+    }
+
     static juce::String letters (int i)
     {
         return juce::String::charToString ((juce::juce_wchar) ('A' + (i % 26)));
@@ -234,6 +260,18 @@ namespace Kronos
                         p.number = (int) k;
                         p.name = readName (item);
                         p.hd1 = id == "PBK1" && itemSize == (juce::uint32) programSize;
+                        if (id == "MBK1" && itemSize == (juce::uint32) programSize && (item[2558] & 0x03) == 3)
+                        {
+                            p.exi = true;
+                            p.exiAlg = { item[exi1AlgOffset], item[exi2AlgOffset] };
+                            p.exiKey = makeExiKey (item);
+                            p.mono = (item[2558] & 0x80) != 0;
+                            p.legato = (item[2559] & 0x10) != 0;
+                            p.priority = (item[2559] >> 2) & 3;
+                            p.busLR = (item[2565] & 0x1f) == 0;
+                            p.exiSend1 = item[2864];
+                            p.exiSend2 = item[2865];
+                        }
                         if (p.hd1)
                         {
                             readParams (p, item);

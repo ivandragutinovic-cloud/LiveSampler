@@ -41,7 +41,11 @@ namespace Kronos
         juce::String bank;     // npr. "USER-G"
         int number = 0;
         juce::String name;
-        bool hd1 = false;      // HD-1 (semplovi); EXi programi se ne uvoze
+        bool hd1 = false;      // HD-1 (semplovi)
+        bool exi = false;      // EXi program (AL-1, CX-3, STR-1, MS-20EX, PolysixEX, MOD-7, SGX-2, EP-1)
+        std::array<int, 2> exiAlg {};   // Algorithm Type EXi1 / EXi2 (0 = Off, vidi exiEngineName)
+        juce::String exiKey;   // "exi:" + otisak celog programa: presemplovan EXi program (Kronos Autosampler)
+        int exiSend1 = 127, exiSend2 = 127;
         std::array<std::array<Zone, 8>, 2> osc;
         std::array<OscParams, 2> params;
         bool doubleMode = false, mono = false, legato = false;
@@ -52,6 +56,7 @@ namespace Kronos
         bool usesUser() const;
         int firstUserZone (int oscIndex) const;
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
+        juce::String engineText() const;   // "HD-1", "AL-1", "AL-1+STR-1" ...
     };
 
     // Timbre u kombiju (16 komada, svaki 188 bajtova od mesta 4802)
@@ -90,6 +95,12 @@ namespace Kronos
     };
 
     juce::String programBankName (juce::uint32 id);
+    juce::String exiEngineName (int algorithmType);
+    juce::String makeExiKey (const juce::uint8* program);   // "exi:" + otisak (4960 bajtova)
+
+    // EXi program (Prog_EXi_Common.txt): Algorithm Type EXi1 / EXi2
+    constexpr int exi1AlgOffset = 2857;
+    constexpr int exi2AlgOffset = 3909;
     juce::String combiBankName (juce::uint32 id);
 
     // offseti u HD-1 programu (4960 bajtova)

@@ -122,8 +122,11 @@ public:
         if (z.romKey.isNotEmpty()) return library.findKronosRom (z.romKey);
         return {};
     }
+    // presemplovan EXi program (ceo program snimljen Kronos Autosamplerom)
+    juce::String resolveKronosExi (const Kronos::Program& p) const { return p.exi ? library.findKronosRom (p.exiKey) : juce::String(); }
     bool kronosProgramPlayable (const Kronos::Program& p) const
     {
+        if (p.exi) return resolveKronosExi (p).isNotEmpty();
         if (! p.hd1 || p.drumKit) return false;
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
             for (auto& z : p.osc[(size_t) o])
@@ -131,6 +134,7 @@ public:
         return false;
     }
     int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
+    int createUserFromKronosExi (const Kronos::Program& p);
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)

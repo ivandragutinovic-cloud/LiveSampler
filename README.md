@@ -238,3 +238,9 @@ multisemplove koje koriste tvoji programi i kombiji, da bi ih Live Sampler svira
    - Postojeći snimci se preskaču, pa snimanje može da se prekine i nastavi.
    - Semplovi idu u `C:\KRONOS\KRONOS ROM\...` sa fajlom `kronos-ms.txt`. U Live Sampleru klikni
      Osveži; Kronos programi i kombiji onda koriste ove semplove umesto ROM-a.
+
+### EXi programi (AL-1, CX-3, STR-1, MS-20EX, PolysixEX, MOD-7, SGX-2, EP-1)
+EXi sinteze nemaju multisemplove, pa Kronos Autosampler snima ceo program: salje ga u edit buffer
+preko SysEx-a (nista se ne snima na Kronos), iskljucuje IFX/MFX/TFX (ili ostavlja IFX po izboru),
+i snima svaki treci ton u vise jacina (Auto: klavir 6, EP 5, STR-1 4, orgulje 1, sint 2).
+Meri i release posle pustanja tastera. Live Sampler od toga sam pravi usera.

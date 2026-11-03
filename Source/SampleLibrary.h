@@ -91,7 +91,8 @@ public:
 
     // Kronos: instrument za multisempl broj 'index' iz KSC kolekcije sa datim UUID-om
     juce::String findKronosMultisample (const juce::String& uuid, int index) const;
-    juce::String findKronosRom (const juce::String& romKey) const;   // presemplovan ROM multisempl (autosampler)
+    juce::String findKronosRom (const juce::String& romKey) const;
+    juce::String kronosTag (const juce::String& key, const juce::String& name) const;   // npr. "release" za presemplovan EXi
 
     // Ucitava instrument (poziva se iz pozadinske niti, moze da traje).
     // ignoreMapFile: ne koristi sacuvanu mapu (za "vrati automatsko")
@@ -120,6 +121,7 @@ private:
     juce::StringArray names;
     std::map<juce::String, Entry> entries;
     std::map<juce::String, juce::String> kronosMs;   // "uuid:broj" -> ime instrumenta
+    std::map<juce::String, juce::StringPairArray> kronosTags;   // "exi:..." -> release=, layers= (iz kronos-ms.txt)
     juce::AudioFormatManager formatManager;
     juce::CriticalSection lock;
 };
