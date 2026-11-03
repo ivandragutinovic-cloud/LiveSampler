@@ -69,7 +69,7 @@ namespace
         int msb = -1, lsb = -1, pc = -1, layers = 1;
         juce::uint32 progBank = 0; int progNum = -1;     // EXi: program u PCG-u (bira se na Kronosu pre slanja)
         // procena (dugme Proceni): koliko drzati tone, release, da li treba loop
-        bool analyzed = false, anLoop = true;
+        bool analyzed = false, anLoop = true, anVelFlat = false;
         double anHold = 0, anRelease = 0;
         juce::String anText;
         juce::String label() const
@@ -357,13 +357,12 @@ public:
             }
             else if (needed[0].exi)
             {
-                lastKind = 0;
-                ensureKronosKind (needed[0]);
                 juce::String err;
+                if (! ensureKronosKind (needed[0], &err)) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "EXi", err); return; }
                 if (! sendExiSysex (needed[0], err)) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "EXi", err); return; }
                 send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 100)); juce::Thread::sleep (1200); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60));
             }
-            else if (sysexMode.getToggleState()) { lastKind = 0; ensureKronosKind (needed[0]); sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
+            else if (sysexMode.getToggleState()) { juce::String err; if (! ensureKronosKind (needed[0], &err)) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "HD-1", err); return; } sendProgramSysex (needed[0]); send (juce::MidiMessage::noteOn ((int) channel.getValue(), 60, (juce::uint8) 127)); juce::Thread::sleep (800); send (juce::MidiMessage::noteOff ((int) channel.getValue(), 60)); }
             else if (needed[0].slot >= 0) selectProgram (needed[0].slot);
         };
         addAndMakeVisible (testButton);
@@ -910,7 +909,7 @@ private:
         {
             if (isDone (n)) { ++done; continue; }
             if (n.exi || n.external) ++exi;
-            seconds += estimateSecondsPerMs() * (n.exi || n.external ? (int) exiVelocities (n).size() : 1);
+            seconds += estimateSecondsPerMs() * (n.exi || n.external ? (n.analyzed && n.anVelFlat ? 1 : (int) exiVelocities (n).size()) : 1);
         }
         info.setText (juce::String ((int) needed.size() - exi) + " multisemplova + " + juce::String (exi) + " EXi/ostalih zvukova, gotovo " + juce::String (done)
                       + juce::String::fromUTF8 ("  (preostalo: ~") + juce::String (seconds / 60) + " min)",
@@ -1485,7 +1484,20 @@ private:
     bool ensureKronosKind (const NeededMs& n, juce::String* err = nullptr)
     {
         const int kind = n.exi ? 2 : 1;
-        if (kind == lastKind || pcg == nullptr) return true;
+        // uvek prvo proveri sta je stvarno izabrano na Kronosu (neko je mozda rucno promenio program),
+        // da Kronos nikad ne dobije program pogresne vrste ("Program bank type conflict")
+        {
+            sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
+            int size = 0;
+            readCurrentProgram (size);
+            if (size > 0 && (size >= 4900) == n.exi) { lastKind = kind; return true; }
+        }
+        lastKind = 0;
+        if (pcg == nullptr)
+        {
+            if (err != nullptr) *err = juce::String::fromUTF8 ("Na Kronosu ručno izaberi ") + (n.exi ? "EXi" : "HD-1") + " program (PCG nije učitan).";
+            return false;
+        }
         bool ok = false;
         if (n.exi) ok = selectKronosProgram (n.progBank, n.progNum, n.usedBy, true);
         else
@@ -1609,7 +1621,9 @@ private:
 
             if (n.exi || n.external)
             {
-                recordExi (n, i, total, exiVels[(size_t) i]);
+                auto vels = exiVels[(size_t) i];
+                if (n.analyzed && n.anVelFlat) vels = { 127 };   // dinamika ne menja zvuk
+                recordExi (n, i, total, vels);
             }
             else
             {
@@ -1641,15 +1655,15 @@ private:
     void storeAnalysis (int i, const NeededMs& n)
     {
         const auto key = n.romKey;
-        const bool ok = n.analyzed, loop = n.anLoop;
+        const bool ok = n.analyzed, loop = n.anLoop, flat = n.anVelFlat;
         const double hold = n.anHold, rel = n.anRelease;
         const auto text = n.anText;
-        juce::MessageManager::callAsync ([this, i, key, ok, loop, hold, rel, text]
+        juce::MessageManager::callAsync ([this, i, key, ok, loop, flat, hold, rel, text]
         {
             if (i < (int) needed.size() && needed[(size_t) i].romKey == key)
             {
                 auto& m = needed[(size_t) i];
-                m.analyzed = ok; m.anLoop = loop; m.anHold = hold; m.anRelease = rel; m.anText = text;
+                m.analyzed = ok; m.anLoop = loop; m.anVelFlat = flat; m.anHold = hold; m.anRelease = rel; m.anText = text;
             }
             neededList.repaint();
             updateInfo();
@@ -1736,7 +1750,8 @@ private:
                 }
                 int settle = peakB;
                 while (settle < offB - 1 && std::abs (20.0 * std::log10 (sm[(size_t) settle] / endHold)) > 3.0) ++settle;
-                hold = juce::jlimit (2.0, 5.0, (settle - onset) * 0.01 + 1.8);
+                // cist zvuk bez velikog attack/decay-a: dovoljno ~1.2 s (loop ~0.7 s)
+                hold = juce::jlimit (1.2, 5.0, (settle - onset) * 0.01 + 1.0);
             }
             else
             {
@@ -1760,12 +1775,52 @@ private:
             n.anText = juce::String::fromUTF8 ("procena: ništa se ne čuje (audio ulaz / MIDI kanal?)");
             return;
         }
+        // dinamika: isti ton na jacini 127 i 40. Ako je glasnoca i boja ista (dinamika iskljucena u zvuku),
+        // dovoljan je jedan velocity sloj.
+        n.anVelFlat = false;
+        if ((n.exi || n.external) && ! threadShouldExit())
+        {
+            const int note = notes[notes.size() / 2];
+            double lv[2] = {}, br[2] = {};
+            bool okV = true;
+            const int velsTest[2] = { 127, 40 };
+            for (int k = 0; k < 2 && okV && ! threadShouldExit(); ++k)
+            {
+                setStatus ("Procena: " + n.label() + juce::String::fromUTF8 ("  dinamika ") + juce::String (velsTest[k]));
+                int offPos = 0;
+                const int len = captureNote (note, velsTest[k], 1.5, 3.0, offPos);
+                const auto& buf = recorder.buffer;
+                double peakAbs = 0;
+                int on = 0;
+                for (int s = 0; s < offPos; ++s) peakAbs = juce::jmax (peakAbs, (double) std::abs (buf.getSample (0, s)));
+                while (on < offPos && std::abs (buf.getSample (0, on)) < peakAbs * 0.05) ++on;
+                const int end = juce::jmin (offPos, len, on + (int) (sr * 1.0));
+                double e = 0, d = 0;
+                for (int s = on + 1; s < end; ++s)
+                    for (int c = 0; c < 2; ++c)
+                    {
+                        const double x = buf.getSample (c, s), dx = x - buf.getSample (c, s - 1);
+                        e += x * x; d += dx * dx;
+                    }
+                if (end - on < (int) (sr * 0.2) || e < 1.0e-6) { okV = false; break; }
+                lv[k] = 10.0 * std::log10 (e / (end - on));
+                br[k] = d / e;          // vise visokih tonova = veci odnos
+            }
+            if (okV && ! threadShouldExit())
+            {
+                const double levelDiff = std::abs (lv[0] - lv[1]);
+                const double brightDiff = std::abs (br[0] - br[1]) / juce::jmax (1.0e-9, br[0]);
+                n.anVelFlat = levelDiff < 1.5 && brightDiff < 0.08;
+            }
+        }
+
         n.analyzed = true;
         n.anLoop = sustainedCount * 2 > heard;
         n.anHold = std::round (holdNeed * 10.0) / 10.0;
         n.anRelease = juce::jlimit (0.3, 15.0, std::round ((relNeed + 0.3) * 10.0) / 10.0);
         n.anText = juce::String::fromUTF8 ("drži ") + juce::String (n.anHold, 1) + " s, release " + juce::String (n.anRelease, 1) + " s, "
-                 + (n.anLoop ? "loop" : juce::String::fromUTF8 ("bez loop-a (zvuk opada)"));
+                 + (n.anLoop ? "loop" : juce::String::fromUTF8 ("bez loop-a (zvuk opada)"))
+                 + (n.anVelFlat ? juce::String::fromUTF8 (", dinamika ne menja zvuk: 1 sloj") : juce::String());
     }
 
     // ceo EXi program: svaki korak note x svaka jacina; release se meri i upisuje u kronos-ms.txt
