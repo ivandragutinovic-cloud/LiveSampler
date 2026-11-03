@@ -149,6 +149,7 @@ struct Performance
     std::array<PerfPart, kNumParts> parts;
     MasterSettings master;
     bool used = false;
+    int category = -1;                  // indeks u listi kategorija (-1 = bez kategorije)
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static Performance fromXml (const juce::XmlElement&);

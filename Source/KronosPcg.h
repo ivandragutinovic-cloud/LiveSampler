@@ -80,6 +80,7 @@ namespace Kronos
         juce::String name;
         std::array<Timbre, 16> timbres;
         int return1 = 127, return2 = 127;   // MFX1 / MFX2 Return
+        int category = 0;                   // Combi Category 0-17 (imena u Pcg::combiCategories)
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
     };
 
@@ -90,6 +91,7 @@ namespace Kronos
         std::vector<Combi> combis;
         int drumKits = 0;
         int globalChannel = 1;   // Kronos GLOBAL MIDI kanal (iz GLB1)
+        juce::StringArray combiCategories;   // imena kategorija kombija sa Kronosa (GLOBAL, 18 komada)
         bool load (const juce::File& f, juce::String& error);
         const Program* findProgram (juce::uint32 bankId, int number) const;
     };

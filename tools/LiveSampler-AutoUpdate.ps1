@@ -1,9 +1,11 @@
-# Live Sampler: automatski skida i raspakuje najnoviju verziju direktno u Desktop\Live Sampler.
+# Pikaso Workstation: automatski skida i raspakuje najnoviju verziju direktno u Desktop\Pikaso Workstation.
+# (ime skripte ostaje LiveSampler-AutoUpdate.ps1 jer ga zakazani zadatak tako poziva)
 # Pokrece ga zakazani zadatak svakih 15 minuta; radi samo kad postoji nova verzija.
 $ErrorActionPreference = 'Stop'
 $repo    = 'ivandragutinovic-cloud/LiveSampler'
 $desktop = [Environment]::GetFolderPath('Desktop')
-$target  = Join-Path $desktop 'Live Sampler'
+$target  = Join-Path $desktop 'Pikaso Workstation'
+$oldDir  = Join-Path $desktop 'Live Sampler'
 $state   = Join-Path $target '.verzija'
 $ua      = @{ 'User-Agent' = 'LiveSampler-AutoUpdate' }
 
@@ -22,6 +24,10 @@ try {
 $id = "$($rel.id)"
 if ((Test-Path $state) -and ((Get-Content $state -Raw).Trim() -eq $id)) { exit 0 }
 
+# stari folder (Live Sampler) postaje Pikaso Workstation
+if ((Test-Path $oldDir) -and -not (Test-Path $target)) {
+    try { Rename-Item -Path $oldDir -NewName 'Pikaso Workstation' } catch { }
+}
 New-Item -ItemType Directory -Force -Path $target | Out-Null
 $tmp = Join-Path $env:TEMP 'LiveSampler-update'
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
@@ -45,14 +51,14 @@ Get-ChildItem (Join-Path $tmp 'files') | ForEach-Object {
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
 # pocisti stare zipove i podfoldere iz prethodne verzije skripte
-foreach ($old in 'LiveSampler-Windows.zip','KronosAutosampler-Windows.zip','LiveSampler-Windows','KronosAutosampler-Windows') {
+foreach ($old in 'LiveSampler-Windows.zip','KronosAutosampler-Windows.zip','LiveSampler-Windows','KronosAutosampler-Windows','Live Sampler.exe','Kronos Autosampler.exe') {
     $p = Join-Path $target $old
     if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
 if ($locked) {
-    Set-Content -Path (Join-Path $target 'NOVA VERZIJA.txt') -Value ("Nova verzija ceka ($stamp): zatvori Live Sampler / Kronos Autosampler, instalira se sama za najvise 15 minuta.`r`n`r`n" + $rel.body)
+    Set-Content -Path (Join-Path $target 'NOVA VERZIJA.txt') -Value ("Nova verzija ceka ($stamp): zatvori Pikaso Workstation / Pikaso Autosampler, instalira se sama za najvise 15 minuta.`r`n`r`n" + $rel.body)
     exit 0
 }
 Set-Content -Path $state -Value $id

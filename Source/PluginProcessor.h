@@ -26,7 +26,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "Live Sampler"; }
+    const juce::String getName() const override { return "Pikaso Workstation"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -76,6 +76,14 @@ public:
     juce::String getBankName (int b) const;
     void setBankName (int b, const juce::String& n);
     void clearPerformanceSlot (int slot);
+
+    // kategorije performansa (kao Combi Category na Kronosu); mogu da se menjaju i dodaju
+    const juce::StringArray& getCategories() const { return categories; }
+    // nova lista; remap[stari indeks] = novi indeks ili -1 (obrisana)
+    void setCategories (const juce::StringArray& names, const std::vector<int>& remap);
+    void setSlotCategory (int slot, int category);
+    juce::String categoryName (int c) const { return c >= 0 && c < categories.size() ? categories[c] : juce::String(); }
+    static juce::StringArray kronosDefaultCategories();
 
     // set liste (velika dugmad za svirku)
     const SetList& getSetList (int i) const { return setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)]; }
@@ -234,6 +242,8 @@ private:
     Performance perf;
     int currentSlot = -1, currentBank = 0;
     std::array<juce::String, kNumPerfBanks> bankNames;
+    juce::StringArray categories { kronosDefaultCategories() };
+    bool categoriesEdited = false;   // dok nisu menjane, preuzimaju se imena iz ucitanog PCG-a
     std::array<SetList, kNumSetLists> setLists;
     int currentSetList = 0, setListPage = 0, currentSetListSlot = -1, pcMode = 0;
     bool perfDirty = false;

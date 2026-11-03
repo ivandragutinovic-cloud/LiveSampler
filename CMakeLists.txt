@@ -24,7 +24,8 @@ endif()
 
 juce_add_plugin(LiveSampler
     COMPANY_NAME "LiveSampler"
-    PRODUCT_NAME "Live Sampler"
+    PRODUCT_NAME "Pikaso Workstation"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon-workstation.png"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -68,10 +69,11 @@ target_link_libraries(LiveSampler
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
-# Kronos Autosampler: poseban mali program za presemplovanje fabrickih ROM multisemplova
+# Pikaso Autosampler: poseban mali program za presemplovanje fabrickih ROM multisemplova
 juce_add_gui_app(KronosAutosampler
     COMPANY_NAME "LiveSampler"
-    PRODUCT_NAME "Kronos Autosampler")
+    PRODUCT_NAME "Pikaso Autosampler"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icon-autosampler.png")
 
 juce_generate_juce_header(KronosAutosampler)
 

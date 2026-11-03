@@ -151,6 +151,7 @@ namespace Kronos
     {
         auto s8 = [] (juce::uint8 v) { return (int) (juce::int8) v; };
         c.return1 = juce::jlimit (0, 127, (int) d[1048]);
+        c.category = d[4790] & 0x1f;
         c.return2 = juce::jlimit (0, 127, (int) d[1049]);
         for (int t = 0; t < 16; ++t)
         {
@@ -217,6 +218,13 @@ namespace Kronos
                 if (id == "GLB1" && size > 4)
                 {
                     globalChannel = (d[content + 2] & 0x0f) + 1;
+                    // Global.txt: Combi Category 00..17 Name na 16800, po 24 bajta
+                    if (size >= 16800 + 18 * 24)
+                    {
+                        combiCategories.clear();
+                        for (int k = 0; k < 18; ++k)
+                            combiCategories.add (readName (d + content + 16800 + k * 24).trim());
+                    }
                 }
                 else if (id == "PCG1" || id == "PRG1" || id == "CMB1" || id == "DKT1")
                 {

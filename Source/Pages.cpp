@@ -2201,22 +2201,25 @@ juce::String KronosPage::timbreSummary (const Kronos::Combi& c, int& romCount) c
 
 juce::File KronosPage::findAutosampler()
 {
-    // trazi "Kronos Autosampler.exe" pored Live Samplera, u susednim folderima i na Desktopu
+    // trazi "Pikaso Autosampler.exe" (ili stari "Kronos Autosampler.exe") pored programa, u susednim folderima i na Desktopu
     const auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
     juce::Array<juce::File> roots { exeDir, exeDir.getParentDirectory(), exeDir.getParentDirectory().getParentDirectory(),
                                     juce::File::getSpecialLocation (juce::File::userDesktopDirectory) };
     for (auto& r : roots)
     {
         if (! r.isDirectory()) continue;
-        for (auto& f : r.findChildFiles (juce::File::findFiles, false, "Kronos Autosampler.exe"))
-            return f;
+        for (auto* nm : { "Pikaso Autosampler.exe", "Kronos Autosampler.exe" })
+            for (auto& f : r.findChildFiles (juce::File::findFiles, false, nm))
+                return f;
         for (auto& d : r.findChildFiles (juce::File::findDirectories, false))
         {
-            for (auto& f : d.findChildFiles (juce::File::findFiles, false, "Kronos Autosampler.exe"))
-                return f;
-            for (auto& dd : d.findChildFiles (juce::File::findDirectories, false))
-                for (auto& f : dd.findChildFiles (juce::File::findFiles, false, "Kronos Autosampler.exe"))
+            for (auto* nm : { "Pikaso Autosampler.exe", "Kronos Autosampler.exe" })
+                for (auto& f : d.findChildFiles (juce::File::findFiles, false, nm))
                     return f;
+            for (auto& dd : d.findChildFiles (juce::File::findDirectories, false))
+                for (auto* nm : { "Pikaso Autosampler.exe", "Kronos Autosampler.exe" })
+                    for (auto& f : dd.findChildFiles (juce::File::findFiles, false, nm))
+                        return f;
         }
     }
     return {};
@@ -2234,7 +2237,7 @@ void KronosPage::offerAutosample (const juce::String& message, const juce::Strin
             if (! exe.existsAsFile())
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos",
-                    T ("Ne nalazim \"Kronos Autosampler.exe\". Raspakuj KronosAutosampler-Windows pored Live Samplera ili na Desktop."));
+                    T ("Ne nalazim \"Pikaso Autosampler.exe\". Raspakuj PikasoAutosampler-Windows pored Pikaso Workstation ili na Desktop."));
                 return;
             }
             exe.startAsProcess (args);
@@ -2259,7 +2262,7 @@ void KronosPage::loadCombiRow (int row)
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
         return;
     }
-    offerAutosample (msg + T ("\n\nDa ih presemplujem sa Kronosa (Kronos Autosampler)? ROM programima se snimaju multisemplovi, a EXi programima (AL-1, CX-3, SGX-2...) ceo zvuk."),
+    offerAutosample (msg + T ("\n\nDa ih presemplujem sa Kronosa (Pikaso Autosampler)? ROM programima se snimaju multisemplovi, a EXi programima (AL-1, CX-3, SGX-2...) ceo zvuk."),
                      "--pcg \"" + pcg->file.getFullPathName() + "\" --combi " + juce::String (combi.bankId) + ":" + juce::String (combi.number));
 }
 
@@ -2276,12 +2279,12 @@ void KronosPage::playRow (int row)
         for (auto& o : prog.osc) for (auto& z : o) rom = rom || z.romKey.isNotEmpty();
         if (prog.exi)
             offerAutosample (T ("Program \"") + prog.name + T ("\" je EXi program (") + prog.engineText()
-                             + T (" sinteza) i još nije presemplovan.\n\nDa ga presemplujem sa Kronosa (Kronos Autosampler)? Snima se ceo zvuk programa, svaki treći ton, u više jačina."),
+                             + T (" sinteza) i još nije presemplovan.\n\nDa ga presemplujem sa Kronosa (Pikaso Autosampler)? Snima se ceo zvuk programa, svaki treći ton, u više jačina."),
                              "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
         else if (prog.drumKit)
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", T ("Ovo je drum kit program; drum kitovi još nisu podržani."));
         else if (rom)
-            offerAutosample (T ("Program \"") + prog.name + T ("\" koristi fabričke ROM multisemplove koji još nisu presemplovani.\n\nDa ih presemplujem sa Kronosa (Kronos Autosampler)?"),
+            offerAutosample (T ("Program \"") + prog.name + T ("\" koristi fabričke ROM multisemplove koji još nisu presemplovani.\n\nDa ih presemplujem sa Kronosa (Pikaso Autosampler)?"),
                              "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
         else
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
@@ -2540,7 +2543,20 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
     nameEdit.onTextChange = [this] { proc.setBankName (proc.getCurrentBank(), nameEdit.getText()); };
     addAndMakeVisible (nameEdit);
 
-    help.setText (T ("Klik: učitaj. SNIMI + klik: sačuvaj trenutni performans. Desni klik: meni (snimi, u set listu, obriši). "
+    styleLabel (filterLabel, T ("KATEGORIJA"), 12.5f);
+    addAndMakeVisible (filterLabel);
+    catFilter.onChange = [this] { repaint(); };
+    addAndMakeVisible (catFilter);
+    categoriesButton.setButtonText (T ("KATEGORIJE..."));
+    categoriesButton.setTooltip (T ("Izmeni, dodaj, obriši ili preuredi kategorije"));
+    categoriesButton.onClick = [this] { editCategories(); };
+    addAndMakeVisible (categoriesButton);
+    missingLabel.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+    missingLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff8a3d));
+    addAndMakeVisible (missingLabel);
+
+    help.setText (T ("Klik: učitaj. SNIMI + klik: sačuvaj trenutni performans. Desni klik: meni (kategorija, snimi, u set listu, obriši). "
+                     "Narandžast okvir = performans bez kategorije. "
                      "MIDI: Bank Select (CC0) bira listu, Program Change 0-127 performans."), juce::dontSendNotification);
     help.setFont (juce::FontOptions (12.0f));
     help.setColour (juce::Label::textColourId, Pal::dim);
@@ -2557,7 +2573,44 @@ void ListsPage::refresh()
     }
     if (! nameEdit.isBeingEdited())
         nameEdit.setText (proc.getBankName (bank), juce::dontSendNotification);
+
+    // filter kategorija (zadrzava izbor ako ime i dalje postoji)
+    const auto& cats = proc.getCategories();
+    const int sel = catFilter.getSelectedId();
+    catFilter.clear (juce::dontSendNotification);
+    catFilter.addItem (T ("Sve"), 1);
+    catFilter.addItem (T ("Bez kategorije"), 2);
+    catFilter.addSeparator();
+    for (int c = 0; c < cats.size(); ++c)
+        catFilter.addItem (cats[c], 10 + c);
+    catFilter.setSelectedId (sel > 0 && catFilter.indexOfItemId (sel) >= 0 ? sel : 1, juce::dontSendNotification);
+
+    // koliko performansa nema kategoriju: u ovoj listi i u svim listama; tacka na dugmetu liste
+    int here = 0, all = 0;
+    for (int b = 0; b < kNumPerfBanks; ++b)
+    {
+        int n = 0;
+        for (int i = 0; i < kPerfPerBank; ++i)
+        {
+            const auto& s = proc.getSlot (b * kPerfPerBank + i);
+            if (s.used && s.category < 0) ++n;
+        }
+        all += n;
+        if (b == bank) here = n;
+        bankButtons[b].setButtonText (juce::String (b + 1) + (n > 0 ? juce::String::fromUTF8 (" \xe2\x80\xa2") : juce::String()));
+        bankButtons[b].setTooltip (proc.getBankName (b) + (n > 0 ? "  (" + juce::String (n) + T (" bez kategorije)") : juce::String()));
+    }
+    missingLabel.setText (all == 0 ? juce::String() : juce::String (here) + T (" bez kategorije u ovoj listi, ") + juce::String (all) + T (" u svim listama"),
+                          juce::dontSendNotification);
     repaint();
+}
+
+bool ListsPage::passesFilter (const Performance& s) const
+{
+    const int id = catFilter.getSelectedId();
+    if (id <= 1) return true;
+    if (id == 2) return s.category < 0;
+    return s.category == id - 10;
 }
 
 juce::Rectangle<int> ListsPage::gridArea() const
@@ -2598,11 +2651,32 @@ void ListsPage::paint (juce::Graphics& g)
         const bool current = proc.getCurrentSlot() == slot;
         auto col = current ? Pal::lcdText : (s.used ? Pal::panelHi.brighter (0.15f) : Pal::bg);
         if (writing) col = col.interpolatedWith (Pal::red, 0.25f);
+        const bool dimmed = s.used && ! passesFilter (s);
+        if (dimmed) col = col.interpolatedWith (Pal::bg, 0.7f);
         g.setColour (col);
         g.fillRoundedRectangle (cell, 3.0f);
-        g.setColour (current ? juce::Colours::black : (s.used ? Pal::text : Pal::dim.withAlpha (0.6f)));
+        auto textArea = cell.reduced (5.0f, 0.0f);
+        if (s.used)
+        {
+            // kategorija desno (skraceno), ili narandzast okvir ako je nema
+            const bool missing = s.category < 0;
+            const auto cat = missing ? T ("BEZ KAT.") : proc.categoryName (s.category);
+            const float tw = juce::jmin (textArea.getWidth() * 0.4f, 80.0f);
+            auto catArea = textArea.removeFromRight (tw);
+            g.setFont (juce::FontOptions (10.5f, missing ? juce::Font::bold : juce::Font::plain));
+            g.setColour (missing ? juce::Colour (0xffff8a3d) : (current ? juce::Colours::black.withAlpha (0.6f) : Pal::dim));
+            if (dimmed) g.setColour (Pal::dim.withAlpha (0.4f));
+            g.drawText (cat, catArea, juce::Justification::centredRight, true);
+            if (missing && ! dimmed)
+            {
+                g.setColour (juce::Colour (0xffff8a3d));
+                g.drawRoundedRectangle (cell.reduced (0.5f), 3.0f, 1.6f);
+            }
+            g.setFont (juce::FontOptions (12.5f));
+        }
+        g.setColour (current ? juce::Colours::black : (s.used ? (dimmed ? Pal::dim.withAlpha (0.5f) : Pal::text) : Pal::dim.withAlpha (0.6f)));
         g.drawText (juce::String (i + 1).paddedLeft ('0', 3) + "  " + (s.used ? s.name : juce::String()),
-                    cell.reduced (5.0f, 0.0f), juce::Justification::centredLeft, true);
+                    textArea, juce::Justification::centredLeft, true);
     }
 }
 
@@ -2630,6 +2704,17 @@ void ListsPage::cellMenu (int i)
     const bool used = proc.getSlot (slot).used;
     juce::PopupMenu m;
     m.addItem (1, T ("Učitaj"), used);
+    {
+        juce::PopupMenu cm;
+        const auto& cats = proc.getCategories();
+        const int cur = proc.getSlot (slot).category;
+        for (int c = 0; c < cats.size(); ++c)
+            cm.addItem (1000 + c, cats[c], true, cur == c);
+        cm.addSeparator();
+        cm.addItem (999, T ("Bez kategorije"), true, cur < 0);
+        cm.addItem (998, T ("Izmeni kategorije..."));
+        m.addSubMenu (T ("Kategorija"), cm, used);
+    }
     m.addItem (2, T ("Snimi trenutni performans ovde"));
     m.addItem (3, T ("Dodaj u set listu (prvo prazno mesto)"), used);
     m.addSeparator();
@@ -2639,6 +2724,9 @@ void ListsPage::cellMenu (int i)
     {
         if (safe == nullptr || r == 0) return;
         auto& pr = safe->proc;
+        if (r >= 1000) pr.setSlotCategory (slot, r - 1000);
+        if (r == 999) pr.setSlotCategory (slot, -1);
+        if (r == 998) { safe->editCategories(); return; }
         if (r == 1) pr.recallPerformance (slot);
         if (r == 2) pr.storePerformance (slot);
         if (r == 4) pr.clearPerformanceSlot (slot);
@@ -2665,8 +2753,197 @@ void ListsPage::resized()
     r.removeFromTop (8);
     auto nameRow = r.removeFromTop (30);
     nameLabel.setBounds (nameRow.removeFromLeft (90));
-    nameEdit.setBounds (nameRow.removeFromLeft (360).reduced (0, 1));
+    nameEdit.setBounds (nameRow.removeFromLeft (300).reduced (0, 1));
+    nameRow.removeFromLeft (16);
+    filterLabel.setBounds (nameRow.removeFromLeft (84));
+    catFilter.setBounds (nameRow.removeFromLeft (190).reduced (0, 1));
+    nameRow.removeFromLeft (8);
+    categoriesButton.setBounds (nameRow.removeFromLeft (120).reduced (0, 1));
+    nameRow.removeFromLeft (12);
+    missingLabel.setBounds (nameRow);
     help.setBounds (r.removeFromBottom (22));
+}
+
+//==============================================================================
+//  Uredjivanje kategorija: preimenuj (dupli klik), dodaj, obrisi, pomeri; ili preuzmi sa Kronosa
+//==============================================================================
+namespace
+{
+    class CategoryEditor : public juce::Component, private juce::ListBoxModel
+    {
+    public:
+        CategoryEditor (LiveSamplerProcessor& p) : proc (p)
+        {
+            names = proc.getCategories();
+            for (int i = 0; i < names.size(); ++i) origin.push_back (i);
+
+            list.setModel (this);
+            list.setRowHeight (26);
+            list.setColour (juce::ListBox::backgroundColourId, Pal::bg);
+            addAndMakeVisible (list);
+
+            auto btn = [this] (juce::TextButton& b, const juce::String& t, std::function<void()> f)
+            {
+                b.setButtonText (t);
+                b.onClick = std::move (f);
+                addAndMakeVisible (b);
+            };
+            btn (addB, T ("Dodaj"), [this]
+            {
+                names.add (T ("Nova kategorija"));
+                origin.push_back (-1);
+                list.updateContent();
+                list.selectRow (names.size() - 1);
+                renameRow (names.size() - 1);
+            });
+            btn (renB, T ("Preimenuj"), [this] { renameRow (list.getSelectedRow()); });
+            btn (delB, T ("Obriši"), [this]
+            {
+                const int r = list.getSelectedRow();
+                if (r < 0 || r >= names.size()) return;
+                names.remove (r);
+                origin.erase (origin.begin() + r);
+                list.updateContent();
+                list.repaint();
+            });
+            btn (upB, T ("Gore"), [this] { move (-1); });
+            btn (downB, T ("Dole"), [this] { move (1); });
+            btn (kronosB, T ("Imena sa Kronosa (PCG)"), [this]
+            {
+                // ista mesta (0-17) kao na Kronosu, samo imena se preuzimaju
+                auto* pcg = proc.getKronosPcg();
+                if (pcg == nullptr || pcg->combiCategories.size() != 18)
+                {
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Kategorije"),
+                        T ("Prvo učitaj PCG na stranici KRONOS."));
+                    return;
+                }
+                takeKronos (pcg->combiCategories);
+            });
+            btn (factoryB, T ("Fabričke Kronos"), [this] { takeKronos (LiveSamplerProcessor::kronosDefaultCategories()); });
+            btn (okB, "OK", [this]
+            {
+                std::vector<int> remap ((size_t) proc.getCategories().size(), -1);
+                for (int i = 0; i < (int) origin.size(); ++i)
+                    if (origin[(size_t) i] >= 0 && origin[(size_t) i] < (int) remap.size())
+                        remap[(size_t) origin[(size_t) i]] = i;
+                juce::StringArray clean;
+                for (auto& n : names) clean.add (n.trim().isEmpty() ? T ("Bez imena") : n.trim());
+                proc.setCategories (clean, remap);
+                close();
+            });
+            btn (cancelB, T ("Otkaži"), [this] { close(); });
+            okB.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
+            setSize (460, 520);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (10);
+            auto bottom = r.removeFromBottom (32);
+            cancelB.setBounds (bottom.removeFromRight (100));
+            bottom.removeFromRight (8);
+            okB.setBounds (bottom.removeFromRight (100));
+            r.removeFromBottom (8);
+            auto side = r.removeFromRight (160);
+            r.removeFromRight (8);
+            list.setBounds (r);
+            for (auto* b : { &addB, &renB, &delB, &upB, &downB })
+            {
+                b->setBounds (side.removeFromTop (30));
+                side.removeFromTop (6);
+            }
+            side.removeFromTop (16);
+            kronosB.setBounds (side.removeFromTop (30));
+            side.removeFromTop (6);
+            factoryB.setBounds (side.removeFromTop (30));
+        }
+
+        void paint (juce::Graphics& g) override { g.fillAll (Pal::panel); }
+
+    private:
+        int getNumRows() override { return names.size(); }
+        void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool sel) override
+        {
+            if (sel) g.fillAll (Pal::lcdText.withAlpha (0.25f));
+            g.setColour (Pal::dim);
+            g.setFont (juce::FontOptions (12.0f));
+            g.drawText (juce::String (row + 1).paddedLeft ('0', 2), 6, 0, 28, h, juce::Justification::centredLeft);
+            g.setColour (Pal::text);
+            g.setFont (juce::FontOptions (14.0f));
+            g.drawText (names[row], 38, 0, w - 44, h, juce::Justification::centredLeft, true);
+        }
+        void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { renameRow (row); }
+
+        void renameRow (int row)
+        {
+            if (row < 0 || row >= names.size()) return;
+            auto* aw = new juce::AlertWindow (T ("Kategorija"), T ("Ime kategorije:"), juce::MessageBoxIconType::NoIcon);
+            aw->addTextEditor ("name", names[row]);
+            aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            aw->addButton (T ("Otkaži"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            juce::Component::SafePointer<CategoryEditor> safe (this);
+            aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw, row] (int r)
+            {
+                if (safe != nullptr && r == 1 && row < safe->names.size())
+                {
+                    const auto t = aw->getTextEditorContents ("name").trim();
+                    if (t.isNotEmpty()) safe->names.set (row, t);
+                    safe->list.repaint();
+                }
+            }), true);
+        }
+
+        void move (int d)
+        {
+            const int r = list.getSelectedRow(), t = r + d;
+            if (r < 0 || t < 0 || t >= names.size()) return;
+            names.move (r, t);
+            std::swap (origin[(size_t) r], origin[(size_t) t]);
+            list.selectRow (t);
+            list.repaint();
+        }
+
+        void takeKronos (const juce::StringArray& src)
+        {
+            // mesto k ostaje mesto k (kao broj kategorije na Kronosu); visak se brise
+            juce::StringArray nn;
+            std::vector<int> oo;
+            for (int k = 0; k < src.size(); ++k)
+            {
+                nn.add (src[k].isNotEmpty() ? src[k] : "Category " + juce::String (k));
+                oo.push_back (k < proc.getCategories().size() ? k : -1);
+            }
+            names = nn;
+            origin = oo;
+            list.updateContent();
+            list.repaint();
+        }
+
+        void close()
+        {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                dw->exitModalState (0);
+        }
+
+        LiveSamplerProcessor& proc;
+        juce::StringArray names;
+        std::vector<int> origin;        // za svaki red: stari indeks (-1 = nova)
+        juce::ListBox list;
+        juce::TextButton addB, renB, delB, upB, downB, kronosB, factoryB, okB, cancelB;
+    };
+}
+
+void ListsPage::editCategories()
+{
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (new CategoryEditor (proc));
+    o.dialogTitle = T ("Kategorije performansa");
+    o.dialogBackgroundColour = Pal::panel;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = false;
+    o.launchAsync();
 }
 
 //==============================================================================

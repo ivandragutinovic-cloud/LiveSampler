@@ -1,4 +1,4 @@
-# Live Sampler
+# Pikaso Workstation
 
 Sempler za sviranje uživo na PC-ju: tri dela (Gornji 1, Gornji 2, Donji), split i lejer,
 mono i portamento, velocity, filter, ADSR, insert efekti po delu, master efekti i 32 registra.
@@ -21,8 +21,8 @@ cmake --build build --config Release
 Prvi put traje 5–15 minuta jer skida i kompajlira JUCE.
 
 Gotov program je ovde:
-- `build\LiveSampler_artefacts\Release\Standalone\Live Sampler.exe` (samostalan program)
-- `build\LiveSampler_artefacts\Release\VST3\Live Sampler.vst3` (plagin). Kopiraj ga u
+- `build\LiveSampler_artefacts\Release\Standalone\Pikaso Workstation.exe` (samostalan program)
+- `build\LiveSampler_artefacts\Release\VST3\Pikaso Workstation.vst3` (plagin). Kopiraj ga u
   `C:\Program Files\Common Files\VST3` ako hoćeš da ga koristiš u Cantabile-u, Reaper-u i sl.
 
 ### Opcija B: bez instaliranja ičega (GitHub)
@@ -214,10 +214,10 @@ Semplovi se drže u RAM memoriji. Status gore pokazuje koliko memorije zauzimaju
 - `Source/PluginProcessor.*`: MIDI rutiranje, delovi, terce, čuvanje u `%APPDATA%\LiveSampler`
 - `Source/PluginEditor.*`, `Source/Pages.*`: interfejs
 
-## 7. Kronos Autosampler (poseban program)
+## 7. Pikaso Autosampler (poseban program)
 
-`Kronos Autosampler.exe` (u paketu **KronosAutosampler-Windows**) presempluje fabričke ROM / EXs
-multisemplove koje koriste tvoji programi i kombiji, da bi ih Live Sampler svirao umesto ROM-a.
+`Pikaso Autosampler.exe` (u paketu **KronosAutosampler-Windows**) presempluje fabričke ROM / EXs
+multisemplove koje koriste tvoji programi i kombiji, da bi ih Pikaso Workstation svirao umesto ROM-a.
 
 1. **Učitaj PCG** i izaberi programe ili kombije (Kombiji) → **Dodaj izabrane**. Desno se vidi spisak
    ROM multisemplova koje treba snimiti (svaki samo jednom).
@@ -233,14 +233,20 @@ multisemplove koje koriste tvoji programi i kombiji, da bi ih Live Sampler svira
 3. **Audio ulaz**: Kronos USB audio. **MIDI izlaz**: Kronos. Podesi **Bank CC0 / CC32** tako da
    **Test** na Kronosu izabere prvi novi program. Zatim **START**.
    - **Auto loop**: za zvuke koji drže sam nađe loop, upiše crossfade u sempl i loop u WAV.
-   - Snima se svaki treći ton (podesivo) punom jačinom; u Live Sampleru svaki sempl pokriva i polustepen
+   - Snima se svaki treći ton (podesivo) punom jačinom; u Pikaso Workstation svaki sempl pokriva i polustepen
      ispod i iznad.
    - Postojeći snimci se preskaču, pa snimanje može da se prekine i nastavi.
-   - Semplovi idu u `C:\KRONOS\KRONOS ROM\...` sa fajlom `kronos-ms.txt`. U Live Sampleru klikni
+   - Semplovi idu u `C:\KRONOS\KRONOS ROM\...` sa fajlom `kronos-ms.txt`. U Pikaso Workstation klikni
      Osveži; Kronos programi i kombiji onda koriste ove semplove umesto ROM-a.
 
 ### EXi programi (AL-1, CX-3, STR-1, MS-20EX, PolysixEX, MOD-7, SGX-2, EP-1)
-EXi sinteze nemaju multisemplove, pa Kronos Autosampler snima ceo program: salje ga u edit buffer
+EXi sinteze nemaju multisemplove, pa Pikaso Autosampler snima ceo program: salje ga u edit buffer
 preko SysEx-a (nista se ne snima na Kronos), iskljucuje IFX/MFX/TFX (ili ostavlja IFX po izboru),
 i snima svaki treci ton u vise jacina (Auto: klavir 6, EP 5, STR-1 4, orgulje 1, sint 2).
-Meri i release posle pustanja tastera. Live Sampler od toga sam pravi usera.
+Meri i release posle pustanja tastera. Pikaso Workstation od toga sam pravi usera.
+
+### Kategorije performansa
+Svaki performans u listi ima kategoriju (iste kao Combi kategorije na Kronosu; imena se preuzimaju
+iz ucitanog PCG-a). Dugme KATEGORIJE... menja, dodaje, brise i preuredjuje kategorije.
+Performansi bez kategorije imaju narandzast okvir, a lista koja ih ima ima tacku na dugmetu.
+Kombi preuzet sa Kronosa dobija svoju kategoriju.

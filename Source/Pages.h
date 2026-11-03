@@ -335,11 +335,14 @@ private:
     juce::Rectangle<int> gridArea() const;
     int cellAt (juce::Point<int> p) const;
     void cellMenu (int index);
+    void editCategories();
+    bool passesFilter (const Performance& s) const;
 
     LiveSamplerProcessor& proc;
     LiveSamplerEditor& editor;
-    juce::TextButton bankButtons[kNumPerfBanks], writeButton;
-    juce::Label nameLabel, nameEdit, help;
+    juce::TextButton bankButtons[kNumPerfBanks], writeButton, categoriesButton;
+    juce::Label nameLabel, nameEdit, help, filterLabel, missingLabel;
+    juce::ComboBox catFilter;
 };
 
 //==============================================================================

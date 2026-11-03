@@ -1,8 +1,8 @@
-// Kronos Autosampler: presempluje fabricke ROM / EXs multisemplove koje koriste izabrani programi i kombiji.
+// Pikaso Autosampler (Kronos): presempluje fabricke ROM / EXs multisemplove koje koriste izabrani programi i kombiji.
 // 1) iz PCG-a nadje koje ROM multisemplove trebaju
 // 2) napravi PCG sa po jednim programom za svaki multisempl (OSC1 MS1 = taj multisempl, bez efekata)
 // 3) preko MIDI-ja bira te programe na Kronosu, svira svaki treci ton i snima preko USB audio ulaza
-// 4) cuva WAV fajlove + kronos-ms.txt, pa ih Live Sampler koristi umesto ROM zvuka.
+// 4) cuva WAV fajlove + kronos-ms.txt, pa ih Pikaso Workstation koristi umesto ROM zvuka.
 // EXi programi (AL-1, CX-3, STR-1, MS-20EX, PolysixEX, MOD-7, SGX-2, EP-1) nemaju multisemplove:
 // ceo program se salje u edit buffer (SysEx), bez efekata, i snima se svaki treci ton u vise jacina.
 #include <JuceHeader.h>
@@ -269,7 +269,7 @@ public:
         addAndMakeVisible (midiLabel);
 
         exiIfxToggle.setButtonText (juce::String::fromUTF8 ("EXi: snimaj sa insert efektima (IFX)"));
-        exiIfxToggle.setTooltip (juce::String::fromUTF8 ("Isključeno: suv zvuk sinteze (efekte dodaješ u Live Sampleru). Uključeno: zvuk sa IFX efektima programa (chorus, phaser, delay...). Master efekti (reverb) su uvek isključeni."));
+        exiIfxToggle.setTooltip (juce::String::fromUTF8 ("Isključeno: suv zvuk sinteze (efekte dodaješ u Pikaso Workstation). Uključeno: zvuk sa IFX efektima programa (chorus, phaser, delay...). Master efekti (reverb) su uvek isključeni."));
         addAndMakeVisible (exiIfxToggle);
         exiVelLabel.setText (juce::String::fromUTF8 ("EXi jačine:"), juce::dontSendNotification);
         exiVelLabel.setColour (juce::Label::textColourId, dim);
@@ -1197,7 +1197,7 @@ private:
             juce::MessageManager::callAsync ([this] { neededList.repaint(); updateInfo(); });
         }
         send (juce::MidiMessage::allNotesOff (settings.channel));
-        setStatus (threadShouldExit() ? "Zaustavljeno." : juce::String::fromUTF8 ("Gotovo. U Live Sampleru klikni Osveži (PODEŠAVANJA) pa ponovo napravi usere od Kronos programa."));
+        setStatus (threadShouldExit() ? "Zaustavljeno." : juce::String::fromUTF8 ("Gotovo. U Pikaso Workstation klikni Osveži (PODEŠAVANJA) pa ponovo napravi usere od Kronos programa."));
     }
 
     // ceo EXi program: svaki korak note x svaka jacina; release se meri i upisuje u kronos-ms.txt
@@ -1213,7 +1213,7 @@ private:
                 const int vel = vels[v];
                 setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  nota " + noteName (note)
                            + juce::String::fromUTF8 ("  jačina ") + juce::String (vel));
-                // ime: nota (broj) + v<jacina>; Live Sampler od toga pravi velocity zone
+                // ime: nota (broj) + v<jacina>; Pikaso Workstation od toga pravi velocity zone
                 const auto f = folder.getChildFile (juce::String (note).paddedLeft ('0', 3) + " v" + juce::String (vel).paddedLeft ('0', 3) + ".wav");
                 double rel = -1.0;
                 if (f.existsAsFile()) { ++written; continue; }
@@ -1397,18 +1397,18 @@ private:
 class AutosamplerApp : public juce::JUCEApplication
 {
 public:
-    const juce::String getApplicationName() override { return "Kronos Autosampler"; }
+    const juce::String getApplicationName() override { return "Pikaso Autosampler"; }
     const juce::String getApplicationVersion() override { return "1.0"; }
     static void crashHandler (void*)
     {
-        auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Kronos Autosampler GRESKA.txt");
-        f.replaceWithText ("Kronos Autosampler se srusio.\n\n" + juce::SystemStats::getStackBacktrace());
+        auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Pikaso Autosampler GRESKA.txt");
+        f.replaceWithText ("Pikaso Autosampler se srusio.\n\n" + juce::SystemStats::getStackBacktrace());
     }
 
     void initialise (const juce::String& commandLine) override
     {
         juce::SystemStats::setApplicationCrashHandler (crashHandler);
-        logger.reset (juce::FileLogger::createDefaultAppLogger ("LiveSampler", "autosampler-log.txt", "Kronos Autosampler"));
+        logger.reset (juce::FileLogger::createDefaultAppLogger ("LiveSampler", "autosampler-log.txt", "Pikaso Autosampler"));
         juce::Logger::setCurrentLogger (logger.get());
         juce::Logger::writeToLog ("start: " + commandLine);
         juce::LookAndFeel::getDefaultLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, bg);
@@ -1433,7 +1433,7 @@ public:
 
     struct Window : public juce::DocumentWindow
     {
-        Window() : juce::DocumentWindow ("Kronos Autosampler", bg, juce::DocumentWindow::allButtons)
+        Window() : juce::DocumentWindow ("Pikaso Autosampler", bg, juce::DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (new MainComponent(), true);

@@ -22,7 +22,7 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: LiveSampler-Windows
+          name: PikasoWorkstation-Windows
           path: |
             build/LiveSampler_artefacts/Release/Standalone/*.exe
             build/LiveSampler_artefacts/Release/VST3/
@@ -30,7 +30,7 @@ jobs:
       - name: Upload Autosampler
         uses: actions/upload-artifact@v4
         with:
-          name: KronosAutosampler-Windows
+          name: PikasoAutosampler-Windows
           path: build/KronosAutosampler_artefacts/Release/*.exe
 
       # Najnovija verzija uvek na istoj adresi (Release "latest"), za automatsko skidanje na racunar
@@ -38,8 +38,8 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "build/LiveSampler_artefacts/Release/Standalone/*.exe","build/LiveSampler_artefacts/Release/VST3" -DestinationPath dist/LiveSampler-Windows.zip -Force
-          Compress-Archive -Path "build/KronosAutosampler_artefacts/Release/*.exe" -DestinationPath dist/KronosAutosampler-Windows.zip -Force
+          Compress-Archive -Path "build/LiveSampler_artefacts/Release/Standalone/*.exe","build/LiveSampler_artefacts/Release/VST3" -DestinationPath dist/PikasoWorkstation-Windows.zip -Force
+          Compress-Archive -Path "build/KronosAutosampler_artefacts/Release/*.exe" -DestinationPath dist/PikasoAutosampler-Windows.zip -Force
 
       - name: Publish latest
         if: github.ref == 'refs/heads/main'
@@ -49,4 +49,4 @@ jobs:
         run: |
           gh release delete latest --yes --cleanup-tag 2>$null
           $msg = (git log -1 --pretty=%s)
-          gh release create latest dist/LiveSampler-Windows.zip dist/KronosAutosampler-Windows.zip --title "Najnovija verzija" --notes "$msg" --target $env:GITHUB_SHA --latest
+          gh release create latest dist/PikasoWorkstation-Windows.zip dist/PikasoAutosampler-Windows.zip --title "Najnovija verzija" --notes "$msg" --target $env:GITHUB_SHA --latest

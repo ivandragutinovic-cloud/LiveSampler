@@ -75,6 +75,10 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("pcMode", pcMode);
     root.setAttribute ("currentSetList", currentSetList);
     root.setAttribute ("setListPage", setListPage);
+    auto* cats = root.createNewChildElement ("Categories");
+    cats->setAttribute ("edited", categoriesEdited);
+    for (auto& c : categories)
+        cats->createNewChildElement ("Category")->setAttribute ("name", c);
     auto* bn = root.createNewChildElement ("BankNames");
     for (int b = 0; b < kNumPerfBanks; ++b)
         if (bankNames[(size_t) b].isNotEmpty())
@@ -165,6 +169,14 @@ void LiveSamplerProcessor::loadData()
     pcMode = juce::jlimit (0, 1, xml->getIntAttribute ("pcMode", 0));
     currentSetList = juce::jlimit (0, kNumSetLists - 1, xml->getIntAttribute ("currentSetList", 0));
     setListPage = juce::jlimit (0, kSetListSlots / 16 - 1, xml->getIntAttribute ("setListPage", 0));
+    if (auto* cats = xml->getChildByName ("Categories"))
+    {
+        categories.clear();
+        for (auto* x : cats->getChildWithTagNameIterator ("Category"))
+            categories.add (x->getStringAttribute ("name"));
+        categoriesEdited = cats->getBoolAttribute ("edited", false);
+        if (categories.isEmpty()) categories = kronosDefaultCategories();
+    }
     if (auto* bn = xml->getChildByName ("BankNames"))
         for (auto* x : bn->getChildWithTagNameIterator ("Bank"))
             if (const int b = x->getIntAttribute ("index", -1); b >= 0 && b < kNumPerfBanks)
@@ -524,6 +536,13 @@ bool LiveSamplerProcessor::loadKronosPcg (const juce::File& f, juce::String& err
 
     kronosPcg = std::move (pcg);
     kronosFile = f;
+    // dok korisnik nije sam menjao kategorije, imena se uzimaju sa Kronosa (GLOBAL)
+    if (! categoriesEdited && kronosPcg->combiCategories.size() == 18)
+    {
+        bool any = false;
+        for (auto& c : kronosPcg->combiCategories) any = any || c.isNotEmpty();
+        if (any) categories = kronosPcg->combiCategories;
+    }
     markSave();
 
     // folder sa PCG-om (i KSC kolekcijom pored njega) ide u biblioteku
@@ -730,6 +749,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
 
     auto p = perf;
     p.name = c.name.isNotEmpty() ? c.name : c.id();
+    p.category = c.category < categories.size() ? c.category : -1;
     p.master.reverbLevel = (float) c.return1 / 127.0f;   // MFX1 Return
     p.master.delayLevel = (float) c.return2 / 127.0f;    // MFX2 Return
     for (int t = 0; t < 16 && t < kNumParts; ++t)
@@ -921,6 +941,34 @@ juce::String LiveSamplerProcessor::getBankName (int b) const
 void LiveSamplerProcessor::setBankName (int b, const juce::String& n)
 {
     bankNames[(size_t) juce::jlimit (0, kNumPerfBanks - 1, b)] = n.trim();
+    markSave();
+    sendChangeMessage();
+}
+
+juce::StringArray LiveSamplerProcessor::kronosDefaultCategories()
+{
+    // Combi kategorije na Kronosu (fabricka imena)
+    return { "Keyboard", "Organ", "Bell/Mallet/Perc", "Strings", "Brass/Reed/Wood", "Orchestral", "World", "Guitar/Plucked",
+             "Pads/Vocal", "Motion Synth", "Synth", "LeadSplits", "BassSplits", "Complex&SFX", "BPM Sync", "Drums/Hits",
+             "User 16", "User 17" };
+}
+
+void LiveSamplerProcessor::setCategories (const juce::StringArray& names, const std::vector<int>& remap)
+{
+    auto fix = [&remap] (int c) { return c >= 0 && c < (int) remap.size() ? remap[(size_t) c] : -1; };
+    for (auto& s : slots) if (s.used) s.category = fix (s.category);
+    perf.category = fix (perf.category);
+    categories = names;
+    categoriesEdited = true;
+    markSave();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setSlotCategory (int slot, int category)
+{
+    if (slot < 0 || slot >= kNumPerfSlots) return;
+    slots[(size_t) slot].category = category;
+    if (slot == currentSlot) perf.category = category;
     markSave();
     sendChangeMessage();
 }

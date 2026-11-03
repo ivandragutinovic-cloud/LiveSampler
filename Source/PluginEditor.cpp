@@ -156,7 +156,7 @@ namespace UI
     {
         if (names.isEmpty())
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Live Sampler",
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Pikaso Workstation",
                 T ("Nema instrumenata. Dodaj folder sa semplovima u PODEŠAVANJIMA."));
             return;
         }
@@ -337,8 +337,8 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     addAndMakeVisible (content);
     content.setSize (designW, designH);
 
-    logo.setText ("LIVE\nSAMPLER", juce::dontSendNotification);
-    logo.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+    logo.setText ("PIKASO\nWORKSTATION", juce::dontSendNotification);
+    logo.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     logo.setColour (juce::Label::textColourId, Pal::accent);
     content.addAndMakeVisible (logo);
 
@@ -498,7 +498,7 @@ void LiveSamplerEditor::resized()
     auto r = juce::Rectangle<int> (0, 0, designW, designH);
 
     auto top = r.removeFromTop (76).reduced (12, 8);
-    logo.setBounds (top.removeFromLeft (110));
+    logo.setBounds (top.removeFromLeft (124));
     display.setBounds (top.removeFromLeft (520));
     top.removeFromLeft (10);
     tercaButton.setBounds (top.removeFromLeft (170));

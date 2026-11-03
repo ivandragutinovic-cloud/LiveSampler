@@ -791,7 +791,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         }
         else
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Live Sampler",
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Pikaso Workstation",
                 T ("Ne mogu da sačuvam mapu (proveri da li je folder zaštićen od upisa)."));
         }
     };
