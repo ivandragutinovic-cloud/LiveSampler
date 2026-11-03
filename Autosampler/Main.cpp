@@ -579,7 +579,7 @@ private:
             g.setFont (juce::FontOptions (13.0f));
             juce::String t = n.label();
             if (n.slot >= 0) t << "   -> program " << juce::String (n.slot).paddedLeft ('0', 3);
-            if (n.analyzed) t << "   [" << n.anText << "]";
+            if (n.anText.isNotEmpty()) t << "   [" << n.anText << "]";
             t << "   (" << n.usedBy << ")";
             g.drawText (t, 6, 0, w - 8, h, juce::Justification::centredLeft, true);
         }
@@ -1373,6 +1373,8 @@ private:
         const int total = (int) needed.size();
         if (analyzeOnly)
         {
+            int ok = 0;
+            juce::String lastErr;
             for (size_t k = 0; k < analyzeRows.size() && ! threadShouldExit(); ++k)
             {
                 const int i = analyzeRows[k];
@@ -1380,12 +1382,25 @@ private:
                 auto n = needed[(size_t) i];
                 juce::String err; bool fatal = false;
                 setStatus ("Procena " + juce::String ((int) k + 1) + "/" + juce::String ((int) analyzeRows.size()) + "  " + n.label());
-                if (! selectJob (n, err, fatal)) { setStatus (err); if (fatal) break; continue; }
+                if (! selectJob (n, err, fatal))
+                {
+                    n.anText = juce::String::fromUTF8 ("procena nije uspela: ") + err;
+                    storeAnalysis (i, n);
+                    lastErr = err;
+                    if (fatal) break;
+                    continue;
+                }
                 analyzeJob (n);
                 storeAnalysis (i, n);
+                if (n.analyzed) ++ok;
             }
             send (juce::MidiMessage::allNotesOff (settings.channel));
-            setStatus (threadShouldExit() ? "Zaustavljeno." : juce::String::fromUTF8 ("Procena gotova. Vrednosti se koriste pri snimanju (vide se u listi)."));
+            if (threadShouldExit()) setStatus ("Zaustavljeno.");
+            else if (ok == (int) analyzeRows.size())
+                setStatus (juce::String::fromUTF8 ("Procena gotova: vrednosti su u listi desno, pored imena zvuka, i koriste se pri snimanju."));
+            else
+                setStatus (juce::String::fromUTF8 ("Procena: uspelo ") + juce::String (ok) + " od " + juce::String ((int) analyzeRows.size())
+                           + (lastErr.isNotEmpty() ? " (" + lastErr + ")" : juce::String::fromUTF8 (" - ništa se ne čuje: proveri audio ulaz (Kronos USB), MIDI kanal i da li je ULAZ merač pomeren")));
             return;
         }
 
@@ -1555,7 +1570,7 @@ private:
         if (heard == 0)
         {
             n.analyzed = false;
-            n.anText = juce::String::fromUTF8 ("procena: ništa se ne čuje");
+            n.anText = juce::String::fromUTF8 ("procena: ništa se ne čuje (audio ulaz / MIDI kanal?)");
             return;
         }
         n.analyzed = true;
