@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "Text.h"
+#include "AutoLoop.h"
 
 juce::Colour LiveSamplerProcessor::partColour (int i)
 {
@@ -749,17 +750,15 @@ int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
     sb.velSens = tagLayers > 1 ? 0.25f : 0.6f;
 
     // svaki velocity sloj ide na svoj MS (MS1 = najjaci, kao na Kronosu), da moze posebno da se podesi ili obrise
-    auto layers = velocityLayersOf (inst);
-    if (layers.size() < 2 || layers.size() > (size_t) kMsPerOsc) layers = { 127 };
-    for (size_t k = 0; k < layers.size(); ++k)
-    {
-        auto& os = u.osc[k];
-        os.on = true;
-        os.instrument = inst;
-        os.block = 0;
-        os.velHigh = k == 0 ? 127 : layers[k];
-        os.velLow = k + 1 < layers.size() ? layers[k + 1] + 1 : 1;
-    }
+    OscSettings proto;
+    proto.on = true;
+    proto.instrument = inst;
+    proto.block = 0;
+    const auto layers = velocityLayersOf (inst);
+    if (layers.size() >= 2 && layers.size() <= (size_t) kMsPerOsc)
+        layoutVelocityLayers (u, 0, proto, layers);
+    else
+        u.osc[0] = proto;
 
     u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
     u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
@@ -1013,20 +1012,89 @@ bool LiveSamplerProcessor::splitVelocityLayers (int userIndex, int oscIndex, juc
             return false;
         }
     }
+    const bool matched = layoutVelocityLayers (user, block, src, layers);
+    updateUser (userIndex, user);
+    report = juce::String ((int) layers.size()) + T (" velocity sloja je sada MS1-MS") + juce::String ((int) layers.size()) + T (" (MS1 najjači), sa pretapanjem na granicama")
+           + (matched ? T (" i izjednačenom dinamikom (jačina raste ravno od tihog ka jakom sloju).") : T ("."));
+    return true;
+}
+
+// glasnoca svakog sloja (dB): RMS prvih 0.3 s od pocetka tona, srednja vrednost (medijana) po svim tonovima
+std::vector<float> LiveSamplerProcessor::measureLayerLevels (const juce::String& instrument, const std::vector<int>& layers) const
+{
+    std::vector<float> out (layers.size(), 0.0f);
+    const auto dir = library.instrumentFile (instrument);
+    if (! dir.isDirectory()) return {};
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::map<int, std::vector<float>> per;
+    for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.wav"))
+    {
+        int note = -1, layer = 0;
+        if (! SampleLibrary::parseFileName (f.getFileNameWithoutExtension(), true, note, layer)) continue;
+        if (std::find (layers.begin(), layers.end(), layer) == layers.end()) continue;
+        std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+        if (r == nullptr) continue;
+        const int len = (int) juce::jmin ((juce::int64) (r->sampleRate * 1.5), r->lengthInSamples);
+        juce::AudioBuffer<float> b (2, len);
+        r->read (&b, 0, len, 0, true, true);
+        const int on = AutoLoop::findOnset (b, len, r->sampleRate);
+        const int n = juce::jmin (len - on, (int) (r->sampleRate * 0.3));
+        if (n <= 0) continue;
+        const float rms = 0.5f * (b.getRMSLevel (0, on, n) + b.getRMSLevel (1, on, n));
+        if (rms > 1.0e-6f) per[layer].push_back (juce::Decibels::gainToDecibels (rms));
+    }
+    for (size_t k = 0; k < layers.size(); ++k)
+    {
+        auto& v = per[layers[k]];
+        if (v.empty()) return {};
+        std::sort (v.begin(), v.end());
+        out[k] = v[v.size() / 2];
+    }
+    return out;
+}
+
+// slojevi (jacine od najjace) -> MS1..MSn u datom OSC-u: pretapanje na granicama i izjednacena dinamika.
+// Unutar sloja jacina raste od nivoa slabijeg sloja do svog nivoa, pa nema skoka ni duplog utisavanja tihih slojeva.
+bool LiveSamplerProcessor::layoutVelocityLayers (UserProgram& user, int block, const OscSettings& proto, const std::vector<int>& layers)
+{
+    const int n = (int) layers.size();
+    const auto levels = measureLayerLevels (proto.instrument, layers);
+    bool matched = (int) levels.size() == n;
+    for (int k = 0; k + 1 < n && matched; ++k)
+        if (levels[(size_t) k] <= levels[(size_t) k + 1]) matched = false;   // jaci sloj mora biti glasniji
+    int minRange = 127;
+    for (int k = 0; k < n; ++k)
+        minRange = juce::jmin (minRange, (k == 0 ? 127 : layers[(size_t) k]) - (k + 1 < n ? layers[(size_t) k + 1] : 0));
+    const int xf = juce::jlimit (0, 8, minRange / 3);   // pretapanje (koraka jacine)
+
     for (int m = 0; m < kMsPerOsc; ++m)
     {
         auto& o = user.osc[(size_t) (block * kMsPerOsc + m)];
-        if (m < (int) layers.size())
+        if (m >= n) { o = OscSettings(); o.block = block; continue; }
+        o = proto;
+        o.block = block;
+        o.velHigh = m == 0 ? 127 : layers[(size_t) m];
+        o.velLow = m + 1 < n ? layers[(size_t) m + 1] + 1 : 1;
+        o.fadeIn = m + 1 < n ? xf : 0;
+        o.fadeOut = m > 0 ? xf : 0;
+        if (m > 0) o.velHigh = juce::jmin (127, o.velHigh + xf);   // slabiji sloj ulazi u pretapanje
+        o.fadeCurve = xf > 0 ? 1 : 0;
+        o.velRampDb = 0.0f;
+        if (matched)
         {
-            o = src;
-            o.velHigh = m == 0 ? 127 : layers[(size_t) m];
-            o.velLow = m + 1 < (int) layers.size() ? layers[(size_t) m + 1] + 1 : 1;
+            if (m + 1 < n) o.velRampDb = juce::jlimit (-24.0f, 0.0f, levels[(size_t) m + 1] - levels[(size_t) m]);
+            else if (n >= 2)
+            {
+                // najtiši sloj: nastavi istim nagibom kao izmedju poslednja dva sloja
+                const float perStep = (levels[(size_t) n - 2] - levels[(size_t) n - 1]) / (float) juce::jmax (1, layers[(size_t) n - 2] - layers[(size_t) n - 1]);
+                o.velRampDb = juce::jlimit (-24.0f, 0.0f, -perStep * (float) (layers[(size_t) n - 1] - 1));
+            }
         }
-        else { o = OscSettings(); o.block = block; }
     }
-    updateUser (userIndex, user);
-    report = juce::String ((int) layers.size()) + T (" velocity sloja je sada MS1-MS") + juce::String ((int) layers.size()) + T (" (MS1 najjači).");
-    return true;
+    // dinamika je u slojevima i u izjednacenju: opsta osetljivost bloka bi tihe slojeve utisala jos jednom
+    if (matched) user.block[(size_t) block].velSens = 0.0f;
+    return matched;
 }
 
 bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juce::String& report)
@@ -1092,14 +1160,43 @@ bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juc
         for (auto& l : lines) if (l.startsWith ("layers=")) l = "layers=" + juce::String ((int) layers.size() - 1);
         tag.replaceWithText (lines.joinIntoString ("\n"));
     }
-    // 4) svi useri koji koriste ovaj instrument: MS tog sloja se gasi, susedni MS preuzima opseg
+    // 4) svi useri koji koriste ovaj instrument: OSC sa razlozenim slojevima se ponovo slozi (pretapanje, dinamika);
+    //    inace MS tog sloja se gasi, a susedni MS preuzima opseg
+    const auto remaining = velocityLayersOf (os.instrument);
     for (int u = 0; u < (int) users.size(); ++u)
     {
         auto user = users[(size_t) u];
         bool changed = false;
+        std::array<bool, kNumBlocks> redone {};
+        for (int b = 0; b < kNumBlocks; ++b)
+        {
+            int mine = 0, other = 0;
+            for (int m = 0; m < kMsPerOsc; ++m)
+            {
+                const auto& o = user.osc[(size_t) (b * kMsPerOsc + m)];
+                if (o.on) (o.instrument == os.instrument ? mine : other)++;
+            }
+            if (mine > 1 && other == 0)
+            {
+                auto proto = user.osc[(size_t) (b * kMsPerOsc)];
+                if (! proto.on || proto.instrument != os.instrument)
+                    for (int m = 0; m < kMsPerOsc; ++m)
+                        if (user.osc[(size_t) (b * kMsPerOsc + m)].on) { proto = user.osc[(size_t) (b * kMsPerOsc + m)]; break; }
+                if (remaining.size() >= 2) layoutVelocityLayers (user, b, proto, remaining);
+                else
+                {
+                    proto.velLow = 1; proto.velHigh = 127; proto.fadeIn = proto.fadeOut = 0; proto.velRampDb = 0.0f;
+                    for (int m = 0; m < kMsPerOsc; ++m) { auto& o = user.osc[(size_t) (b * kMsPerOsc + m)]; o = OscSettings(); o.block = b; }
+                    user.osc[(size_t) (b * kMsPerOsc)] = proto;
+                    user.block[(size_t) b].velSens = 0.6f;
+                }
+                changed = true;
+                redone[(size_t) b] = true;
+            }
+        }
         for (auto& o : user.osc)
         {
-            if (! o.on || o.instrument != os.instrument) continue;
+            if (! o.on || o.instrument != os.instrument || redone[(size_t) juce::jlimit (0, kNumBlocks - 1, o.block)]) continue;
             if (o.velLow >= lo && o.velHigh <= hi) { const int b = o.block; o = OscSettings(); o.block = b; changed = true; continue; }
             if (top && o.velHigh == lo - 1) { o.velHigh = 127; changed = true; }
             if (! top && o.velLow == hi + 1) { o.velLow = lo; changed = true; }

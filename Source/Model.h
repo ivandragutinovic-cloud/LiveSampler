@@ -27,6 +27,7 @@ struct OscSettings
     int block = 0;                      // 0 = OSC1, 1 = OSC2 (uvek index / kMsPerOsc)
     int fadeIn = 0, fadeOut = 0;        // velocity crossfade (koliko koraka od donje / gornje granice)
     int fadeCurve = 0;                  // 0 linearno, 1 power
+    float velRampDb = 0.0f;             // izjednacena dinamika slojeva: jacina na donjoj granici MS-a (dB, gornja = 0)
     bool keyOff = false;                // svira kad se pusti taster (release / keyoff sempl)
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;   // EQ ovog MS-a
 

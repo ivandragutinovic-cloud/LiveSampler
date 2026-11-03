@@ -163,6 +163,8 @@ public:
     bool deleteVelocityLayer (int userIndex, int oscIndex, juce::String& report);
     // jedan MS sa vise slojeva -> svaki sloj na svoj MS u istom OSC-u
     bool splitVelocityLayers (int userIndex, int oscIndex, juce::String& report);
+    std::vector<float> measureLayerLevels (const juce::String& instrument, const std::vector<int>& layers) const;
+    bool layoutVelocityLayers (UserProgram& user, int block, const OscSettings& proto, const std::vector<int>& layers);
     // novi prazan (inicijalizovan) performans na mestu u listi
     void initPerformanceSlot (int slot);
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi

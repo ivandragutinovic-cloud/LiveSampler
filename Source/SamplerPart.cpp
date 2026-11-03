@@ -352,7 +352,15 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         };
         xfade *= fade (o.fadeIn, velocity - o.velLow);
         xfade *= fade (o.fadeOut, o.velHigh - velocity);
-        const float g = xfade * juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb);
+        // izjednacena dinamika: od donje granice (velRampDb) do vrha sloja (0 dB), glatko kroz ceo opseg
+        float rampDb = 0.0f;
+        if (o.velRampDb < 0.0f)
+        {
+            const int top = juce::jmax (o.velLow + 1, o.velHigh - o.fadeOut);
+            const float t = juce::jlimit (0.0f, 1.0f, (float) (velocity - o.velLow) / (float) (top - o.velLow));
+            rampDb = o.velRampDb * (1.0f - t);
+        }
+        const float g = xfade * juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb + rampDb);
         v.vel01 = vel01;
         v.velGain = (1.0f - sb.velSens) + sb.velSens * std::pow (vel01, juce::jmax (0.1f, sb.velCurve));
         v.gainL = g * juce::jmin (1.0f, 1.0f - pan);

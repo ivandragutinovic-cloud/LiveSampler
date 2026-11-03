@@ -97,6 +97,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
         x->setAttribute ("velLow", o.velLow);
         x->setAttribute ("velHigh", o.velHigh);
         x->setAttribute ("fadeIn", o.fadeIn);
+        if (std::abs (o.velRampDb) > 0.01f) x->setAttribute ("velRamp", (double) o.velRampDb);
         x->setAttribute ("fadeOut", o.fadeOut);
         x->setAttribute ("fadeCurve", o.fadeCurve);
         x->setAttribute ("block", o.block);
@@ -203,6 +204,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         o.velLow = juce::jlimit (1, 127, x->getIntAttribute ("velLow", 1));
         o.velHigh = juce::jlimit (1, 127, x->getIntAttribute ("velHigh", 127));
         o.fadeIn = juce::jlimit (0, 127, x->getIntAttribute ("fadeIn", 0));
+        o.velRampDb = (float) juce::jlimit (-40.0, 0.0, x->getDoubleAttribute ("velRamp", 0.0));
         o.fadeOut = juce::jlimit (0, 127, x->getIntAttribute ("fadeOut", 0));
         o.fadeCurve = x->getIntAttribute ("fadeCurve", 0);
         o.keyOff = x->getBoolAttribute ("keyOff", false);
