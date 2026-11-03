@@ -28,6 +28,7 @@ LiveSamplerProcessor::~LiveSamplerProcessor()
     if (saveNeeded)
         saveNow();
     loadPool.removeAllJobs (true, 10000);
+    if (kontrolerPusher != nullptr) kontrolerPusher->stopThread (3000);
 }
 
 bool LiveSamplerProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -86,12 +87,7 @@ void LiveSamplerProcessor::saveNow()
         x->setAttribute ("name", categories[c]);
         x->setAttribute ("colour", categoryColour (c).toString());
     }
-    for (auto& [k, v] : combiCategoryMap)
-    {
-        auto* x = cats->createNewChildElement ("Combi");
-        x->setAttribute ("key", k);
-        x->setAttribute ("category", v);
-    }
+
     auto* bn = root.createNewChildElement ("BankNames");
     for (int b = 0; b < kNumPerfBanks; ++b)
         if (bankNames[(size_t) b].isNotEmpty())
@@ -197,8 +193,7 @@ void LiveSamplerProcessor::loadData()
                 categories.add (x->getStringAttribute ("name"));
                 categoryColours.push_back (juce::Colour::fromString (x->getStringAttribute ("colour", "ff8a93a6")));
             }
-            for (auto* x : cats->getChildWithTagNameIterator ("Combi"))
-                combiCategoryMap[x->getStringAttribute ("key")] = x->getStringAttribute ("category");
+
         }
         else
         {
@@ -786,7 +781,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
     auto p = perf;
     p.name = c.name.isNotEmpty() ? c.name : c.id();
     p.kronosSource = juce::String (c.bankId) + ":" + juce::String (c.number);
-    p.category = categoryForCombi (c.bankId, c.number);
+    p.category = {};
     p.master.reverbLevel = (float) c.return1 / 127.0f;   // MFX1 Return
     p.master.delayLevel = (float) c.return2 / 127.0f;    // MFX2 Return
     for (int t = 0; t < 16 && t < kNumParts; ++t)
@@ -946,6 +941,7 @@ void LiveSamplerProcessor::storePerformance (int slot)
     perfDirty = false;
     markSave();
     sendChangeMessage();
+    kontrolerChanged();
 }
 
 void LiveSamplerProcessor::recallPerformance (int slot)
@@ -996,15 +992,240 @@ std::vector<juce::Colour> LiveSamplerProcessor::defaultCategoryColours()
              juce::Colour (0xfff5e663) };
 }
 
-juce::String LiveSamplerProcessor::categoryForCombi (juce::uint32 bankId, int number) const
-{
-    auto it = combiCategoryMap.find (juce::String (bankId) + ":" + juce::String (number));
-    return it == combiCategoryMap.end() ? juce::String() : it->second;
-}
-
 juce::File LiveSamplerProcessor::defaultKontrolerFile()
 {
     return juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Live Kontroler").getChildFile ("podesavanja-server.json");
+}
+
+namespace
+{
+    // uredjaj u Live Kontroleru: kljuc ciji je naziv "Pikaso Workstation" (ili kljuc "pikasoworkstation")
+    juce::String kontrolerDeviceId (const juce::var& json)
+    {
+        if (auto* devs = json.getProperty ("devices", {}).getDynamicObject())
+            for (auto& p : devs->getProperties())
+                if (p.value.getProperty ("name", {}).toString().trim().equalsIgnoreCase ("Pikaso Workstation"))
+                    return p.name.toString();
+        return "pikasoworkstation";
+    }
+
+    juce::String stripDevice (const juce::String& name)
+    {
+        const auto dot = juce::String::fromUTF8 ("\xc2\xb7");
+        return (name.contains (dot) ? name.fromFirstOccurrenceOf (dot, false, false) : name).trim();
+    }
+
+    // mesto performansa iz stavke Live Kontrolera: Bank Select MSB (CC0) = lista, Program Change = mesto u listi
+    int itemSlot (const juce::var& item, const juce::String& dev)
+    {
+        if (const auto* actions = item.getProperty ("do", {}).getArray())
+            for (auto& a : *actions)
+                if (a.getProperty ("device", {}).toString() == dev && a.getProperty ("type", {}).toString() == "pc")
+                {
+                    const int list = a.hasProperty ("msb") && ! a["msb"].isVoid() ? (int) a["msb"] : 0;
+                    const int pc = (int) a.getProperty ("pc", 0);
+                    if (list < 0 || list >= kNumPerfBanks || pc < 0 || pc >= kPerfPerBank) return -1;
+                    return list * kPerfPerBank + pc;
+                }
+        return -1;
+    }
+
+    juce::String colourHex (juce::Colour c) { return "#" + c.toDisplayString (false).toLowerCase(); }
+}
+
+// Salje izmene u Live Kontroler preko most.py (GET /state, izmena samo kategorija uredjaja Pikaso Workstation, PUT /state).
+// most.py pravi sigurnosne kopije i javlja iPad-u; ako most nije pokrenut, pokusava ponovo dok ne uspe.
+class KontrolerPusher : public juce::Thread
+{
+public:
+    struct Snapshot
+    {
+        juce::StringArray names;
+        std::vector<juce::Colour> colours;
+        std::map<int, std::pair<juce::String, juce::String>> slots;   // mesto -> (ime performansa, kategorija)
+        std::map<juce::String, juce::String> renames;
+    };
+
+    KontrolerPusher (LiveSamplerProcessor& p) : juce::Thread ("Live Kontroler"), proc (p) {}
+
+    void post (Snapshot s)
+    {
+        const juce::ScopedLock sl (lock);
+        pending = std::make_unique<Snapshot> (std::move (s));
+        notify();
+    }
+
+    void run() override
+    {
+        while (! threadShouldExit())
+        {
+            std::unique_ptr<Snapshot> snap;
+            {
+                const juce::ScopedLock sl (lock);
+                if (pending != nullptr) snap = std::make_unique<Snapshot> (*pending);
+            }
+            if (snap == nullptr) { wait (-1); continue; }
+            const auto result = push (*snap);
+            if (result.isEmpty())
+            {
+                const juce::ScopedLock sl (lock);
+                pending.reset();
+            }
+            setStatus (result.isEmpty() ? juce::String::fromUTF8 ("Poslato u Live Kontroler ") + juce::Time::getCurrentTime().toString (false, true)
+                                        : result);
+            if (result.isNotEmpty()) wait (5000);   // most nije pokrenut: probaj ponovo
+        }
+    }
+
+    juce::String status() const { const juce::ScopedLock sl (lock); return statusText; }
+
+private:
+    void setStatus (const juce::String& s) { const juce::ScopedLock sl (lock); statusText = s; }
+
+    static juce::String push (const Snapshot& snap)
+    {
+        const juce::URL base ("http://localhost:8080/state");
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            int code = 0;
+            auto in = base.createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+                                                  .withConnectionTimeoutMs (2000).withStatusCode (&code));
+            if (in == nullptr || code != 200)
+                return juce::String::fromUTF8 ("Čekam most.py (Live Kontroler nije pokrenut)");
+            const auto text = in->readEntireStreamAsString();
+            in.reset();
+            auto json = juce::JSON::parse (text);
+            // __ts tacno kako ga je most.py upisao (da poredjenje na serveru ne izgubi decimale)
+            juce::String baseTs;
+            {
+                const int at = text.indexOf ("\"__ts\"");
+                if (at >= 0)
+                {
+                    auto rest = text.substring (at + 6).trimStart().trimCharactersAtStart (":").trimStart();
+                    baseTs = rest.initialSectionContainingOnly ("0123456789.eE+-");
+                }
+            }
+            auto* root = json.getDynamicObject();
+            auto* cats = json.getProperty ("categories", {}).getArray();
+            if (root == nullptr || cats == nullptr) return "Live Kontroler: nepoznat format";
+            const auto dev = kontrolerDeviceId (json);
+            auto devName = json.getProperty ("devices", {}).getProperty (dev, {}).getProperty ("name", "Pikaso Workstation").toString();
+
+            // postojece kategorije i stavke ovog uredjaja (da ostanu id, ikone i ostalo sto je podeseno u Live Kontroleru)
+            int insertAt = -1;
+            std::map<juce::String, juce::var> oldCats;
+            std::map<int, juce::var> oldItems;
+            juce::Array<juce::var> kept;
+            for (auto& c : *cats)
+            {
+                if (c.getProperty ("device", {}).toString() == dev)
+                {
+                    if (insertAt < 0) insertAt = kept.size();
+                    oldCats[stripDevice (c.getProperty ("name", {}).toString()).toLowerCase()] = c;
+                    if (auto* items = c.getProperty ("items", {}).getArray())
+                        for (auto& it : *items)
+                            if (const int sl = itemSlot (it, dev); sl >= 0 && oldItems.count (sl) == 0) oldItems[sl] = it;
+                }
+                else kept.add (c);
+            }
+            if (insertAt < 0) insertAt = kept.size();
+
+            juce::Array<juce::var> mine;
+            for (int k = 0; k < snap.names.size(); ++k)
+            {
+                const auto& nm = snap.names[k];
+                juce::var cat;
+                if (auto it = oldCats.find (nm.toLowerCase()); it != oldCats.end()) cat = it->second;
+                else
+                    for (auto& [from, to] : snap.renames)
+                        if (to.equalsIgnoreCase (nm))
+                            if (auto it2 = oldCats.find (from.toLowerCase()); it2 != oldCats.end()) cat = it2->second;
+                if (! cat.isObject())
+                {
+                    cat = juce::var (new juce::DynamicObject());
+                    cat.getDynamicObject()->setProperty ("icon", "star");
+                }
+                auto* o = cat.getDynamicObject();
+                o->setProperty ("name", devName + juce::String::fromUTF8 (" \xc2\xb7 ") + nm);
+                o->setProperty ("device", dev);
+                if (k < (int) snap.colours.size()) o->setProperty ("color", colourHex (snap.colours[(size_t) k]));
+                juce::Array<juce::var> items;
+                for (auto& [slot, pr] : snap.slots)
+                {
+                    if (! pr.second.equalsIgnoreCase (nm)) continue;
+                    juce::var item;
+                    if (auto it = oldItems.find (slot); it != oldItems.end()) item = it->second;
+                    if (! item.isObject())
+                    {
+                        item = juce::var (new juce::DynamicObject());
+                        auto* a = new juce::DynamicObject();
+                        a->setProperty ("device", dev);
+                        a->setProperty ("type", "pc");
+                        a->setProperty ("msb", slot / kPerfPerBank);
+                        a->setProperty ("pc", slot % kPerfPerBank);
+                        juce::Array<juce::var> acts;
+                        acts.add (juce::var (a));
+                        item.getDynamicObject()->setProperty ("do", acts);
+                        item.getDynamicObject()->setProperty ("id", "pw" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt()).substring (0, 7));
+                    }
+                    item.getDynamicObject()->setProperty ("name", pr.first);
+                    items.add (item);
+                }
+                o->setProperty ("items", items);
+                mine.add (cat);
+            }
+            for (int k = 0; k < mine.size(); ++k) kept.insert (insertAt + k, mine[k]);
+            root->setProperty ("categories", kept);
+
+            int putCode = 0;
+            auto out = base.withPOSTData (juce::JSON::toString (json, true))
+                           .createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inPostData)
+                                                   .withHttpRequestCmd ("PUT")
+                                                   .withExtraHeaders ("Content-Type: application/json; charset=utf-8\r\nX-Base-Ts: " + baseTs)
+                                                   .withConnectionTimeoutMs (3000).withStatusCode (&putCode));
+            if (out != nullptr) out->readEntireStreamAsString();
+            if (putCode == 200) return {};
+            if (putCode != 409) return "Live Kontroler: greska pri slanju (" + juce::String (putCode) + ")";
+            // 409: iPad je u medjuvremenu snimio nesto; procitaj ponovo i probaj
+        }
+        return juce::String::fromUTF8 ("Live Kontroler: stalno se menja, probaću ponovo");
+    }
+
+    LiveSamplerProcessor& proc;
+    juce::CriticalSection lock;
+    std::unique_ptr<Snapshot> pending;
+    juce::String statusText;
+};
+
+juce::String LiveSamplerProcessor::getKontrolerStatus() const
+{
+    if (! kontrolerLinked) return T ("Nije povezano sa Live Kontrolerom");
+    if (auto* p = dynamic_cast<KontrolerPusher*> (kontrolerPusher.get()); p != nullptr && p->status().isNotEmpty()) return p->status();
+    return kontrolerStatus;
+}
+
+void LiveSamplerProcessor::kontrolerChanged()
+{
+    if (! kontrolerLinked) return;
+    KontrolerPusher::Snapshot s;
+    s.names = categories;
+    s.colours = categoryColours;
+    s.renames = kontrolerRenames;
+    for (int i = 0; i < kNumPerfSlots; ++i)
+    {
+        const auto& p = slots[(size_t) i];
+        if (p.used && categoryIndex (p) >= 0) s.slots[i] = { p.name, categories[categoryIndex (p)] };
+    }
+    // ono sto saljemo je ujedno i ono sto ce Live Kontroler imati
+    kontrolerLast.clear();
+    for (auto& [slot, pr] : s.slots) kontrolerLast[slot] = pr.second;
+    kontrolerRenames.clear();
+    if (kontrolerPusher == nullptr)
+    {
+        kontrolerPusher = std::make_unique<KontrolerPusher> (*this);
+        kontrolerPusher->startThread();
+    }
+    static_cast<KontrolerPusher*> (kontrolerPusher.get())->post (std::move (s));
 }
 
 void LiveSamplerProcessor::linkKontroler (const juce::File& f)
@@ -1012,13 +1233,14 @@ void LiveSamplerProcessor::linkKontroler (const juce::File& f)
     kontrolerLinked = f != juce::File();
     if (kontrolerLinked) kontrolerFile = f;
     kontrolerTime = {};
+    kontrolerLast.clear();
     if (kontrolerLinked) syncKontroler();
     markSave();
     sendChangeMessage();
 }
 
-// Live Kontroler (most.py cuva podesavanja-server.json): Kronos kategorije, njihove boje i koji kombi je u kojoj.
-// Kategorije ovde postaju iste kao tamo (ime, boja, redosled); performans napravljen od kombija dobija njegovu kategoriju.
+// Live Kontroler -> ovde: kategorije uredjaja "Pikaso Workstation" (ime, boja, redosled) i koji performans je u kojoj.
+// Izmena u Live Kontroleru (stavka premestena / obrisana) ima prednost; ono sto je promenjeno ovde salje se nazad.
 bool LiveSamplerProcessor::syncKontroler (juce::String* report)
 {
     if (! kontrolerFile.existsAsFile())
@@ -1034,79 +1256,59 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
         if (report != nullptr) *report = T ("U fajlu nema kategorija.");
         return false;
     }
-
-    // Kronos bank select u Live Kontroleru: CC32 0-6 = INT-A..G, 8-14 = USER-A..G
-    auto bankFromLsb = [] (int lsb) -> juce::int64
-    {
-        if (lsb >= 0 && lsb <= 6) return lsb;
-        if (lsb >= 8 && lsb <= 21) return (2 << 16) | (lsb - 8);
-        return -1;
-    };
-    const auto dot = juce::String::fromUTF8 ("\xc2\xb7");
+    const auto dev = kontrolerDeviceId (json);
 
     juce::StringArray names;
     std::vector<juce::Colour> colours;
-    std::map<juce::String, juce::String> map;
-    std::vector<std::pair<juce::String, juce::String>> mainItems;   // "Main" je kao omiljeni: samo ako kombi nema drugu kategoriju
+    std::map<int, juce::String> remote;
     for (auto& c : *cats)
     {
-        if (c.getProperty ("device", {}).toString() != "kronos") continue;
-        const auto* items = c.getProperty ("items", {}).getArray();
-        if (items == nullptr) continue;
-        auto name = c.getProperty ("name", {}).toString();
-        if (name.contains (dot)) name = name.fromFirstOccurrenceOf (dot, false, false);
-        name = name.trim();
+        if (c.getProperty ("device", {}).toString() != dev) continue;
+        const auto name = stripDevice (c.getProperty ("name", {}).toString());
         if (name.isEmpty() || names.contains (name, true)) continue;
         names.add (name);
         const auto col = c.getProperty ("color", {}).toString().trimCharactersAtStart ("#");
         colours.push_back (col.length() == 6 ? juce::Colour ((juce::uint32) (0xff000000u | (juce::uint32) col.getHexValue32()))
                                              : juce::Colour (0xff8a93a6));
-        const bool isMain = name.equalsIgnoreCase ("Main");
-        for (auto& it : *items)
-            if (const auto* actions = it.getProperty ("do", {}).getArray())
-                for (auto& a : *actions)
-                {
-                    if (a.getProperty ("device", {}).toString() != "kronos" || a.getProperty ("type", {}).toString() != "pc") continue;
-                    const auto bank = bankFromLsb ((int) a.getProperty ("lsb", -1));
-                    if (bank < 0) continue;
-                    const auto key = juce::String (bank) + ":" + juce::String ((int) a.getProperty ("pc", 0));
-                    if (isMain) mainItems.push_back ({ key, name });
-                    else if (map.count (key) == 0) map[key] = name;
-                    break;
-                }
+        if (auto* items = c.getProperty ("items", {}).getArray())
+            for (auto& it : *items)
+                if (const int sl = itemSlot (it, dev); sl >= 0 && remote.count (sl) == 0) remote[sl] = name;
     }
     if (names.isEmpty())
     {
-        if (report != nullptr) *report = T ("U Live Kontroleru nema Kronos kategorija.");
+        if (report != nullptr) *report = T ("U Live Kontroleru nema kategorija za uređaj Pikaso Workstation.");
+        kontrolerStatus = T ("Live Kontroler: nema uređaja Pikaso Workstation");
         return false;
     }
-    for (auto& [k, n] : mainItems)
-        if (map.count (k) == 0) map[k] = n;
 
     categories = names;
     categoryColours = colours;
-    combiCategoryMap = map;
-
-    // performansi: po kombiju od kog su napravljeni, ili po imenu kombija iz ucitanog PCG-a
-    int assigned = 0, missing = 0;
-    for (auto& s : slots)
+    int fromRemote = 0, localOnly = 0;
+    bool needPush = false;
+    for (int i = 0; i < kNumPerfSlots; ++i)
     {
-        if (! s.used) continue;
-        juce::String key = s.kronosSource;
-        if (key.isEmpty() && kronosPcg != nullptr)
-            for (auto& c : kronosPcg->combis)
-                if (c.name.isNotEmpty() && c.name.trim() == s.name.trim()) { key = juce::String (c.bankId) + ":" + juce::String (c.number); break; }
-        if (key.isNotEmpty())
-            if (auto it = map.find (key); it != map.end()) { s.category = it->second; ++assigned; }
-        if (categoryIndex (s) < 0) ++missing;
+        auto& p = slots[(size_t) i];
+        const auto r = remote.count (i) ? remote[i] : juce::String();
+        const auto last = kontrolerLast.count (i) ? kontrolerLast[i] : juce::String();
+        if (! p.used) { if (r.isNotEmpty()) needPush = true; continue; }
+        if (r != last && (r.isNotEmpty() || last.isNotEmpty()))
+        {
+            p.category = r;           // promenjeno u Live Kontroleru
+            ++fromRemote;
+        }
+        const auto local = categoryIndex (p) >= 0 ? p.category : juce::String();
+        if (! local.equalsIgnoreCase (r)) { needPush = true; ++localOnly; }
     }
+    kontrolerLast = remote;
     if (currentSlot >= 0) perf.category = slots[(size_t) currentSlot].category;
+    kontrolerStatus = T ("Live Kontroler pročitan ") + juce::Time::getCurrentTime().toString (false, true);
     markSave();
     sendChangeMessage();
+    if (needPush) kontrolerChanged();
     if (report != nullptr)
-        *report = juce::String (names.size()) + T (" kategorija, ") + juce::String ((int) map.size()) + T (" kombija ima kategoriju.\n")
-                + juce::String (assigned) + T (" performansa u listama dobilo kategoriju, ") + juce::String (missing) + T (" je bez kategorije.")
-                + (kronosPcg == nullptr ? T ("\n\nUčitaj PCG (KRONOS) da se prepoznaju i stariji performansi po imenu kombija.") : juce::String());
+        *report = juce::String (names.size()) + T (" kategorija (uređaj Pikaso Workstation), ") + juce::String ((int) remote.size())
+                + T (" performansa u njima.\n") + juce::String (fromRemote) + T (" promenjeno iz Live Kontrolera, ")
+                + juce::String (localOnly) + T (" se šalje odavde.");
     return true;
 }
 
@@ -1121,19 +1323,15 @@ void LiveSamplerProcessor::setCategories (const juce::StringArray& names, const 
     for (auto& s : slots) if (s.used) rename (s.category);
     rename (perf.category);
     // kombiji vezani za obrisanu kategoriju gube vezu; preimenovana nosi novo ime
-    for (auto it = combiCategoryMap.begin(); it != combiCategoryMap.end();)
-    {
-        const int old = categories.indexOf (it->second, true);
-        const int nw = fix (old);
-        if (nw < 0) it = combiCategoryMap.erase (it);
-        else { it->second = names[nw]; ++it; }
-    }
+    for (int k = 0; k < categories.size(); ++k)
+        if (const int nw = fix (k); nw >= 0 && names[nw] != categories[k]) kontrolerRenames[categories[k]] = names[nw];
     categories = names;
     categoryColours = colours;
     categoryColours.resize ((size_t) categories.size(), juce::Colour (0xff8a93a6));
     categoriesEdited = true;
     markSave();
     sendChangeMessage();
+    kontrolerChanged();
 }
 
 void LiveSamplerProcessor::setSlotCategory (int slot, int category)
@@ -1143,6 +1341,7 @@ void LiveSamplerProcessor::setSlotCategory (int slot, int category)
     if (slot == currentSlot) perf.category = slots[(size_t) slot].category;
     markSave();
     sendChangeMessage();
+    kontrolerChanged();
 }
 
 void LiveSamplerProcessor::clearPerformanceSlot (int slot)
@@ -1152,6 +1351,7 @@ void LiveSamplerProcessor::clearPerformanceSlot (int slot)
     if (currentSlot == slot) currentSlot = -1;
     markSave();
     sendChangeMessage();
+    kontrolerChanged();
 }
 
 void LiveSamplerProcessor::updateSetList (int i, const SetList& s)

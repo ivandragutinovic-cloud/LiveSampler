@@ -2719,7 +2719,7 @@ void ListsPage::cellMenu (int i)
             cm.addItem (1000 + c, cats[c], true, cur == c);
         cm.addSeparator();
         cm.addItem (999, T ("Bez kategorije"), true, cur < 0);
-        if (! proc.isKontrolerLinked()) cm.addItem (998, T ("Izmeni kategorije..."));
+        cm.addItem (998, T ("Izmeni kategorije..."));
         m.addSubMenu (T ("Kategorija"), cm, used);
     }
     m.addItem (2, T ("Snimi trenutni performans ovde"));
@@ -2963,12 +2963,14 @@ void ListsPage::categoriesMenu()
     juce::PopupMenu m;
     if (proc.isKontrolerLinked())
     {
-        m.addSectionHeader (T ("Povezano sa Live Kontrolerom"));
+        m.addSectionHeader (T ("Povezano sa Live Kontrolerom (uređaj Pikaso Workstation)"));
         m.addItem (99, proc.getKontrolerFile().getFullPathName(), false);
+        m.addItem (98, proc.getKontrolerStatus(), false);
+        m.addItem (4, T ("Uredi kategorije..."));
         m.addItem (1, T ("Sinhronizuj sada"));
         m.addItem (2, T ("Izaberi drugi fajl Live Kontrolera..."));
         m.addSeparator();
-        m.addItem (3, T ("Prekini vezu (kategorije uređujem ovde)"));
+        m.addItem (3, T ("Prekini vezu"));
     }
     else
     {

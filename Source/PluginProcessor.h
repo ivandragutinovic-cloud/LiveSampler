@@ -77,14 +77,15 @@ public:
     void setBankName (int b, const juce::String& n);
     void clearPerformanceSlot (int slot);
 
-    // kategorije performansa (iste kao Kronos kategorije u Live Kontroleru); performans pamti ime kategorije
+    // kategorije performansa (iste kao kategorije uredjaja "Pikaso Workstation" u Live Kontroleru); performans pamti ime kategorije
     const juce::StringArray& getCategories() const { return categories; }
     // nova lista; remap[stari indeks] = novi indeks ili -1 (obrisana)
     void setCategories (const juce::StringArray& names, const std::vector<juce::Colour>& colours, const std::vector<int>& remap);
     void setSlotCategory (int slot, int category);          // -1 = bez kategorije
     int categoryIndex (const Performance& p) const { return p.category.isEmpty() ? -1 : categories.indexOf (p.category, true); }
 
-    // veza sa Live Kontrolerom: prati se njegov podesavanja-server.json; promena boje / kategorije tamo menja i ovde
+    // veza sa Live Kontrolerom (samo uredjaj "Pikaso Workstation", Kronos i ostali se ne diraju):
+    // cita se podesavanja-server.json, a izmene odavde se salju preko most.py (http://localhost:8080/state)
     bool isKontrolerLinked() const { return kontrolerLinked; }
     juce::File getKontrolerFile() const { return kontrolerFile; }
     void linkKontroler (const juce::File& f);              // File() = prekini vezu
@@ -95,7 +96,8 @@ public:
     const std::vector<juce::Colour>& getCategoryColours() const { return categoryColours; }
     static juce::StringArray defaultCategories();             // kao Kronos kategorije u Live Kontroleru
     static std::vector<juce::Colour> defaultCategoryColours();
-    juce::String categoryForCombi (juce::uint32 bankId, int number) const;
+    void kontrolerChanged();                               // izmena ovde: posalji u Live Kontroler
+    juce::String getKontrolerStatus() const;
 
     // set liste (velika dugmad za svirku)
     const SetList& getSetList (int i) const { return setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)]; }
@@ -257,7 +259,11 @@ private:
     juce::StringArray categories { defaultCategories() };
     std::vector<juce::Colour> categoryColours { defaultCategoryColours() };
     bool categoriesEdited = false;
-    std::map<juce::String, juce::String> combiCategoryMap;   // "bankId:broj" -> ime kategorije (iz Live Kontrolera)
+    std::map<int, juce::String> kontrolerLast;               // mesto -> kategorija kako je bila u Live Kontroleru pri poslednjem citanju
+    std::map<juce::String, juce::String> kontrolerRenames;   // preimenovane kategorije (staro -> novo) za slanje
+    friend class KontrolerPusher;
+    std::unique_ptr<juce::Thread> kontrolerPusher;
+    juce::String kontrolerStatus;
     bool kontrolerLinked = false, kontrolerChecked = false;
     juce::File kontrolerFile;
     juce::Time kontrolerTime;

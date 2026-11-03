@@ -245,9 +245,12 @@ preko SysEx-a (nista se ne snima na Kronos), iskljucuje IFX/MFX/TFX (ili ostavlj
 i snima svaki treci ton u vise jacina (Auto: klavir 6, EP 5, STR-1 4, orgulje 1, sint 2).
 Meri i release posle pustanja tastera. Pikaso Workstation od toga sam pravi usera.
 
-### Kategorije performansa
-Kategorije su iste kao Kronos kategorije u Live Kontroleru (Keys, Acc, Winds, Sax, Brass, Strings, Pluck,
-Guitar, Synth, Lead, Bass, Pesme, Main), sa istim bojama. Pikaso Workstation prati
-Desktop\Live Kontroler\podesavanja-server.json: kad u Live Kontroleru promenis boju, ime ili kombi
-u kategoriji, za par sekundi se promeni i ovde. Performans napravljen od Kronos kombija dobija
-kategoriju tog kombija. Bez kategorije: narandzast okvir i tacka na dugmetu liste.
+### Kategorije performansa i Live Kontroler
+Kategorije su iste kao kategorije uredjaja "Pikaso Workstation" u Live Kontroleru (ime, boja, redosled).
+Kronos i ostali uredjaji u Live Kontroleru se ne diraju. Veza ide u oba smera:
+- Live Kontroler -> ovde: Pikaso Workstation prati Desktop\Live Kontroler\podesavanja-server.json.
+- ovde -> Live Kontroler: performans koji dobije kategoriju pojavi se kao dugme u toj kategoriji
+  (Bank Select CC0 = lista, Program Change = mesto). Salje se preko most.py (PUT /state), pa iPad
+  odmah vidi izmenu i most.py pravi sigurnosne kopije. Ako most nije pokrenut, salje se kad se pokrene.
+U Live Kontroler idu samo performansi koji imaju kategoriju. Set liste u Pikaso Workstation su nezavisne.
+Isto CC0 + Program Change radi i sa Impulse 49 ili bilo kog MIDI kontrolera.
