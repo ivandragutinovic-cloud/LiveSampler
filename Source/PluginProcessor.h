@@ -398,6 +398,12 @@ private:
     juce::File kontrolerFile;
     juce::Time kontrolerTime;
     int kontrolerTick = 0;
+    // MIDI ulazi (samostalni program): imena koja su bila ukljucena se ponovo ukljuce kad se port pojavi
+    // (loopMIDI / USB uredjaj koji se upali posle programa)
+    juce::StringArray wantedMidiInputs;
+    juce::StringArray lastMidiPresent, lastMidiEnabled;
+    int midiTick = 0;
+    void keepMidiInputs();
     std::array<SetList, kNumSetLists> setLists;
     int currentSetList = 0, setListPage = 0, currentSetListSlot = -1, pcMode = 0;
     bool perfDirty = false;

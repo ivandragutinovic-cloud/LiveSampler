@@ -78,6 +78,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("maxPolyphony", maxPolyphony);
     root.setAttribute ("gigMode", gigMode);
     root.setAttribute ("showKeyRows", showKeyRows);
+    root.setAttribute ("midiInputs", wantedMidiInputs.joinIntoString ("|"));
     root.setAttribute ("diskStreaming", SampleLibrary::streamingEnabled.load());
     root.setAttribute ("currentSlot", currentSlot);
     root.setAttribute ("currentBank", currentBank);
@@ -187,6 +188,9 @@ void LiveSamplerProcessor::loadData()
     maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
     gigMode = xml->getBoolAttribute ("gigMode", false);
     showKeyRows = xml->getBoolAttribute ("showKeyRows", false);
+    wantedMidiInputs = juce::StringArray::fromTokens (xml->getStringAttribute ("midiInputs"), "|", "");
+    wantedMidiInputs.removeEmptyStrings();
+    if (! xml->hasAttribute ("midiInputs")) wantedMidiInputs.add ("Pikaso-miniPC");   // dugmad kategorija iz Pikaso Stage
     SampleLibrary::streamingEnabled = xml->getBoolAttribute ("diskStreaming", false);
     if (SampleLibrary::streamingEnabled.load()) DiskStreamer::get();   // nit i baferi se prave ovde, ne na audio niti
     currentSlot = xml->getIntAttribute ("currentSlot", -1);
@@ -633,6 +637,36 @@ void LiveSamplerProcessor::setDiskStreaming (bool on)
     markSave(); sendChangeMessage();
 }
 
+void LiveSamplerProcessor::keepMidiInputs()
+{
+   #if JucePlugin_Build_Standalone
+    auto* holder = juce::StandalonePluginHolder::getInstance();
+    if (holder == nullptr) return;
+    auto& dm = holder->deviceManager;
+    juce::StringArray present, enabled;
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+    {
+        present.add (d.name);
+        if (dm.isMidiInputDeviceEnabled (d.identifier)) enabled.add (d.name);
+    }
+    bool changed = false;
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+    {
+        const bool on = enabled.contains (d.name), want = wantedMidiInputs.contains (d.name);
+        if (on && ! want) { wantedMidiInputs.add (d.name); changed = true; }                       // korisnik ukljucio
+        else if (! on && want && lastMidiPresent.contains (d.name) && lastMidiEnabled.contains (d.name))
+        { wantedMidiInputs.removeString (d.name); changed = true; }                                // korisnik iskljucio
+        else if (! on && want)
+            dm.setMidiInputDeviceEnabled (d.identifier, true);                                     // port se pojavio: ukljuci ga
+    }
+    lastMidiPresent = present;
+    lastMidiEnabled.clear();
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+        if (dm.isMidiInputDeviceEnabled (d.identifier)) lastMidiEnabled.add (d.name);
+    if (changed) markSave();
+   #endif
+}
+
 void LiveSamplerProcessor::setMaxPolyphony (int n)
 {
     maxPolyphony = juce::jlimit (8, 128, n);
@@ -704,6 +738,8 @@ void LiveSamplerProcessor::timerCallback()
         remote = std::make_unique<RemoteServer> (*this);
         if (gigMode) applyGigMode();
     }
+
+    if (++midiTick >= 4) { midiTick = 0; keepMidiInputs(); }
 
     // Live Kontroler: prvi put se sam poveze ako fajl postoji; posle se prati izmena fajla
     if (++kontrolerTick >= 4)
