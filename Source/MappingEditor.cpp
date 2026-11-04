@@ -1517,6 +1517,10 @@ void MappingEditor::toolsMenu()
     m.addItem (2, T ("Trim all zones"), wav);
     m.addItem (3, T ("Normalize WAV files (same gain for all, dynamics stay)"), wav);
     m.addSeparator();
+    m.addSectionHeader ("Delete zones");
+    m.addItem (6, "Delete the selected zone (and its WAV file)...", selected >= 0);
+    m.addItem (7, "Delete zones in a key range, e.g. C5-C7 (and their WAV files)...", inst != nullptr && ! zones.empty());
+    m.addSeparator();
     m.addSectionHeader (T ("In the map (files untouched)"));
     m.addItem (4, T ("Equalize zone levels (per velocity layer)"), inst != nullptr);
     m.addItem (5, T ("Reset the level of all zones to 0 dB"), inst != nullptr);
@@ -1527,6 +1531,8 @@ void MappingEditor::toolsMenu()
         if (safe == nullptr || r == 0) return;
         if (r == 1 || r == 2) safe->trimToDisk (r == 1);
         if (r == 3) safe->normalizeFiles();
+        if (r == 6) safe->deleteZones ({ safe->selected }, true, true);
+        if (r == 7) safe->askDeleteRange();
         if (r == 4) safe->equalizeZones();
         if (r == 5)
         {
@@ -1535,6 +1541,117 @@ void MappingEditor::toolsMenu()
             safe->commit (z, true);
         }
     });
+}
+
+// brisanje zona iz mape i (za WAV foldere) njihovih fajlova sa diska (idu u Recycle Bin)
+void MappingEditor::askDeleteRange()
+{
+    if (inst == nullptr) return;
+    auto* aw = new juce::AlertWindow ("Delete zones in a key range",
+        "Zones whose root note is in this range are deleted from the map" + juce::String (inst->type == SourceType::WavFolder ? " and their WAV files go to the Recycle Bin." : "."),
+        juce::MessageBoxIconType::WarningIcon);
+    aw->addTextEditor ("from", "C5", "From note:");
+    aw->addTextEditor ("to", "C7", "To note:");
+    aw->addComboBox ("keys", { "The nearest remaining zone takes their keys", "Their keys stay silent" }, "Keys:");
+    if (inst->type == SourceType::WavFolder)
+        aw->addComboBox ("files", { "Delete the WAV files too (Recycle Bin)", "Only remove from the map" }, "Files:");
+    aw->addButton ("Delete", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MappingEditor> safe (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw] (int ok)
+    {
+        if (safe == nullptr || ok == 0 || safe->inst == nullptr) return;
+        const bool c3 = safe->proc.getC3Is60();
+        auto parse = [c3] (juce::String t)
+        {
+            t = t.trim();
+            if (t.containsOnly ("0123456789")) return t.getIntValue();
+            int note = -1, layer = 0;
+            return SampleLibrary::parseFileName (t, c3, note, layer) ? note : -1;
+        };
+        int lo = parse (aw->getTextEditorContents ("from")), hi = parse (aw->getTextEditorContents ("to"));
+        if (lo < 0 || hi < 0) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Delete zones", "Write the notes like C5 and C7 (or MIDI numbers)."); return; }
+        if (lo > hi) std::swap (lo, hi);
+        std::vector<int> which;
+        for (int i = 0; i < (int) safe->zones.size(); ++i)
+            if (safe->zones[(size_t) i].rootKey >= lo && safe->zones[(size_t) i].rootKey <= hi) which.push_back (i);
+        if (which.empty()) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Delete zones", "No zone has its root note in this range."); return; }
+        const bool take = aw->getComboBoxComponent ("keys")->getSelectedItemIndex() == 0;
+        auto* fb = aw->getComboBoxComponent ("files");
+        safe->deleteZones (which, take, fb != nullptr && fb->getSelectedItemIndex() == 0);
+    }), true);
+}
+
+void MappingEditor::deleteZones (std::vector<int> which, bool neighboursTakeKeys, bool deleteFiles)
+{
+    if (inst == nullptr || which.empty()) return;
+    std::sort (which.begin(), which.end());
+    which.erase (std::unique (which.begin(), which.end()), which.end());
+    std::set<int> del (which.begin(), which.end());
+    std::vector<Zone> keep;
+    std::vector<Zone> gone;
+    for (int i = 0; i < (int) zones.size(); ++i)
+        (del.count (i) ? gone : keep).push_back (zones[(size_t) i]);
+    if (gone.empty()) return;
+
+    // fajlovi koje vise nijedna zona ne koristi
+    juce::Array<juce::File> files;
+    const bool wav = inst->type == SourceType::WavFolder;
+    if (deleteFiles && wav)
+        for (auto& g : gone)
+        {
+            if (g.sample < 0 || g.sample >= (int) inst->samples.size()) continue;
+            bool used = false;
+            for (auto& k : keep) used = used || k.sample == g.sample;
+            if (! used) files.addIfNotAlreadyThere (inst->source.getChildFile (inst->samples[(size_t) g.sample]->id));
+        }
+
+    if (neighboursTakeKeys)
+        for (auto& g : gone)
+            for (int key = g.lowKey; key <= g.highKey; ++key)
+            {
+                // najbliza preostala zona istog velocity opsega preuzima taster
+                int best = -1, bestDist = 1000;
+                for (int k = 0; k < (int) keep.size(); ++k)
+                {
+                    const auto& z = keep[(size_t) k];
+                    if (! z.enabled || z.highVel < g.lowVel || z.lowVel > g.highVel) continue;
+                    if (key >= z.lowKey && key <= z.highKey) { best = -1; bestDist = -1; break; }
+                    const int d = key < z.lowKey ? z.lowKey - key : key - z.highKey;
+                    if (d < bestDist) { bestDist = d; best = k; }
+                }
+                if (best >= 0)
+                {
+                    auto& z = keep[(size_t) best];
+                    z.lowKey = juce::jmin (z.lowKey, key);
+                    z.highKey = juce::jmax (z.highKey, key);
+                }
+            }
+
+    double bytes = 0;
+    for (auto& f : files) bytes += (double) f.getSize();
+    const auto msg = juce::String ((int) gone.size()) + " zones are removed from the map of\n" + instName
+                   + (files.isEmpty() ? juce::String() : "\n\n" + juce::String (files.size()) + " WAV files (" + juce::String (bytes / (1024.0 * 1024.0), 1)
+                                                         + " MB) go to the Recycle Bin.")
+                   + (neighboursTakeKeys ? "\n\nThe nearest remaining zones take over their keys." : "\n\nTheir keys will be silent.")
+                   + "\nThe map is saved right away. This applies to every user that uses this multisample.";
+    juce::Component::SafePointer<MappingEditor> safe (this);
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "Delete zones", msg, "Delete", "Cancel", nullptr,
+        juce::ModalCallbackFunction::create ([safe, keep, files] (int ok)
+        {
+            if (safe == nullptr || ok == 0 || safe->inst == nullptr) return;
+            auto& me = *safe;
+            me.commit (keep, false);
+            me.proc.saveMap (me.instName);
+            me.dirtyNames.erase (me.instName);
+            me.undoStack.clear();
+            juce::StringArray failed;
+            for (auto& f : files)
+                if (! f.moveToTrash() && ! f.deleteFile()) failed.add (f.getFileName());
+            me.proc.reloadInstrument (me.instName, false);
+            if (! failed.isEmpty())
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Delete zones", "These files could not be deleted:\n" + failed.joinIntoString ("\n"));
+        }));
 }
 
 // upisuje deo [from, to) sempla u isti WAV (isti broj kanala, bitova i sample rate), sa loop tackama i root notom

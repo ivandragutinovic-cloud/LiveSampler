@@ -159,6 +159,8 @@ private:
     juce::TextButton undoButton, saveButton, resetButton, revertButton, closeButton, toolsButton;
     void toolsMenu();
     void trimToDisk (bool onlySelected);
+    void askDeleteRange();
+    void deleteZones (std::vector<int> which, bool neighboursTakeKeys, bool deleteFiles);
     void normalizeFiles();
     void equalizeZones();
     bool rewriteWav (const juce::File& f, const SampleData& s, int from, int to, float gain, int loopStart, int loopEnd, juce::String& err);
