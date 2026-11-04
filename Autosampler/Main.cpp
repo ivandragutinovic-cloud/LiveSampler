@@ -152,7 +152,7 @@ public:
         auto savedAudio = props->getXmlValue ("audio");
         const auto err = deviceManager.initialise (2, 2, savedAudio.get(), true);
         if (savedAudio == nullptr) chooseKronosAudioInput();
-        if (err.isNotEmpty()) juce::Logger::writeToLog ("audio greska: " + err);
+        if (err.isNotEmpty()) juce::Logger::writeToLog ("audio error: " + err);
         deviceManager.addAudioCallback (&recorder);
 
         auto styleTitle = [this] (juce::Label& l, const juce::String& t)
@@ -162,20 +162,20 @@ public:
             l.setColour (juce::Label::textColourId, accent);
             addAndMakeVisible (l);
         };
-        styleTitle (title1, juce::String::fromUTF8 ("1. ŠTA TREBA PRESEMPLOVATI"));
-        styleTitle (title2, juce::String::fromUTF8 ("2. ŠABLON SA KRONOSA (SysEx, ništa se ne snima na Kronos; treba samo za ROM multisemplove)"));
-        styleTitle (title3, "3. SNIMANJE");
+        styleTitle (title1, juce::String::fromUTF8 ("1. WHAT TO RESAMPLE"));
+        styleTitle (title2, juce::String::fromUTF8 ("2. TEMPLATE FROM KRONOS (SysEx, nothing is written to the Kronos; needed only for ROM multisamples)"));
+        styleTitle (title3, "3. RECORDING");
 
-        loadButton.setButtonText (juce::String::fromUTF8 ("Učitaj PCG..."));
+        loadButton.setButtonText (juce::String::fromUTF8 ("Load PCG..."));
         loadButton.onClick = [this] { choosePcg(); };
         addAndMakeVisible (loadButton);
         fileLabel.setColour (juce::Label::textColourId, lcd);
         addAndMakeVisible (fileLabel);
 
-        search.setTextToShowWhenEmpty (juce::String::fromUTF8 ("Traži program / kombi..."), dim);
+        search.setTextToShowWhenEmpty (juce::String::fromUTF8 ("Search program / combi..."), dim);
         search.onTextChange = [this] { rebuildSource(); };
         addAndMakeVisible (search);
-        showCombis.setButtonText ("Kombiji");
+        showCombis.setButtonText ("Combis");
         showCombis.onClick = [this] { rebuildSource(); };
         addAndMakeVisible (showCombis);
 
@@ -187,18 +187,18 @@ public:
         addAndMakeVisible (sourceList);
         sourceModel.owner = this;
 
-        externalButton.setButtonText (juce::String::fromUTF8 ("+ Zvuk sa druge klavijature..."));
-        externalButton.setTooltip (juce::String::fromUTF8 ("Semplovanje bilo kog MIDI instrumenta (Yamaha, Roland, modul...): MIDI izlaz ka njemu i audio ulaz sa njega biraš u koraku 3."));
+        externalButton.setButtonText (juce::String::fromUTF8 ("+ Sound from another keyboard..."));
+        externalButton.setTooltip (juce::String::fromUTF8 ("Sampling any MIDI instrument (Yamaha, Roland, module...): choose the MIDI output to it and the audio input from it in step 3."));
         externalButton.onClick = [this] { addExternal(); };
         addAndMakeVisible (externalButton);
 
-        addButton.setButtonText (juce::String::fromUTF8 ("Dodaj izabrane →"));
+        addButton.setButtonText (juce::String::fromUTF8 ("Add selected →"));
         addButton.onClick = [this] { addSelected(); };
         addAndMakeVisible (addButton);
-        clearButton.setButtonText (juce::String::fromUTF8 ("Očisti listu"));
+        clearButton.setButtonText (juce::String::fromUTF8 ("Clear list"));
         clearButton.onClick = [this] { needed.clear(); neededList.updateContent(); neededList.repaint(); updateInfo(); };
         addAndMakeVisible (clearButton);
-        removeButton.setButtonText ("Ukloni izabrane");
+        removeButton.setButtonText ("Remove selected");
         removeButton.onClick = [this]
         {
             auto sel = neededList.getSelectedRows();
@@ -219,9 +219,9 @@ public:
         addAndMakeVisible (info);
 
         // 2. PCG
-        templateLabel.setText (juce::String::fromUTF8 ("Šablon (inicijalizovan program):"), juce::dontSendNotification);
-        bankLabel.setText ("Banka za nove programe:", juce::dontSendNotification);
-        startLabel.setText ("Od broja:", juce::dontSendNotification);
+        templateLabel.setText (juce::String::fromUTF8 ("Template (initialized program):"), juce::dontSendNotification);
+        bankLabel.setText ("Bank for new programs:", juce::dontSendNotification);
+        startLabel.setText ("From number:", juce::dontSendNotification);
         for (auto* l : { &templateLabel, &bankLabel, &startLabel }) { l->setColour (juce::Label::textColourId, dim); addAndMakeVisible (l); }
         addAndMakeVisible (templateBox);
         addAndMakeVisible (bankBox);
@@ -230,7 +230,7 @@ public:
         startNum.setSliderStyle (juce::Slider::IncDecButtons);
         startNum.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 50, 24);
         addAndMakeVisible (startNum);
-        makePcgButton.setButtonText ("Napravi PCG");
+        makePcgButton.setButtonText ("Create PCG");
         makePcgButton.onClick = [this] { makePcg(); };
         // snimanje preko PCG-a (USB flash) je izbaceno: sve ide direktno preko SysEx-a
         for (juce::Component* c : { (juce::Component*) &templateLabel, (juce::Component*) &templateBox, (juce::Component*) &bankLabel,
@@ -239,15 +239,15 @@ public:
             c->setVisible (false);
 
         // 3. snimanje
-        audioButton.setButtonText (juce::String::fromUTF8 ("Audio ulaz (Kronos USB)..."));
+        audioButton.setButtonText (juce::String::fromUTF8 ("Audio input (Kronos USB)..."));
         audioButton.onClick = [this] { showAudioSettings(); };
         addAndMakeVisible (audioButton);
-        midiLabel.setText ("MIDI izlaz ka Kronosu:", juce::dontSendNotification);
+        midiLabel.setText ("MIDI output to Kronos:", juce::dontSendNotification);
         addAndMakeVisible (midiOut);
         refreshMidi();
         midiOut.onChange = [this] { openMidi(); };
 
-        midiInLabel.setText ("MIDI ulaz sa Kronosa:", juce::dontSendNotification);
+        midiInLabel.setText ("MIDI input from Kronos:", juce::dontSendNotification);
         midiInLabel.setColour (juce::Label::textColourId, dim);
         addAndMakeVisible (midiInLabel);
         addAndMakeVisible (midiInBox);
@@ -261,22 +261,22 @@ public:
         midiInBox.onChange = [this] { openMidiIn(); };
         openMidiIn();
 
-        sysexMode.setButtonText (juce::String::fromUTF8 ("Direktno preko SysEx-a (menja trenutni program, ništa se ne snima na Kronos)"));
+        sysexMode.setButtonText (juce::String::fromUTF8 ("Directly via SysEx (changes the current program, nothing is written to the Kronos)"));
         sysexMode.setToggleState (true, juce::dontSendNotification);
         sysexMode.setVisible (false);
-        readTemplateButton.setButtonText (juce::String::fromUTF8 ("Pročitaj šablon sa Kronosa"));
-        readTemplateButton.setTooltip (juce::String::fromUTF8 ("Na Kronosu izaberi Init Program (npr. USER-FF 006), pa klikni ovde."));
+        readTemplateButton.setButtonText (juce::String::fromUTF8 ("Read template from Kronos"));
+        readTemplateButton.setTooltip (juce::String::fromUTF8 ("On the Kronos select Init Program (e.g. USER-FF 006), then click here."));
         readTemplateButton.onClick = [this] { readTemplateFromKronos(); };
         addAndMakeVisible (readTemplateButton);
         templateInfo.setColour (juce::Label::textColourId, lcd);
-        templateInfo.setText (juce::String::fromUTF8 ("Šablon još nije pročitan"), juce::dontSendNotification);
+        templateInfo.setText (juce::String::fromUTF8 ("Template not read yet"), juce::dontSendNotification);
         addAndMakeVisible (templateInfo);
 
         struct F { juce::Label* l; juce::Slider* s; const char* name; double lo, hi, def; };
-        const F fields[] = { { &chLabel, &channel, "MIDI kanal", 1, 16, 1 }, { &cc0Label, &cc0, "Bank CC0", 0, 127, 0 },
-                             { &cc32Label, &cc32, "Bank CC32", 0, 127, 0 }, { &lowLabel, &lowNote, "Od note", 0, 127, 24 },
-                             { &highLabel, &highNote, "Do note", 0, 127, 108 }, { &stepLabel, &step, "Korak (polust.)", 1, 12, 3 },
-                             { &velLabel, &velocity, "Jačina", 1, 127, 127 }, { &holdLabel, &hold, "Drži (s)", 0.5, 30, 6 },
+        const F fields[] = { { &chLabel, &channel, "MIDI channel", 1, 16, 1 }, { &cc0Label, &cc0, "Bank CC0", 0, 127, 0 },
+                             { &cc32Label, &cc32, "Bank CC32", 0, 127, 0 }, { &lowLabel, &lowNote, "From note", 0, 127, 24 },
+                             { &highLabel, &highNote, "To note", 0, 127, 108 }, { &stepLabel, &step, "Step (semit.)", 1, 12, 3 },
+                             { &velLabel, &velocity, "Velocity", 1, 127, 127 }, { &holdLabel, &hold, "Hold (s)", 0.5, 30, 6 },
                              { &relLabel, &release, "Release max (s)", 0.2, 20, 3 } };
         for (auto& f : fields)
         {
@@ -298,19 +298,19 @@ public:
         midiLabel.setColour (juce::Label::textColourId, dim);
         addAndMakeVisible (midiLabel);
 
-        exiIfxToggle.setButtonText (juce::String::fromUTF8 ("EXi: snimaj sa insert efektima (IFX)"));
-        exiIfxToggle.setTooltip (juce::String::fromUTF8 ("Isključeno: suv zvuk sinteze (efekte dodaješ u Pikaso Workstation). Uključeno: zvuk sa IFX efektima programa (chorus, phaser, delay...). Master efekti (reverb) su uvek isključeni."));
+        exiIfxToggle.setButtonText (juce::String::fromUTF8 ("EXi: record with insert effects (IFX)"));
+        exiIfxToggle.setTooltip (juce::String::fromUTF8 ("Off: dry synth sound (you add effects in Pikaso Workstation). On: sound with the program's IFX effects (chorus, phaser, delay...). Master effects (reverb) are always off."));
         addAndMakeVisible (exiIfxToggle);
-        exiVelLabel.setText (juce::String::fromUTF8 ("EXi jačine:"), juce::dontSendNotification);
+        exiVelLabel.setText (juce::String::fromUTF8 ("EXi velocities:"), juce::dontSendNotification);
         exiVelLabel.setColour (juce::Label::textColourId, dim);
         addAndMakeVisible (exiVelLabel);
-        exiVelBox.addItem (juce::String::fromUTF8 ("Auto (klavir 6, EP 5, STR-1 4, orgulje 1, sint 2)"), 1);
-        for (int n : { 1, 2, 3, 4, 6, 8 }) exiVelBox.addItem (juce::String (n) + (n == 1 ? juce::String::fromUTF8 (" jačina (127)") : juce::String::fromUTF8 (" jačina")), 100 + n);
+        exiVelBox.addItem (juce::String::fromUTF8 ("Auto (piano 6, EP 5, STR-1 4, organ 1, synth 2)"), 1);
+        for (int n : { 1, 2, 3, 4, 6, 8 }) exiVelBox.addItem (juce::String (n) + (n == 1 ? juce::String::fromUTF8 (" velocity (127)") : juce::String::fromUTF8 (" velocities")), 100 + n);
         exiVelBox.setSelectedId (1, juce::dontSendNotification);
         exiVelBox.onChange = [this] { updateInfo(); };
         addAndMakeVisible (exiVelBox);
 
-        autoLoopToggle.setButtonText (juce::String::fromUTF8 ("Auto loop (za zvuke koji drže)"));
+        autoLoopToggle.setButtonText (juce::String::fromUTF8 ("Auto loop (for sustained sounds)"));
         autoLoopToggle.setToggleState (true, juce::dontSendNotification);
         addAndMakeVisible (autoLoopToggle);
         for (auto [s, l, name, lo, hi, def] : { std::tuple<juce::Slider*, juce::Label*, const char*, double, double, double> { &xfadeMs, &xfadeLabel, "Crossfade (ms)", 0, 1000, 80 },
@@ -326,22 +326,22 @@ public:
             addAndMakeVisible (s);
         }
 
-        folderButton.setButtonText (juce::String::fromUTF8 ("Folder za semplove..."));
+        folderButton.setButtonText (juce::String::fromUTF8 ("Sample folder..."));
         folderButton.onClick = [this] { chooseFolder(); };
         addAndMakeVisible (folderButton);
         folderLabel.setColour (juce::Label::textColourId, lcd);
         addAndMakeVisible (folderLabel);
 
-        analyzeButton.setButtonText ("Proceni (izabrani)");
-        analyzeButton.setTooltip (juce::String::fromUTF8 ("Odsvira 3 tona (nisko, sredina, visoko) i proceni: da li zvuk drži (loop), koliko dugo da drži taster i koliki je release. Vrednosti se koriste pri snimanju tog zvuka."));
+        analyzeButton.setButtonText ("Analyze (selected)");
+        analyzeButton.setTooltip (juce::String::fromUTF8 ("Plays 3 notes (low, middle, high) and analyzes: does the sound sustain (loop), how long to hold the key, how long the release is, and whether velocity changes the sound. The values are used when recording that sound."));
         analyzeButton.onClick = [this] { startAnalysis(); };
         addAndMakeVisible (analyzeButton);
-        autoAnalyzeToggle.setButtonText (juce::String::fromUTF8 ("Proceni sam pre snimanja"));
-        autoAnalyzeToggle.setTooltip (juce::String::fromUTF8 ("Pre snimanja svakog zvuka (koji nije procenjen) prvo odsvira 3 tona i sam podesi Drži, Release i loop."));
+        autoAnalyzeToggle.setButtonText (juce::String::fromUTF8 ("Analyze before recording"));
+        autoAnalyzeToggle.setTooltip (juce::String::fromUTF8 ("Before recording each sound (not analyzed yet) it first plays 3 notes and sets Hold, Release, loop and velocity layers by itself."));
         autoAnalyzeToggle.setToggleState (true, juce::dontSendNotification);
         addAndMakeVisible (autoAnalyzeToggle);
 
-        testButton.setButtonText ("Test (prvi na listi)");
+        testButton.setButtonText ("Test (first in list)");
         testButton.onClick = [this]
         {
             if (needed.empty()) return;
@@ -374,12 +374,12 @@ public:
         progress.setFont (juce::FontOptions (14.0f, juce::Font::bold));
         addAndMakeVisible (progress);
         help.setText (juce::String::fromUTF8 (
-            "Redosled: 1) učitaj PCG i dodaj programe/kombije (ili zvuk sa druge klavijature)  2) za ROM multisemplove: na Kronosu izaberi "
-            "Init Program i klikni Pročitaj šablon  3) izaberi Kronos USB audio ulaz, MIDI izlaz i ulaz, pa START. "
-            "Snimanje se može prekinuti i nastaviti: postojeći fajlovi se preskaču.\n"
-            "EXi programi (AL-1, CX-3, SGX-2...) idu samo direktno preko SysEx-a (treba i MIDI ulaz sa Kronosa); šablon za njih ne treba. "
-            "Na Kronosu isključi KARMA i Drum Track dugme. Za klavir i EP stavi Drži na 8-10 s. "
-            "Desni klik na listu desno: Presempluj ponovo (briše stare semplove)."),
+            "Order: 1) load a PCG and add programs/combis (or a sound from another keyboard)  2) for ROM multisamples: on the Kronos select "
+            "Init Program and click Read template  3) choose the Kronos USB audio input, MIDI output and input, then START. "
+            "Recording can be stopped and continued: existing files are skipped.\n"
+            "EXi programs (AL-1, CX-3, SGX-2...) go only directly via SysEx (needs the MIDI input from the Kronos too); they need no template. "
+            "On the Kronos turn off the KARMA and Drum Track buttons. "
+            "Right-click the list on the right: Resample again (deletes the old samples)."),
             juce::dontSendNotification);
         help.setColour (juce::Label::textColourId, dim);
         help.setJustificationType (juce::Justification::topLeft);
@@ -509,7 +509,7 @@ public:
         g.fillRect (m.withWidth (m.getWidth() * lv));
         g.setColour (dim);
         g.setFont (juce::FontOptions (11.0f));
-        g.drawText ("ULAZ", m.toNearestInt().translated (0, -14).withHeight (14), juce::Justification::centredLeft);
+        g.drawText ("INPUT", m.toNearestInt().translated (0, -14).withHeight (14), juce::Justification::centredLeft);
     }
 
     void resized() override
@@ -664,17 +664,17 @@ private:
     // zvuk sa druge klavijature: ime + (po zelji) Bank MSB/LSB i Program Change + broj jacina
     void addExternal()
     {
-        auto* aw = new juce::AlertWindow (juce::String::fromUTF8 ("Zvuk sa druge klavijature"),
-            juce::String::fromUTF8 ("Bilo koji MIDI instrument. U koraku 3 izaberi MIDI izlaz ka tom instrumentu, njegov MIDI kanal i audio ulaz na koji je povezan.\n"
-                                    "Bank / Program ostavi prazno ako zvuk biraš sam na instrumentu."), juce::MessageBoxIconType::NoIcon);
-        aw->addTextEditor ("name", "", "Ime zvuka:");
+        auto* aw = new juce::AlertWindow (juce::String::fromUTF8 ("Sound from another keyboard"),
+            juce::String::fromUTF8 ("Any MIDI instrument. In step 3 choose the MIDI output to that instrument, its MIDI channel and the audio input it is connected to.\n"
+                                    "Leave Bank / Program empty if you select the sound yourself on the instrument."), juce::MessageBoxIconType::NoIcon);
+        aw->addTextEditor ("name", "", "Sound name:");
         aw->addTextEditor ("msb", "", "Bank MSB (CC0):");
         aw->addTextEditor ("lsb", "", "Bank LSB (CC32):");
         aw->addTextEditor ("pc", "", "Program (1-128):");
-        aw->addComboBox ("layers", { "1", "2", "3", "4", "6", "8" }, juce::String::fromUTF8 ("Jačine (velocity slojevi):"));
+        aw->addComboBox ("layers", { "1", "2", "3", "4", "6", "8" }, juce::String::fromUTF8 ("Velocities (velocity layers):"));
         if (auto* cb = aw->getComboBoxComponent ("layers")) cb->setSelectedItemIndex (2);
-        aw->addButton ("Dodaj", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        aw->addButton (juce::String::fromUTF8 ("Otkaži"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->addButton ("Add", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton (juce::String::fromUTF8 ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
         juce::Component::SafePointer<MainComponent> safe (this);
         aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw] (int r)
         {
@@ -695,7 +695,7 @@ private:
             const int layerChoices[] = { 1, 2, 3, 4, 6, 8 };
             if (auto* cb = aw->getComboBoxComponent ("layers")) n.layers = layerChoices[juce::jlimit (0, 5, cb->getSelectedItemIndex())];
             n.romKey = "ext:" + name.toLowerCase() + ":" + juce::String (n.msb) + ":" + juce::String (n.lsb) + ":" + juce::String (n.pc);
-            n.usedBy = (n.pc >= 0 ? "PC " + juce::String (n.pc + 1) : juce::String ("bez PC")) + (n.msb >= 0 || n.lsb >= 0 ? " / bank " + juce::String (n.msb) + "-" + juce::String (n.lsb) : juce::String());
+            n.usedBy = (n.pc >= 0 ? "PC " + juce::String (n.pc + 1) : juce::String ("no PC")) + (n.msb >= 0 || n.lsb >= 0 ? " / bank " + juce::String (n.msb) + "-" + juce::String (n.lsb) : juce::String());
             for (auto& x : safe->needed) if (x.romKey == n.romKey) return;
             safe->needed.push_back (n);
             safe->neededList.updateContent();
@@ -711,8 +711,8 @@ private:
         if (! neededList.isRowSelected (row)) neededList.selectRow (row);
         auto sel = neededList.getSelectedRows();
         juce::PopupMenu m;
-        m.addItem (1, juce::String::fromUTF8 ("Presempluj ponovo (obriši stare semplove)"), ! isThreadRunning());
-        m.addItem (2, "Ukloni sa liste", ! isThreadRunning());
+        m.addItem (1, juce::String::fromUTF8 ("Resample again (delete the old samples)"), ! isThreadRunning());
+        m.addItem (2, "Remove from list", ! isThreadRunning());
         juce::Component::SafePointer<MainComponent> safe (this);
         m.showMenuAsync ({}, [safe, sel] (int r)
         {
@@ -721,10 +721,10 @@ private:
             juce::StringArray names;
             for (int i = 0; i < sel.size(); ++i)
                 if (sel[i] < (int) safe->needed.size()) names.add (safe->needed[(size_t) sel[i]].label());
-            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Presempluj ponovo",
-                juce::String::fromUTF8 ("Obrisaću snimljene semplove za:\n\n") + names.joinIntoString ("\n")
-                + juce::String::fromUTF8 ("\n\nPosle klikni START da se snime ponovo. U Pikaso Workstation klikni Osveži (PODEŠAVANJA) kad se snimi."),
-                juce::String::fromUTF8 ("Obriši"), juce::String::fromUTF8 ("Otkaži"), nullptr,
+            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Resample again",
+                juce::String::fromUTF8 ("I will delete the recorded samples for:\n\n") + names.joinIntoString ("\n")
+                + juce::String::fromUTF8 ("\n\nThen click START to record them again. In Pikaso Workstation click Refresh (SETTINGS) when it is recorded."),
+                juce::String::fromUTF8 ("Delete"), juce::String::fromUTF8 ("Cancel"), nullptr,
                 juce::ModalCallbackFunction::create ([safe, sel] (int ok)
                 {
                     if (safe == nullptr || ok == 0) return;
@@ -757,8 +757,8 @@ private:
         pcg = std::move (p);
         pcgFile = f;
         banks = findProgramBanks (pcgData);
-        fileLabel.setText (f.getFullPathName() + "   (" + juce::String ((int) pcg->programs.size()) + " programa, "
-                           + juce::String ((int) pcg->combis.size()) + " kombija, MIDI kanal Kronosa " + juce::String (pcg->globalChannel) + ")",
+        fileLabel.setText (f.getFullPathName() + "   (" + juce::String ((int) pcg->programs.size()) + " programs, "
+                           + juce::String ((int) pcg->combis.size()) + " combis, Kronos MIDI channel " + juce::String (pcg->globalChannel) + ")",
                            juce::dontSendNotification);
         if (outFolder == juce::File() || props->getValue ("folder").isEmpty())
         {
@@ -796,7 +796,7 @@ private:
         if (code >= 100000)
         {
             const auto& c = pcg->combis[(size_t) (code - 100000)];
-            return "KOMBI " + c.id() + "  " + c.name;
+            return "COMBI " + c.id() + "  " + c.name;
         }
         const auto& p = pcg->programs[(size_t) code];
         return p.id() + "  " + p.name;
@@ -911,8 +911,8 @@ private:
             if (n.exi || n.external) ++exi;
             seconds += estimateSecondsPerMs() * (n.exi || n.external ? (n.analyzed && n.anVelFlat ? 1 : (int) exiVelocities (n).size()) : 1);
         }
-        info.setText (juce::String ((int) needed.size() - exi) + " multisemplova + " + juce::String (exi) + " EXi/ostalih zvukova, gotovo " + juce::String (done)
-                      + juce::String::fromUTF8 ("  (preostalo: ~") + juce::String (seconds / 60) + " min)",
+        info.setText (juce::String ((int) needed.size() - exi) + " multisamples + " + juce::String (exi) + " EXi/other sounds, done " + juce::String (done)
+                      + juce::String::fromUTF8 ("  (remaining: ~") + juce::String (seconds / 60) + " min)",
                       juce::dontSendNotification);
     }
 
@@ -1030,7 +1030,7 @@ private:
         if (midiIn == nullptr || midi == nullptr)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
-                juce::String::fromUTF8 ("Izaberi MIDI ulaz i izlaz Kronosa."));
+                juce::String::fromUTF8 ("Choose the MIDI input and output of the Kronos."));
             return;
         }
         sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // Kronos u PROGRAM mod
@@ -1038,7 +1038,7 @@ private:
         if (! reply)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
-                juce::String::fromUTF8 ("Kronos nije odgovorio. Proveri MIDI kanal (Global MIDI kanal Kronosa), da je Kronos u PROGRAM modu i da je u GLOBAL > MIDI uključeno primanje/slanje Exclusive poruka."));
+                juce::String::fromUTF8 ("The Kronos did not answer. Check the MIDI channel (Kronos Global MIDI channel), that the Kronos is in PROGRAM mode and that GLOBAL > MIDI has Exclusive receive/send on."));
             return;
         }
         // Korg: 42 3g 68 75 obj version data... (podaci od bajta 6, 7-bitno pakovani);
@@ -1051,8 +1051,8 @@ private:
             outFolder.createDirectory();
             outFolder.getChildFile ("Kronos-program.syx").replaceWithData (r.data(), r.size());
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
-                juce::String::fromUTF8 ("Trenutni program nije HD-1 program (") + juce::String ((int) dec.size())
-                + juce::String::fromUTF8 (" bajtova). Na Kronosu izaberi Init Program (HD-1, npr. USER-FF 006) i probaj ponovo."));
+                juce::String::fromUTF8 ("The current program is not an HD-1 program (") + juce::String ((int) dec.size())
+                + juce::String::fromUTF8 (" bytes). On the Kronos select Init Program (HD-1, e.g. USER-FF 006) and try again."));
             return;
         }
         sxStart = best;
@@ -1062,7 +1062,7 @@ private:
         sxTemplate = unpack7 (r.data() + best, (int) r.size() - best);
         juce::String nm;
         for (int k = 0; k < 24 && sxTemplate[(size_t) (sxShift + k)] != 0; ++k) nm << (juce::juce_wchar) sxTemplate[(size_t) (sxShift + k)];
-        templateInfo.setText (juce::String::fromUTF8 ("Šablon sa Kronosa: ") + nm.trim() + " (" + juce::String ((int) sxTemplate.size()) + juce::String::fromUTF8 (" bajtova)"),
+        templateInfo.setText (juce::String::fromUTF8 ("Template from Kronos: ") + nm.trim() + " (" + juce::String ((int) sxTemplate.size()) + juce::String::fromUTF8 (" bytes)"),
                               juce::dontSendNotification);
         outFolder.createDirectory();
         outFolder.getChildFile ("Kronos-program.syx").replaceWithData (r.data(), r.size());
@@ -1085,7 +1085,7 @@ private:
             NeededMs hd; ensureKronosKind (hd);
             reply = sysexCall (body, 0x24, 2000);
             if (reply && reply->size() > 5 && (*reply)[5] != 0)
-                setStatus (juce::String::fromUTF8 ("Kronos javlja grešku ") + juce::String::toHexString ((int) (*reply)[5]));
+                setStatus (juce::String::fromUTF8 ("Kronos reports error ") + juce::String::toHexString ((int) (*reply)[5]));
         }
         return true;
     }
@@ -1130,12 +1130,12 @@ private:
     bool ensureSysexHeader (juce::String& err)
     {
         if (! sxHeader.empty()) return true;
-        if (midiIn == nullptr || midi == nullptr) { err = juce::String::fromUTF8 ("Za EXi programe izaberi MIDI ulaz i izlaz Kronosa."); return false; }
+        if (midiIn == nullptr || midi == nullptr) { err = juce::String::fromUTF8 ("For EXi programs choose the MIDI input and output of the Kronos."); return false; }
         sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);
         auto r = sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x74, 0x00 }, 0x75, 3000);
         if (! r || r->size() < 8)
         {
-            err = juce::String::fromUTF8 ("Kronos nije odgovorio na SysEx. Proveri MIDI kanal, PROGRAM mod i GLOBAL > MIDI > Exclusive.");
+            err = juce::String::fromUTF8 ("The Kronos did not answer the SysEx. Check the MIDI channel, PROGRAM mode and GLOBAL > MIDI > Exclusive.");
             return false;
         }
         sxHeader.assign (r->begin(), r->begin() + 6);
@@ -1163,7 +1163,7 @@ private:
         }
         if (reply && reply->size() > 5 && (*reply)[5] != 0)
         {
-            err = juce::String::fromUTF8 ("Kronos javlja grešku ") + juce::String::toHexString ((int) (*reply)[5]) + juce::String::fromUTF8 (" za EXi program (") + n.programId + ")";
+            err = juce::String::fromUTF8 ("Kronos reports error ") + juce::String::toHexString ((int) (*reply)[5]) + juce::String::fromUTF8 (" for EXi program (") + n.programId + ")";
             return false;
         }
         return true;
@@ -1209,16 +1209,16 @@ private:
         const auto outFile = pcgFile.getSiblingFile (pcgFile.getFileNameWithoutExtension() + "_AUTOSAMPLER.PCG");
         if (! outFile.replaceWithData (out.getData(), out.getSize()))
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "PCG", juce::String::fromUTF8 ("Ne mogu da upišem ") + outFile.getFullPathName());
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "PCG", juce::String::fromUTF8 ("Cannot write ") + outFile.getFullPathName());
             return;
         }
         outFile.withFileExtension ("txt").replaceWithText (mapLines.joinIntoString ("\n"));
         neededList.repaint();
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "PCG",
-            juce::String::fromUTF8 ("Napravljen ") + outFile.getFileName() + ": " + juce::String (written) + " programa u banci "
-            + Kronos::programBankName (bankId) + juce::String::fromUTF8 (" od broja ") + juce::String ((int) startNum.getValue())
-            + (written < (int) needed.size() ? juce::String::fromUTF8 ("\nNisu svi stali u banku: posle snimanja napravi sledeći PCG za ostatak.") : juce::String())
-            + juce::String::fromUTF8 ("\n\nNa Kronosu: Disk → Load → izaberi ovaj PCG i učitaj samo banku ") + Kronos::programBankName (bankId) + ".");
+            juce::String::fromUTF8 ("Created ") + outFile.getFileName() + ": " + juce::String (written) + " programs in bank "
+            + Kronos::programBankName (bankId) + juce::String::fromUTF8 (" from number ") + juce::String ((int) startNum.getValue())
+            + (written < (int) needed.size() ? juce::String::fromUTF8 ("\nNot all fit in the bank: after recording create the next PCG for the rest.") : juce::String())
+            + juce::String::fromUTF8 ("\n\nOn the Kronos: Disk → Load → choose this PCG and load only bank ") + Kronos::programBankName (bankId) + ".");
     }
 
     //==========================================================================
@@ -1228,7 +1228,7 @@ private:
         sel->setSize (520, 380);
         juce::DialogWindow::LaunchOptions o;
         o.content.setOwned (sel);
-        o.dialogTitle = "Audio ulaz";
+        o.dialogTitle = "Audio input";
         o.dialogBackgroundColour = panel;
         o.escapeKeyTriggersCloseButton = true;
         o.useNativeTitleBar = true;
@@ -1282,7 +1282,7 @@ private:
 
     void chooseFolder()
     {
-        chooser = std::make_unique<juce::FileChooser> ("Folder za semplove", outFolder);
+        chooser = std::make_unique<juce::FileChooser> ("Sample folder", outFolder);
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                               [this] (const juce::FileChooser& fc)
                               {
@@ -1331,13 +1331,13 @@ private:
         if (midi == nullptr || deviceManager.getCurrentAudioDevice() == nullptr)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("Izaberi MIDI izlaz ka Kronosu i audio ulaz (Kronos USB)."));
+                juce::String::fromUTF8 ("Choose the MIDI output to the Kronos and the audio input (Kronos USB)."));
             return;
         }
         if (outFolder == juce::File())
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("Izaberi folder za semplove (dugme \"Folder za semplove...\"). Neka bude u folderu biblioteke Pikaso Workstation, npr. C:\\KRONOS\\KRONOS ROM."));
+                juce::String::fromUTF8 ("Choose the sample folder (button \"Sample folder...\"). Keep it inside a Pikaso Workstation library folder, e.g. C:\\KRONOS\\KRONOS ROM."));
             return;
         }
         useSysex = sysexMode.getToggleState();
@@ -1346,13 +1346,13 @@ private:
         if (anyExi && midiIn == nullptr)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("EXi programi se šalju preko SysEx-a: izaberi i MIDI ulaz sa Kronosa."));
+                juce::String::fromUTF8 ("EXi programs are sent via SysEx: choose the MIDI input from the Kronos too."));
             return;
         }
         if (useSysex && anyRom && sxTemplate.empty())
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("Na Kronosu izaberi Init Program (npr. USER-FF 006) pa klikni \"Pročitaj šablon sa Kronosa\"."));
+                juce::String::fromUTF8 ("On the Kronos select Init Program (e.g. USER-FF 006), then click \"Read template from Kronos\"."));
             return;
         }
         bool anySlot = useSysex || ! anyRom;
@@ -1360,7 +1360,7 @@ private:
         if (! anySlot)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("Prvo napravi PCG (korak 2) i učitaj ga na Kronos."));
+                juce::String::fromUTF8 ("First create the PCG (step 2) and load it on the Kronos."));
             return;
         }
         settings.channel = (int) channel.getValue();
@@ -1390,7 +1390,7 @@ private:
         if (midi == nullptr || deviceManager.getCurrentAudioDevice() == nullptr)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("Izaberi MIDI izlaz i audio ulaz."));
+                juce::String::fromUTF8 ("Choose the MIDI output and the audio input."));
             return;
         }
         analyzeRows.clear();
@@ -1403,7 +1403,7 @@ private:
         if (needTemplate && useSysex && sxTemplate.empty())
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Autosampler",
-                juce::String::fromUTF8 ("Za ROM multisemplove prvo klikni \"Pročitaj šablon sa Kronosa\"."));
+                juce::String::fromUTF8 ("For ROM multisamples first click \"Read template from Kronos\"."));
             return;
         }
         settings.channel = (int) channel.getValue();
@@ -1495,7 +1495,7 @@ private:
         lastKind = 0;
         if (pcg == nullptr)
         {
-            if (err != nullptr) *err = juce::String::fromUTF8 ("Na Kronosu ručno izaberi ") + (n.exi ? "EXi" : "HD-1") + " program (PCG nije učitan).";
+            if (err != nullptr) *err = juce::String::fromUTF8 ("On the Kronos manually select an ") + (n.exi ? "EXi" : "HD-1") + " program (PCG not loaded).";
             return false;
         }
         bool ok = false;
@@ -1518,10 +1518,10 @@ private:
         }
         if (ok) lastKind = kind;
         else if (err != nullptr)
-            *err = juce::String::fromUTF8 ("Kronos nije prešao na ") + (n.exi ? "EXi" : "HD-1")
-                 + juce::String::fromUTF8 (" program. Proveri na Kronosu GLOBAL > MIDI: da prima Program Change i Bank Change (filteri uključeni), "
-                                           "i da je PCG isti kao na Kronosu. Ili ručno izaberi ")
-                 + (n.exi ? juce::String::fromUTF8 ("bilo koji EXi program (npr. INT-A 000)") : juce::String::fromUTF8 ("Init Program (HD-1)")) + ".";
+            *err = juce::String::fromUTF8 ("The Kronos did not switch to an ") + (n.exi ? "EXi" : "HD-1")
+                 + juce::String::fromUTF8 (" program. Check on the Kronos GLOBAL > MIDI: Program Change and Bank Change receive on (filters enabled), "
+                                           "and that the PCG is the same as on the Kronos. Or manually select ")
+                 + (n.exi ? juce::String::fromUTF8 ("any EXi program (e.g. INT-A 000)") : juce::String::fromUTF8 ("Init Program (HD-1)")) + ".";
         return ok;
     }
 
@@ -1546,11 +1546,11 @@ private:
         }
         if (useSysex)
         {
-            if (! sendProgramSysex (n)) { err = juce::String::fromUTF8 ("Šablon nije pročitan"); fatal = true; return false; }
+            if (! sendProgramSysex (n)) { err = juce::String::fromUTF8 ("Template not read"); fatal = true; return false; }
         }
         else
         {
-            if (n.slot < 0) { err = "nema programa u PCG-u"; return false; }
+            if (n.slot < 0) { err = "no program in the PCG"; return false; }
             selectProgram (n.slot);
         }
         wait (900);
@@ -1571,10 +1571,10 @@ private:
                 if (i < 0 || i >= total) continue;
                 auto n = needed[(size_t) i];
                 juce::String err; bool fatal = false;
-                setStatus ("Procena " + juce::String ((int) k + 1) + "/" + juce::String ((int) analyzeRows.size()) + "  " + n.label());
+                setStatus ("Analysis " + juce::String ((int) k + 1) + "/" + juce::String ((int) analyzeRows.size()) + "  " + n.label());
                 if (! selectJob (n, err, fatal))
                 {
-                    n.anText = juce::String::fromUTF8 ("procena nije uspela: ") + err;
+                    n.anText = juce::String::fromUTF8 ("analysis failed: ") + err;
                     storeAnalysis (i, n);
                     lastErr = err;
                     if (fatal) break;
@@ -1585,12 +1585,12 @@ private:
                 if (n.analyzed) ++ok;
             }
             send (juce::MidiMessage::allNotesOff (settings.channel));
-            if (threadShouldExit()) setStatus ("Zaustavljeno.");
+            if (threadShouldExit()) setStatus ("Stopped.");
             else if (ok == (int) analyzeRows.size())
-                setStatus (juce::String::fromUTF8 ("Procena gotova: vrednosti su u listi desno, pored imena zvuka, i koriste se pri snimanju."));
+                setStatus (juce::String::fromUTF8 ("Analysis done: the values are in the list on the right, next to the sound name, and are used when recording."));
             else
-                setStatus (juce::String::fromUTF8 ("Procena: uspelo ") + juce::String (ok) + " od " + juce::String ((int) analyzeRows.size())
-                           + (lastErr.isNotEmpty() ? " (" + lastErr + ")" : juce::String::fromUTF8 (" - ništa se ne čuje: proveri audio ulaz (Kronos USB), MIDI kanal i da li je ULAZ merač pomeren")));
+                setStatus (juce::String::fromUTF8 ("Analysis: succeeded ") + juce::String (ok) + " of " + juce::String ((int) analyzeRows.size())
+                           + (lastErr.isNotEmpty() ? " (" + lastErr + ")" : juce::String::fromUTF8 (" - nothing is heard: check the audio input (Kronos USB), the MIDI channel and that the INPUT meter moves")));
             return;
         }
 
@@ -1603,7 +1603,7 @@ private:
             if (! selectJob (n, err, fatal)) { setStatus (err); if (fatal) break; continue; }
             if (autoAnalyze && ! n.analyzed)
             {
-                setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  procena...");
+                setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  analyzing...");
                 analyzeJob (n);
                 storeAnalysis (i, n);
             }
@@ -1632,7 +1632,7 @@ private:
                 int written = 0;
                 for (int note = settings.low; note <= settings.high && ! threadShouldExit(); note += settings.step)
                 {
-                    setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  nota " + noteName (note));
+                    setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  note " + noteName (note));
                     if (recordNote (note, folder.getChildFile (n.label().replaceCharacter (' ', '_') + " " + juce::String (note).paddedLeft ('0', 3) + ".wav")))
                         ++written;
                 }
@@ -1649,7 +1649,7 @@ private:
             juce::MessageManager::callAsync ([this] { neededList.repaint(); updateInfo(); });
         }
         send (juce::MidiMessage::allNotesOff (settings.channel));
-        setStatus (threadShouldExit() ? "Zaustavljeno." : juce::String::fromUTF8 ("Gotovo. U Pikaso Workstation klikni Osveži (PODEŠAVANJA) pa ponovo napravi usere od Kronos programa."));
+        setStatus (threadShouldExit() ? "Stopped." : juce::String::fromUTF8 ("Done. In Pikaso Workstation click Refresh (SETTINGS), then create the users from the Kronos programs again."));
     }
 
     void storeAnalysis (int i, const NeededMs& n)
@@ -1707,7 +1707,7 @@ private:
         for (int note : notes)
         {
             if (threadShouldExit()) return;
-            setStatus ("Procena: " + n.label() + "  nota " + noteName (note));
+            setStatus ("Analysis: " + n.label() + "  note " + noteName (note));
             int offPos = 0;
             const int len = captureNote (note, 127, testHold, testRelease, offPos);
             const int blk = juce::jmax (64, (int) (sr * 0.01));
@@ -1772,7 +1772,7 @@ private:
         if (heard == 0)
         {
             n.analyzed = false;
-            n.anText = juce::String::fromUTF8 ("procena: ništa se ne čuje (audio ulaz / MIDI kanal?)");
+            n.anText = juce::String::fromUTF8 ("analysis: nothing is heard (audio input / MIDI channel?)");
             return;
         }
         // dinamika: isti ton na jacini 127 i 40. Ako je glasnoca i boja ista (dinamika iskljucena u zvuku),
@@ -1786,7 +1786,7 @@ private:
             const int velsTest[2] = { 127, 40 };
             for (int k = 0; k < 2 && okV && ! threadShouldExit(); ++k)
             {
-                setStatus ("Procena: " + n.label() + juce::String::fromUTF8 ("  dinamika ") + juce::String (velsTest[k]));
+                setStatus ("Analysis: " + n.label() + juce::String::fromUTF8 ("  velocity ") + juce::String (velsTest[k]));
                 int offPos = 0;
                 const int len = captureNote (note, velsTest[k], 1.5, 3.0, offPos);
                 const auto& buf = recorder.buffer;
@@ -1818,9 +1818,9 @@ private:
         n.anLoop = sustainedCount * 2 > heard;
         n.anHold = std::round (holdNeed * 10.0) / 10.0;
         n.anRelease = juce::jlimit (0.3, 15.0, std::round ((relNeed + 0.3) * 10.0) / 10.0);
-        n.anText = juce::String::fromUTF8 ("drži ") + juce::String (n.anHold, 1) + " s, release " + juce::String (n.anRelease, 1) + " s, "
-                 + (n.anLoop ? "loop" : juce::String::fromUTF8 ("bez loop-a (zvuk opada)"))
-                 + (n.anVelFlat ? juce::String::fromUTF8 (", dinamika ne menja zvuk: 1 sloj") : juce::String());
+        n.anText = juce::String::fromUTF8 ("hold ") + juce::String (n.anHold, 1) + " s, release " + juce::String (n.anRelease, 1) + " s, "
+                 + (n.anLoop ? "loop" : juce::String::fromUTF8 ("no loop (sound decays)"))
+                 + (n.anVelFlat ? juce::String::fromUTF8 (", velocity does not change the sound: 1 layer") : juce::String());
     }
 
     // ceo EXi program: svaki korak note x svaka jacina; release se meri i upisuje u kronos-ms.txt
@@ -1834,8 +1834,8 @@ private:
             for (size_t v = 0; v < vels.size() && ! threadShouldExit(); ++v)
             {
                 const int vel = vels[v];
-                setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  nota " + noteName (note)
-                           + juce::String::fromUTF8 ("  jačina ") + juce::String (vel));
+                setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  note " + noteName (note)
+                           + juce::String::fromUTF8 ("  velocity ") + juce::String (vel));
                 // ime: nota (broj) + v<jacina>; Pikaso Workstation od toga pravi velocity zone
                 const auto f = folder.getChildFile (juce::String (note).paddedLeft ('0', 3) + " v" + juce::String (vel).paddedLeft ('0', 3) + ".wav");
                 double rel = -1.0;
@@ -2027,7 +2027,7 @@ public:
     static void crashHandler (void*)
     {
         auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Pikaso Autosampler GRESKA.txt");
-        f.replaceWithText ("Pikaso Autosampler se srusio.\n\n" + juce::SystemStats::getStackBacktrace());
+        f.replaceWithText ("Pikaso Autosampler crashed.\n\n" + juce::SystemStats::getStackBacktrace());
     }
 
     void initialise (const juce::String& commandLine) override
@@ -2038,7 +2038,7 @@ public:
         juce::Logger::writeToLog ("start: " + commandLine);
         juce::LookAndFeel::getDefaultLookAndFeel().setColour (juce::ResizableWindow::backgroundColourId, bg);
         window = std::make_unique<Window>();
-        juce::Logger::writeToLog ("prozor napravljen");
+        juce::Logger::writeToLog ("window created");
         if (auto* mc = dynamic_cast<MainComponent*> (window->getContentComponent()))
             mc->applyCommandLine (commandLine);
     }

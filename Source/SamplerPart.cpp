@@ -309,7 +309,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
     {
         const auto& o = u.osc[(size_t) i];
         const auto& inst = cfg->inst[(size_t) i];
-        if (! o.on || inst == nullptr || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
+        if (! o.on || ! u.block[(size_t) (i / kMsPerOsc)].on || inst == nullptr || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
             continue;
         if (pitch < o.keyLow || pitch > o.keyHigh || velocity < o.velLow || velocity > o.velHigh)
             continue;
@@ -687,7 +687,7 @@ void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
     // koji OSC-ovi postoje
     juce::uint32 present = 0;
     for (int i = 0; i < kNumOsc; ++i)
-        if (u.osc[(size_t) i].on && cfg->inst[(size_t) i] != nullptr)
+        if (u.osc[(size_t) i].on && u.block[(size_t) (i / kMsPerOsc)].on && cfg->inst[(size_t) i] != nullptr)
             present |= 1u << (i / kMsPerOsc);
 
     juce::uint32 polyMask = 0;

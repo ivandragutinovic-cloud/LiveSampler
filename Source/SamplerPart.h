@@ -22,7 +22,7 @@ public:
     enum Type { Off = 0, Chorus, Phaser, Tremolo, Overdrive, Echo, NumTypes };
     static juce::StringArray getTypeNames()
     {
-        return { "Bez efekta", "Chorus", "Phaser", "Tremolo", "Overdrive", "Eho (delay)" };
+        return { "No effect", "Chorus", "Phaser", "Tremolo", "Overdrive", "Echo (delay)" };
     }
 
     void prepare (double sampleRate, int maxBlock);

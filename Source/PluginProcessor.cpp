@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "MidiLearn.h"
 #include "PluginEditor.h"
 #include "Text.h"
 #include "AutoLoop.h"
@@ -14,6 +15,7 @@ juce::Colour LiveSamplerProcessor::partColour (int i)
 LiveSamplerProcessor::LiveSamplerProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+    MidiLearn::get();     // napravi na glavnoj niti (audio nit ga samo cita)
     terca = TercaSettings::makeDefault();
     loadData();
     rebuildConfig();
@@ -93,6 +95,9 @@ void LiveSamplerProcessor::saveNow()
         x->setAttribute ("name", categories[c]);
         x->setAttribute ("colour", categoryColour (c).toString());
     }
+
+    auto* uc = root.createNewChildElement ("UserCategories");
+    for (auto& c : userCategories) uc->createNewChildElement ("Category")->setAttribute ("name", c);
 
     auto* bn = root.createNewChildElement ("BankNames");
     for (int b = 0; b < kNumPerfBanks; ++b)
@@ -211,6 +216,12 @@ void LiveSamplerProcessor::loadData()
         }
         if (categories.isEmpty()) { categories = defaultCategories(); categoryColours = defaultCategoryColours(); }
         categoryColours.resize ((size_t) categories.size(), juce::Colour (0xff8a93a6));
+    }
+    if (auto* uc = xml->getChildByName ("UserCategories"))
+    {
+        userCategories.clear();
+        for (auto* x : uc->getChildWithTagNameIterator ("Category"))
+            if (x->getStringAttribute ("name").isNotEmpty()) userCategories.add (x->getStringAttribute ("name"));
     }
     if (auto* bn = xml->getChildByName ("BankNames"))
         for (auto* x : bn->getChildWithTagNameIterator ("Bank"))
@@ -460,7 +471,7 @@ void LiveSamplerProcessor::onInstrumentLoaded (const juce::String& name, Instrum
         if (! inst->warnings.isEmpty())
             lastWarning = name.fromLastOccurrenceOf ("/", false, false) + ": " + inst->warnings[0];
         if (inst->zones.empty())
-            lastWarning = name + T (": nema upotrebljivih semplova");
+            lastWarning = name + T (": no usable samples");
         cache[name] = inst;
     }
 
@@ -824,9 +835,9 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         {
             skipped.add ("Timbre " + juce::String (t + 1) + ": "
                          + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
-                         + (prog != nullptr && prog->exi ? " (EXi " + prog->engineText() + juce::String::fromUTF8 (" sinteza, nije presemplovana)")
-                            : prog != nullptr && prog->drumKit ? T (" (drum kit, još nije podržan)")
-                            : prog != nullptr && ! prog->usesUser() ? T (" (fabrički ROM, nije presemplovan)") : juce::String()));
+                         + (prog != nullptr && prog->exi ? " (EXi " + prog->engineText() + juce::String::fromUTF8 (" synthesis, not resampled)")
+                            : prog != nullptr && prog->drumKit ? T (" (drum kit, not supported yet)")
+                            : prog != nullptr && ! prog->usesUser() ? T (" (factory ROM, not resampled)") : juce::String()));
             continue;
         }
 
@@ -948,6 +959,40 @@ void LiveSamplerProcessor::deleteUser (int index)
     sendChangeMessage();
 }
 
+void LiveSamplerProcessor::moveUser (int from, int to)
+{
+    const int n = (int) users.size();
+    if (from < 0 || from >= n) return;
+    to = juce::jlimit (0, n - 1, to);
+    if (from == to) return;
+    auto u = users[(size_t) from];
+    users.erase (users.begin() + from);
+    users.insert (users.begin() + to, u);
+    markSave();
+    rebuildConfig();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::editUserCategory (const juce::String& oldName, const juce::String& newName)
+{
+    const auto nn = newName.trim();
+    if (oldName.isEmpty())                       // nova
+    {
+        if (nn.isNotEmpty()) userCategories.addIfNotAlreadyThere (nn);
+    }
+    else
+    {
+        const int k = userCategories.indexOf (oldName);
+        if (k < 0) return;
+        if (nn.isEmpty()) userCategories.remove (k);   // brisanje
+        else userCategories.set (k, nn);
+        for (auto& u : users)
+            if (u.category == oldName) u.category = nn;
+    }
+    markSave();
+    sendChangeMessage();
+}
+
 //==============================================================================
 //  Performans
 //==============================================================================
@@ -1025,22 +1070,22 @@ bool LiveSamplerProcessor::splitVelocityLayers (int userIndex, int oscIndex, juc
     auto user = users[(size_t) userIndex];
     const auto src = user.osc[(size_t) oscIndex];
     const auto layers = velocityLayersOf (src.instrument);
-    if (layers.size() < 2) { report = T ("Ovaj zvuk ima samo jedan velocity sloj."); return false; }
-    if (layers.size() > (size_t) kMsPerOsc) { report = T ("Previše slojeva za jedan OSC (najviše 8)."); return false; }
+    if (layers.size() < 2) { report = T ("This sound has only one velocity layer."); return false; }
+    if (layers.size() > (size_t) kMsPerOsc) { report = T ("Too many layers for one OSC (max 8)."); return false; }
     const int block = oscIndex / kMsPerOsc;
     for (int m = 0; m < kMsPerOsc; ++m)
     {
         const auto& o = user.osc[(size_t) (block * kMsPerOsc + m)];
         if (block * kMsPerOsc + m != oscIndex && o.on && o.instrument != src.instrument)
         {
-            report = T ("U ovom OSC-u ima i drugih MS-ova. Napravi slojeve u praznom OSC-u (kopiraj MS tamo).");
+            report = T ("This OSC has other MS too. Split the layers in an empty OSC (copy the MS there).");
             return false;
         }
     }
     const bool matched = layoutVelocityLayers (user, block, src, layers);
     updateUser (userIndex, user);
-    report = juce::String ((int) layers.size()) + T (" velocity sloja je sada MS1-MS") + juce::String ((int) layers.size()) + T (" (MS1 najjači), sa pretapanjem na granicama")
-           + (matched ? T (" i izjednačenom dinamikom (jačina raste ravno od tihog ka jakom sloju).") : T ("."));
+    report = juce::String ((int) layers.size()) + T (" velocity layers are now MS1-MS") + juce::String ((int) layers.size()) + T (" (MS1 = loudest), with crossfades at the borders")
+           + (matched ? T (" and matched dynamics (level rises evenly from the soft to the loud layer).") : T ("."));
     return true;
 }
 
@@ -1130,7 +1175,7 @@ bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juc
     const auto layers = velocityLayersOf (os.instrument);
     if (! dir.isDirectory() || layers.size() < 2)
     {
-        report = T ("Ovaj MS nema više velocity slojeva (treba presemplovan zvuk sa fajlovima \"060 v127.wav\").");
+        report = T ("This MS has no separate velocity layers (needs a resampled sound with files \"060 v127.wav\").");
         return false;
     }
     // sloj ovog MS-a: jacina snimka unutar opsega MS-a
@@ -1138,10 +1183,10 @@ bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juc
     for (int v : layers) if (v >= os.velLow && v <= os.velHigh) { if (layer < 0) layer = v; ++inRange; }
     if (inRange > 1)
     {
-        report = T ("Ovaj MS svira više slojeva odjednom. Prvo izaberi \"Razloži slojeve na MS\", pa obriši sloj koji ne treba.");
+        report = T ("This MS plays several layers at once. First choose \"Split layers to MS\", then delete the layer you don't need.");
         return false;
     }
-    if (layer < 0) { report = T ("Opseg ovog MS-a ne odgovara nijednom snimljenom sloju."); return false; }
+    if (layer < 0) { report = T ("The range of this MS does not match any recorded layer."); return false; }
     const auto idx = (size_t) (std::find (layers.begin(), layers.end(), layer) - layers.begin());
     // opseg sloja u fajlovima: od (sledeci slabiji + 1) do ove jacine (najjaci do 127)
     const int lo = idx + 1 < layers.size() ? layers[idx + 1] + 1 : 1;
@@ -1229,9 +1274,9 @@ bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juc
         if (changed) updateUser (u, user);
     }
     reloadInstrument (os.instrument, false);
-    report = T ("Obrisano ") + juce::String (deleted) + T (" fajlova (sloj jačine ") + juce::String (layer) + T (", opseg ")
+    report = T ("Deleted ") + juce::String (deleted) + T (" files (velocity layer ") + juce::String (layer) + T (", range ")
            + juce::String (lo) + "-" + juce::String (hi) + T ("). ")
-           + (top ? T ("Slabiji sloj sada ide do 127.") : T ("Jači sloj sada ide naniže od ") + juce::String (lo) + ".");
+           + (top ? T ("The softer layer now goes up to 127.") : T ("The louder layer now goes down from ") + juce::String (lo) + ".");
     return true;
 }
 
@@ -1245,7 +1290,7 @@ void LiveSamplerProcessor::setCurrentBank (int b)
 juce::String LiveSamplerProcessor::getBankName (int b) const
 {
     b = juce::jlimit (0, kNumPerfBanks - 1, b);
-    return bankNames[(size_t) b].isNotEmpty() ? bankNames[(size_t) b] : T ("Lista ") + juce::String (b + 1);
+    return bankNames[(size_t) b].isNotEmpty() ? bankNames[(size_t) b] : T ("List ") + juce::String (b + 1);
 }
 
 void LiveSamplerProcessor::setBankName (int b, const juce::String& n)
@@ -1348,7 +1393,7 @@ public:
                 const juce::ScopedLock sl (lock);
                 pending.reset();
             }
-            setStatus (result.isEmpty() ? juce::String::fromUTF8 ("Poslato u Live Kontroler ") + juce::Time::getCurrentTime().toString (false, true)
+            setStatus (result.isEmpty() ? juce::String::fromUTF8 ("Sent to Live Kontroler ") + juce::Time::getCurrentTime().toString (false, true)
                                         : result);
             if (result.isNotEmpty()) wait (5000);   // most nije pokrenut: probaj ponovo
         }
@@ -1368,7 +1413,7 @@ private:
             auto in = base.createInputStream (juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                                                   .withConnectionTimeoutMs (2000).withStatusCode (&code));
             if (in == nullptr || code != 200)
-                return juce::String::fromUTF8 ("Čekam most.py (Live Kontroler nije pokrenut)");
+                return juce::String::fromUTF8 ("Waiting for most.py (Live Kontroler is not running)");
             const auto text = in->readEntireStreamAsString();
             in.reset();
             auto json = juce::JSON::parse (text);
@@ -1384,7 +1429,7 @@ private:
             }
             auto* root = json.getDynamicObject();
             auto* cats = json.getProperty ("categories", {}).getArray();
-            if (root == nullptr || cats == nullptr) return "Live Kontroler: nepoznat format";
+            if (root == nullptr || cats == nullptr) return "Live Kontroler: unknown format";
             const auto dev = kontrolerDeviceId (json);
             auto devName = json.getProperty ("devices", {}).getProperty (dev, {}).getProperty ("name", "Pikaso Workstation").toString();
 
@@ -1462,10 +1507,10 @@ private:
                                                    .withConnectionTimeoutMs (3000).withStatusCode (&putCode));
             if (out != nullptr) out->readEntireStreamAsString();
             if (putCode == 200) return {};
-            if (putCode != 409) return "Live Kontroler: greska pri slanju (" + juce::String (putCode) + ")";
+            if (putCode != 409) return "Live Kontroler: send error (" + juce::String (putCode) + ")";
             // 409: iPad je u medjuvremenu snimio nesto; procitaj ponovo i probaj
         }
-        return juce::String::fromUTF8 ("Live Kontroler: stalno se menja, probaću ponovo");
+        return juce::String::fromUTF8 ("Live Kontroler: keeps changing, will try again");
     }
 
     LiveSamplerProcessor& proc;
@@ -1476,7 +1521,7 @@ private:
 
 juce::String LiveSamplerProcessor::getKontrolerStatus() const
 {
-    if (! kontrolerLinked) return T ("Nije povezano sa Live Kontrolerom");
+    if (! kontrolerLinked) return T ("Not linked to Live Kontroler");
     if (auto* p = dynamic_cast<KontrolerPusher*> (kontrolerPusher.get()); p != nullptr && p->status().isNotEmpty()) return p->status();
     return kontrolerStatus;
 }
@@ -1522,7 +1567,7 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
 {
     if (! kontrolerFile.existsAsFile())
     {
-        if (report != nullptr) *report = T ("Ne nalazim ") + kontrolerFile.getFullPathName();
+        if (report != nullptr) *report = T ("Cannot find ") + kontrolerFile.getFullPathName();
         return false;
     }
     kontrolerTime = kontrolerFile.getLastModificationTime();
@@ -1530,7 +1575,7 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
     const auto* cats = json.getProperty ("categories", {}).getArray();
     if (cats == nullptr)
     {
-        if (report != nullptr) *report = T ("U fajlu nema kategorija.");
+        if (report != nullptr) *report = T ("The file has no categories.");
         return false;
     }
     const auto dev = kontrolerDeviceId (json);
@@ -1553,8 +1598,8 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
     }
     if (names.isEmpty())
     {
-        if (report != nullptr) *report = T ("U Live Kontroleru nema kategorija za uređaj Pikaso Workstation.");
-        kontrolerStatus = T ("Live Kontroler: nema uređaja Pikaso Workstation");
+        if (report != nullptr) *report = T ("Live Kontroler has no categories for the device Pikaso Workstation.");
+        kontrolerStatus = T ("Live Kontroler: no device Pikaso Workstation");
         return false;
     }
 
@@ -1578,14 +1623,14 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
     }
     kontrolerLast = remote;
     if (currentSlot >= 0) perf.category = slots[(size_t) currentSlot].category;
-    kontrolerStatus = T ("Live Kontroler pročitan ") + juce::Time::getCurrentTime().toString (false, true);
+    kontrolerStatus = T ("Live Kontroler read ") + juce::Time::getCurrentTime().toString (false, true);
     markSave();
     sendChangeMessage();
     if (needPush) kontrolerChanged();
     if (report != nullptr)
-        *report = juce::String (names.size()) + T (" kategorija (uređaj Pikaso Workstation), ") + juce::String ((int) remote.size())
-                + T (" performansa u njima.\n") + juce::String (fromRemote) + T (" promenjeno iz Live Kontrolera, ")
-                + juce::String (localOnly) + T (" se šalje odavde.");
+        *report = juce::String (names.size()) + T (" categories (device Pikaso Workstation), ") + juce::String ((int) remote.size())
+                + T (" performances in them.\n") + juce::String (fromRemote) + T (" changed from Live Kontroler, ")
+                + juce::String (localOnly) + T (" sent from here.");
     return true;
 }
 
@@ -1857,6 +1902,10 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
     const int ch = juce::jlimit (0, 15, m.getChannel() - 1);
     const auto& lt = c.terca.learn;
 
+    // MIDI Learn (desni klik na kontrolu): naucen CC / taster ide samo na tu kontrolu
+    if (MidiLearn::get().handleIncoming (m))
+        return;
+
     // dodela dugmeta za terce
     if (learning.load())
     {
@@ -2063,18 +2112,18 @@ void LiveSamplerProcessor::panic()
 juce::String LiveSamplerProcessor::getStatusText() const
 {
     if (libraryFolders.isEmpty())
-        return T ("Dodaj folder sa semplovima (PODEŠAVANJA)");
+        return T ("Add a sample folder (SETTINGS)");
     if (scanning)
-        return T ("Pretražujem foldere...");
+        return T ("Scanning folders...");
     if (! pendingLoads.empty())
-        return T ("Učitavam: ") + pendingLoads.begin()->first.fromLastOccurrenceOf ("/", false, false)
+        return T ("Loading: ") + pendingLoads.begin()->first.fromLastOccurrenceOf ("/", false, false)
              + (pendingLoads.size() > 1 ? " (+" + juce::String ((int) pendingLoads.size() - 1) + ")" : juce::String());
 
     size_t bytes = 0;
     for (auto& kv : cache)
         bytes += kv.second->memoryBytes();
 
-    auto s = juce::String (instrumentList.size()) + T (" instrumenata  |  ") + juce::String ((double) bytes / (1024.0 * 1024.0), 0) + " MB";
+    auto s = juce::String (instrumentList.size()) + T (" instruments  |  ") + juce::String ((double) bytes / (1024.0 * 1024.0), 0) + " MB";
     if (lastWarning.isNotEmpty())
         s << T ("  |  ⚠ ") << lastWarning;
     return s;
@@ -2149,8 +2198,8 @@ public:
         juce::StringArray problems;
         for (auto& name : names)
         {
-            if (threadShouldExit()) { setStatus (T ("Backup prekinut.")); return; }
-            setStatus (T ("Backup: semplovi ") + juce::String (done + 1) + "/" + juce::String (names.size()) + "  " + name);
+            if (threadShouldExit()) { setStatus (T ("Backup stopped.")); return; }
+            setStatus (T ("Backup: samples ") + juce::String (done + 1) + "/" + juce::String (names.size()) + "  " + name);
             if (! exportInstrument (name, lib.getChildFile (legalPath (name))))
             {
                 ++failed;
@@ -2173,11 +2222,11 @@ public:
         }
         dest.getChildFile ("KAKO VRATITI.txt").replaceWithText (
             "Pikaso Workstation backup (" + juce::Time::getCurrentTime().toString (true, true) + ")\r\n\r\n"
-            "Na drugom racunaru: Pikaso Workstation > PODESAVANJA > VRATI BACKUP i izaberi ovaj folder.\r\n"
-            "Folder moze da ostane gde jeste (USB disk, drugi disk...): semplovi se citaju iz '" + juce::String (kBackupLib) + "'.\r\n");
+            "On another computer: Pikaso Workstation > SETTINGS > RESTORE BACKUP and choose this folder.\r\n"
+            "The folder can stay where it is (USB disk, other disk...): samples are read from '" + juce::String (kBackupLib) + "'.\r\n");
         data.deleteFile();
-        setStatus (T ("Backup gotov: ") + juce::String (names.size() - failed) + T (" instrumenata u ") + dest.getFullPathName()
-                   + (failed > 0 ? T ("  (nije uspelo: ") + problems.joinIntoString (", ") + ")" : juce::String()));
+        setStatus (T ("Backup done: ") + juce::String (names.size() - failed) + T (" instruments in ") + dest.getFullPathName()
+                   + (failed > 0 ? T ("  (failed: ") + problems.joinIntoString (", ") + ")" : juce::String()));
     }
 
     juce::String status() const { const juce::ScopedLock sl (lock); return text; }
@@ -2273,7 +2322,7 @@ bool LiveSamplerProcessor::restoreBackup (const juce::File& backupFolder, juce::
     auto xml = juce::XmlDocument::parse (dataFile);
     if (xml == nullptr || ! xml->hasTagName ("LiveSamplerData"))
     {
-        report = T ("U ovom folderu nema backup-a (fajl \"") + juce::String (kBackupData) + "\").";
+        report = T ("This folder has no backup (file \"") + juce::String (kBackupData) + "\").";
         return false;
     }
     // biblioteka iz backup-a + postojeci folderi ovog racunara
@@ -2291,10 +2340,10 @@ bool LiveSamplerProcessor::restoreBackup (const juce::File& backupFolder, juce::
         cur.copyFileTo (cur.getSiblingFile ("LiveSampler-podaci pre vracanja " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M") + ".xml"));
     if (! xml->writeTo (cur))
     {
-        report = T ("Ne mogu da upišem podatke u ") + cur.getFullPathName();
+        report = T ("Cannot write the data to ") + cur.getFullPathName();
         return false;
     }
     restorePending = true;
-    report = T ("Backup je vraćen. Zatvori i ponovo pokreni Pikaso Workstation.\nDosadašnji podaci su sačuvani pored (LiveSampler-podaci pre vracanja ...xml).");
+    report = T ("Backup restored. Close and restart Pikaso Workstation.\nThe previous data was kept next to it (LiveSampler-podaci pre vracanja ...xml).");
     return true;
 }

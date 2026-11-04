@@ -420,7 +420,7 @@ SamplePtr SampleLibrary::loadAudioFile (const juce::File& f, const juce::String&
     }
     if (reader == nullptr || reader->lengthInSamples <= 0)
     {
-        warnings.add (T ("Ne mogu da pročitam: ") + f.getFileName());
+        warnings.add (T ("Cannot read: ") + f.getFileName());
         return nullptr;
     }
 
@@ -477,7 +477,7 @@ void SampleLibrary::autoMapByName (Instrument& inst, const std::vector<int>& sam
                 note = 60; // jedan fajl bez note: svira na celoj klavijaturi
             else
             {
-                inst.warnings.add ("Nema note u nazivu: " + s->displayName);
+                inst.warnings.add ("No note in the file name: " + s->displayName);
                 Zone z;
                 z.sample = idx;
                 z.enabled = false;  // vidi se u editoru, moze rucno da se mapira
@@ -635,7 +635,7 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
     juce::MemoryBlock mb;
     if (! f.loadFileAsData (mb))
     {
-        warnings.add (T ("Ne mogu da pročitam: ") + f.getFileName());
+        warnings.add (T ("Cannot read: ") + f.getFileName());
         return nullptr;
     }
 
@@ -687,18 +687,18 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
                 return sd;
             }
         }
-        warnings.add (f.getFileName() + T (": upućuje na ") + refName + T (", koji ne postoji"));
+        warnings.add (f.getFileName() + T (": points to ") + refName + T (", which does not exist"));
         return nullptr;
     }
 
     if (smd == nullptr)
     {
-        warnings.add (f.getFileName() + T (": nije Korg KSF sempl"));
+        warnings.add (f.getFileName() + T (": not a Korg KSF sample"));
         return nullptr;
     }
     if (smd->size < 12)
     {
-        warnings.add (f.getFileName() + T (": oštećen KSF"));
+        warnings.add (f.getFileName() + T (": damaged KSF"));
         return nullptr;
     }
 
@@ -710,12 +710,12 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
 
     if (attributes & 0x10)
     {
-        warnings.add (f.getFileName() + T (": kompresovan KSF, nije podržano"));
+        warnings.add (f.getFileName() + T (": compressed KSF, not supported"));
         return nullptr;
     }
     if (bits != 8 && bits != 16 && bits != 24)
     {
-        warnings.add (f.getFileName() + ": " + juce::String (bits) + T ("-bitni KSF nije podržan"));
+        warnings.add (f.getFileName() + ": " + juce::String (bits) + T ("-bit KSF is not supported"));
         return nullptr;
     }
     if (rate < 4000.0 || rate > 200000.0)
@@ -727,7 +727,7 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
     const int frames = (int) juce::jmin ((size_t) points, (smd->size - 12) / frameBytes);
     if (frames <= 0)
     {
-        warnings.add (f.getFileName() + T (": prazan sempl"));
+        warnings.add (f.getFileName() + T (": empty sample"));
         return nullptr;
     }
 
@@ -780,7 +780,7 @@ void SampleLibrary::loadKorg (Instrument& inst)
     juce::MemoryBlock mb;
     if (! inst.source.loadFileAsData (mb))
     {
-        inst.warnings.add (T ("Ne mogu da pročitam KMP"));
+        inst.warnings.add (T ("Cannot read the KMP"));
         return;
     }
 
@@ -790,7 +790,7 @@ void SampleLibrary::loadKorg (Instrument& inst)
     auto* rlp = ChunkReader::find (chunks, "RLP1");
     if (msp == nullptr || rlp == nullptr || msp->size < 18)
     {
-        inst.warnings.add (T ("Nije Korg KMP fajl"));
+        inst.warnings.add (T ("Not a Korg KMP file"));
         return;
     }
 
@@ -820,7 +820,7 @@ void SampleLibrary::loadKorg (Instrument& inst)
             continue;
         if (fileName.startsWithIgnoreCase ("INTERNAL"))
         {
-            inst.warnings.add (T ("Region ") + juce::String (i + 1) + T (" koristi interni ROM sempl klavijature"));
+            inst.warnings.add (T ("Region ") + juce::String (i + 1) + T (" uses an internal ROM sample of the keyboard"));
             continue;
         }
 
@@ -838,7 +838,7 @@ void SampleLibrary::loadKorg (Instrument& inst)
 
             if (! ksf.existsAsFile())
             {
-                inst.warnings.add (T ("Nema KSF fajla: ") + fileName);
+                inst.warnings.add (T ("KSF file missing: ") + fileName);
                 continue;
             }
 
@@ -1156,7 +1156,7 @@ void SampleLibrary::loadKontakt (Instrument& inst, bool c3Is60)
     juce::MemoryBlock mb;
     if (! inst.source.loadFileAsData (mb))
     {
-        inst.warnings.add (T ("Ne mogu da pročitam NKI"));
+        inst.warnings.add (T ("Cannot read the NKI"));
         return;
     }
 
@@ -1349,19 +1349,19 @@ void SampleLibrary::loadKontakt (Instrument& inst, bool c3Is60)
         }
 
         if (! indices.empty())
-            inst.warnings.add (T ("NKI je novog Kontakt formata. Mapiranje je napravljeno iz semplova (naziv / root nota u WAV-u). Proveri ga u editoru."));
+            inst.warnings.add (T ("NKI is a newer Kontakt format. The mapping was made from the samples (name / root note in the WAV). Check it in the editor."));
         else
-            inst.warnings.add (T ("NKI je novog (zaključanog) Kontakt formata i ne mogu da nađem njegove semplove."));
+            inst.warnings.add (T ("NKI is a newer, protected Kontakt format (samples packed in NKX/NCW). Its samples cannot be read: save it from Kontakt as Patch + samples, or resample it."));
 
         autoMapByName (inst, indices, c3Is60);
     }
 
     if (releaseSkipped > 0)
-        inst.warnings.add (juce::String (releaseSkipped) + T (" release zona (sviraju kad se pusti taster) za sada se preskaču"));
+        inst.warnings.add (juce::String (releaseSkipped) + T (" release zones (play when the key is released) are skipped for now"));
     if (ncw > 0)
-        inst.warnings.add (juce::String (ncw) + T (" semplova je u Kontakt NCW formatu (kompresovano), nije podržano"));
+        inst.warnings.add (juce::String (ncw) + T (" samples are in Kontakt NCW format (compressed), not supported"));
     else if (missing > 0)
-        inst.warnings.add (juce::String (missing) + T (" semplova nije pronađeno"));
+        inst.warnings.add (juce::String (missing) + T (" samples not found"));
 }
 
 //==============================================================================

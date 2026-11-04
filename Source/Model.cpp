@@ -41,6 +41,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
 {
     auto e = std::make_unique<juce::XmlElement> ("User");
     e->setAttribute ("name", name);
+    if (category.isNotEmpty()) e->setAttribute ("category", category);
     if (kronosSource.isNotEmpty()) { e->setAttribute ("kronosPcg", kronosPcg); e->setAttribute ("kronosSource", kronosSource); }
     e->setAttribute ("voiceMode", voiceMode);
     e->setAttribute ("priority", priority);
@@ -67,6 +68,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
         auto* x = e->createNewChildElement ("Block");
         x->setAttribute ("index", b);
         x->setAttribute ("filterType", sb.filterType);
+        x->setAttribute ("oscOn", sb.on);
         x->setAttribute ("monoLow", sb.monoLow);
         x->setAttribute ("monoHigh", sb.monoHigh);
         x->setAttribute ("articOn", sb.articOn);
@@ -116,6 +118,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     UserProgram u;
     auto f = [&e] (const char* n, float def) { return (float) e.getDoubleAttribute (n, def); };
     u.name = e.getStringAttribute ("name", u.name);
+    u.category = e.getStringAttribute ("category");
     u.kronosPcg = e.getStringAttribute ("kronosPcg");
     u.kronosSource = e.getStringAttribute ("kronosSource");
     u.fxType = e.getIntAttribute ("fxType", 0);
@@ -146,6 +149,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
             if (b < 0 || b >= kNumBlocks) continue;
             auto& sb = u.block[(size_t) b];
             sb.filterType = juce::jlimit (0, FilterType::Num - 1, x->getIntAttribute ("filterType", sb.filterType));
+            sb.on = x->getBoolAttribute ("oscOn", true);
             sb.monoLow = juce::jlimit (0, 127, x->getIntAttribute ("monoLow", 0));
             sb.monoHigh = juce::jlimit (0, 127, x->getIntAttribute ("monoHigh", 127));
             sb.articOn = x->getBoolAttribute ("articOn", false);
@@ -381,9 +385,9 @@ Performance Performance::makeDefault (const juce::String& firstUser)
 //==============================================================================
 juce::String LearnTrigger::describe() const
 {
-    if (type == CC)   return "CC " + juce::String (number) + (channel > 0 ? " (k" + juce::String (channel) + ")" : juce::String());
-    if (type == Note) return juce::MidiMessage::getMidiNoteName (number, true, true, 3) + (channel > 0 ? " (k" + juce::String (channel) + ")" : juce::String());
-    return T ("nije dodeljeno");
+    if (type == CC)   return "CC " + juce::String (number) + (channel > 0 ? " (ch" + juce::String (channel) + ")" : juce::String());
+    if (type == Note) return juce::MidiMessage::getMidiNoteName (number, true, true, 3) + (channel > 0 ? " (ch" + juce::String (channel) + ")" : juce::String());
+    return "not assigned";
 }
 
 static int maskOf (std::initializer_list<int> intervals)
@@ -397,10 +401,10 @@ TercaSettings TercaSettings::makeDefault()
 {
     TercaSettings s;
     // Dur: diatonske terce, hromatski tonovi dobijaju najblizu "lepu" tercu
-    s.scales.push_back ({ "Dur", { 4, 3, 3, 4, 3, 4, 3, 4, 4, 3, 4, 3 },
+    s.scales.push_back ({ "Major", { 4, 3, 3, 4, 3, 4, 3, 4, 4, 3, 4, 3 },
                                  { -3, -4, -3, -3, -4, -3, -4, -3, -4, -4, -3, -4 } });
     // Mol (harmonski, kao u nasoj muzici: E -> G# u A molu)
-    s.scales.push_back ({ "Mol", { 3, 4, 3, 4, 3, 3, 3, 4, 4, 3, 4, 3 },
+    s.scales.push_back ({ "Minor", { 3, 4, 3, 4, 3, 3, 3, 4, 4, 3, 4, 3 },
                                  { -4, -3, -3, -3, -4, -3, -4, -4, -3, -4, -3, -4 } });
 
     s.rules.push_back ({ maskOf ({ 0, 4, 7 }), 0, 0 });       // dur akord
@@ -454,7 +458,9 @@ TercaSettings TercaSettings::fromXml (const juce::XmlElement& e)
     for (auto* x : e.getChildWithTagNameIterator ("Scale"))
     {
         TercaScale sc;
-        sc.name = x->getStringAttribute ("name", "Skala");
+        sc.name = x->getStringAttribute ("name", "Scale");
+        if (sc.name == "Dur") sc.name = "Major";        // stara srpska imena
+        else if (sc.name == "Mol") sc.name = "Minor";
         auto a = juce::StringArray::fromTokens (x->getStringAttribute ("above"), " ", {});
         auto b = juce::StringArray::fromTokens (x->getStringAttribute ("below"), " ", {});
         for (int i = 0; i < 12; ++i)

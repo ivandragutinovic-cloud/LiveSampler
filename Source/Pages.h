@@ -26,9 +26,10 @@ private:
 
     void showEq();
     void showPartMenu();
-    juce::TextButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton;
+    LearnButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
+    void stepUser (int dir);
     ValueKnob volume, pan, reverb, delay;
-    juce::Slider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
+    LearnSlider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
     juce::Label labels[7];
 };
 
@@ -55,11 +56,11 @@ private:
     juce::Label nameLabel, nameEdit;
     juce::OwnedArray<PartStrip> strips;
     KeyRangeView ranges;
-    juce::TextButton pageButtons[2];
+    LearnButton pageButtons[2];
     int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
     // vector joystick (kao na Kronosu): ukljuci, equal power, XY polje, CC za X i Y (LEARN)
     std::unique_ptr<juce::Component> vectorPad;
-    juce::TextButton vectorOn, vectorEqual, vectorCcX, vectorCcY, saveButton;
+    LearnButton vectorOn, vectorEqual, vectorCcX, vectorCcY, saveButton;
     void updateVectorButtons();
     int learnAxis = -1;
 };
@@ -87,8 +88,10 @@ private:
 
     void showMenu();
     void showEq();
-    juce::TextButton onButton, menuButton, instButton, mapButton, keyOffButton, eqButton;
-    juce::Slider level, pan, transpose, fine, keyLow, keyHigh, velLow, velHigh;
+    LearnButton onButton, menuButton, instButton, mapButton, keyOffButton, eqButton, instPrev, instNext;
+    void stepInstrument (int dir);
+    void pickInstrument();
+    LearnSlider level, pan, transpose, fine, keyLow, keyHigh, velLow, velHigh;
 };
 
 // Prikaz envelope (Kronos stil)
@@ -134,28 +137,28 @@ private:
     std::function<int()> userIndex;
     int section = Filter, block = 0;
 
-    juce::TextButton blockButtons[kNumBlocks], blockMenu, sectionButtons[NumSections];
+    LearnButton blockButtons[kNumBlocks], blockMenu, sectionButtons[NumSections], oscOnButton;
     void showBlockMenu();
     // mono opseg i prelaz (za izabrani OSC)
     juce::Label monoLabel, articLabel, articHelp;
-    juce::Slider monoLow, monoHigh;
-    juce::TextButton articOn, intervalButtons[24];
-    juce::ComboBox articDir;
+    LearnSlider monoLow, monoHigh;
+    LearnButton articOn, intervalButtons[24];
+    LearnCombo articDir;
     std::vector<std::vector<Param>> rows;
     juce::OwnedArray<ValueKnob> knobs;
     EnvelopeView envView;
 
     // filter
-    juce::ComboBox filterType;
+    LearnCombo filterType;
     juce::Label filterLabel;
     // zajednicko
-    juce::ComboBox voiceMode, priority;
-    juce::TextButton portaOn, portaFingered, portaConstRate;
+    LearnCombo voiceMode, priority;
+    LearnButton portaOn, portaFingered, portaConstRate;
     std::unique_ptr<ValueKnob> portaTime;
-    juce::Slider bendUp, bendDown;
+    LearnSlider bendUp, bendDown;
     juce::Label commonLabels[4];
     // efekat
-    juce::ComboBox fxType;
+    LearnCombo fxType;
     juce::Label fxLabel;
 };
 
@@ -182,7 +185,16 @@ private:
     int userIndex = 0;
 
     juce::ListBox list;
-    juce::TextButton newButton, copyButton, deleteButton;
+    LearnButton newButton, copyButton, deleteButton;
+    // lista usera: search, kategorija, redosled (broj), A-Z
+    juce::TextEditor search;
+    LearnCombo catFilter;
+    LearnButton sortButton, catButton, numButton, upButton, downButton;
+    std::vector<int> visible;           // red u listi -> index usera
+    bool sortAlpha = false;
+    void rebuildVisible();
+    void categoryMenu();
+    void askNumber();
     juce::Label nameEdit, headerLabels[10];
     juce::OwnedArray<OscRow> rows;
     SoundEditor sound;
@@ -211,29 +223,29 @@ private:
         void paint (juce::Graphics&) override;
         TercePage& owner;
         const int index;
-        juce::TextButton notes[12], deleteButton;
-        juce::ComboBox scale;
-        juce::Slider shift;
+        LearnButton notes[12], deleteButton;
+        LearnCombo scale;
+        LearnSlider shift;
         juce::Label example;
     };
 
     LiveSamplerProcessor& proc;
     int scaleIndex = 0;
 
-    juce::TextButton learnButton, onButton;
+    LearnButton learnButton, onButton;
     juce::Label learnLabel, stateLabel;
-    juce::ComboBox voiceMode, keyRoot, keyScale;
+    LearnCombo voiceMode, keyRoot, keyScale;
     ValueKnob velocity;
     juce::ToggleButton topOnly;
 
-    juce::ComboBox scaleSelect;
-    juce::TextButton addScale, deleteScale;
+    LearnCombo scaleSelect;
+    LearnButton addScale, deleteScale;
     juce::Label scaleName;
     juce::Label stepNames[12];
-    juce::Slider above[12], below[12];
+    LearnSlider above[12], below[12];
     juce::Label aboveLabel, belowLabel;
 
-    juce::TextButton addRule;
+    LearnButton addRule;
     juce::Viewport rulesView;
     juce::Component rulesHolder;
     juce::OwnedArray<RuleRow> ruleRows;
@@ -279,10 +291,10 @@ private:
 
     LiveSamplerProcessor& proc;
     juce::ListBox folders;
-    juce::TextButton addButton, removeButton, rescanButton, backupButton, restoreButton;
+    LearnButton addButton, removeButton, rescanButton, backupButton, restoreButton;
     juce::ToggleButton c3Toggle;
     juce::Label info, backupStatus, velCurveLabel;
-    juce::ComboBox velCurveBox;
+    LearnCombo velCurveBox;
     void timerCallback() override;
     std::unique_ptr<juce::FileChooser> chooser;
 };
@@ -322,7 +334,7 @@ private:
     std::vector<int> rows;
     std::unique_ptr<juce::FileChooser> chooser;
 
-    juce::TextButton loadButton, createSelected, createAll, playButton, modeButtons[2];
+    LearnButton loadButton, createSelected, createAll, playButton, modeButtons[2];
     bool combiMode = false;
     juce::ToggleButton onlyUser, keepChannels;
     juce::TextEditor search;
@@ -356,9 +368,9 @@ private:
 
     LiveSamplerProcessor& proc;
     LiveSamplerEditor& editor;
-    juce::TextButton bankButtons[kNumPerfBanks], writeButton, categoriesButton;
+    LearnButton bankButtons[kNumPerfBanks], writeButton, categoriesButton;
     juce::Label nameLabel, nameEdit, help, filterLabel, missingLabel;
-    juce::ComboBox catFilter;
+    LearnCombo catFilter;
 };
 
 //==============================================================================
@@ -382,8 +394,8 @@ private:
 
     LiveSamplerProcessor& proc;
     LiveSamplerEditor& editor;
-    juce::ComboBox listSelect;
+    LearnCombo listSelect;
     juce::Label nameEdit;
-    juce::TextButton pageButtons[kSetListSlots / 16], editButton;
+    LearnButton pageButtons[kSetListSlots / 16], editButton;
     juce::ToggleButton pcMode;
 };

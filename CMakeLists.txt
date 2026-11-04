@@ -46,6 +46,7 @@ target_sources(LiveSampler PRIVATE
     Source/MasterEffects.cpp
     Source/Model.cpp
     Source/Pages.cpp
+    Source/MidiLearn.cpp
     Source/KronosPcg.cpp)
 
 target_compile_definitions(LiveSampler PUBLIC

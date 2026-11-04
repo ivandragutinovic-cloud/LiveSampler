@@ -159,7 +159,7 @@ void ZoneMapView::paint (juce::Graphics& g)
     {
         g.setColour (Pal::dim);
         g.setFont (juce::FontOptions (16.0f));
-        g.drawText (T ("Nema zona"), p, juce::Justification::centred);
+        g.drawText (T ("No zones"), p, juce::Justification::centred);
     }
 }
 
@@ -265,8 +265,8 @@ WaveEditor::WaveEditor()
     loopMode.onClick   = [this] { loopView = true;  sampleMode.setToggleState (false, juce::dontSendNotification); loopMode.setToggleState (true, juce::dontSendNotification); repaint(); };
     sampleMode.setToggleState (true, juce::dontSendNotification);
 
-    fitButton.setButtonText (T ("Ceo"));
-    fitButton.setTooltip (T ("Prikaži ceo sempl (točkić miša zumira, prevlačenje praznog dela pomera prikaz)"));
+    fitButton.setButtonText (T ("Full"));
+    fitButton.setTooltip (T ("Show the whole sample (mouse wheel zooms, dragging an empty area moves the view)"));
     fitButton.getProperties().set ("fontSize", 12.0f);
     fitButton.onClick = [this] { zoomToFit(); repaint(); };
     addAndMakeVisible (fitButton);
@@ -282,20 +282,20 @@ WaveEditor::WaveEditor()
     };
     addAndMakeVisible (loopToggle);
 
-    zeroToggle.setButtonText (T ("Na nulu"));
-    zeroToggle.setTooltip (T ("Tačke se pomeraju na najbliži prolaz kroz nulu (manje pucketanja)"));
+    zeroToggle.setButtonText (T ("Zero-cross"));
+    zeroToggle.setTooltip (T ("Points snap to the nearest zero crossing (fewer clicks)"));
     zeroToggle.setToggleState (true, juce::dontSendNotification);
     addAndMakeVisible (zeroToggle);
 
     autoButton.setButtonText ("AUTO LOOP");
     autoButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
-    autoButton.setTooltip (T ("Sam nađe loop u delu koji drži i podesi crossfade"));
+    autoButton.setTooltip (T ("Finds a loop in the sustained part and sets the crossfade"));
     autoButton.onClick = [this] { runAutoLoop(); };
-    autoAllButton.setButtonText (T ("AUTO LOOP SVE ZONE"));
-    autoAllButton.setTooltip (T ("Auto loop za sve zone ovog instrumenta (zvuci koji ne drže ostaju bez loop-a)"));
+    autoAllButton.setButtonText (T ("AUTO LOOP ALL ZONES"));
+    autoAllButton.setTooltip (T ("Auto loop for all zones of this instrument (sounds that do not sustain stay without a loop)"));
     autoAllButton.onClick = [this] { if (onAutoAll) onAutoAll(); };
     autoStartButton.setButtonText (T ("AUTO START"));
-    autoStartButton.setTooltip (T ("Start na početak tona (odseca tišinu i šum pre tona)"));
+    autoStartButton.setTooltip (T ("Start at the note onset (cuts silence and noise before the note)"));
     autoStartButton.onClick = [this]
     {
         if (sample == nullptr) return;
@@ -304,13 +304,13 @@ WaveEditor::WaveEditor()
         if (np.loop && np.start >= np.loopStart) np.start = 0;
         apply (np, true);
     };
-    autoStartAllButton.setButtonText (T ("AUTO START SVE ZONE"));
-    autoStartAllButton.setTooltip (T ("Za sve zone: start na početak tona (npr. tihe jačine koje kasne)"));
+    autoStartAllButton.setButtonText (T ("AUTO START ALL ZONES"));
+    autoStartAllButton.setTooltip (T ("For all zones: start at the note onset (e.g. soft velocities that come late)"));
     autoStartAllButton.onClick = [this] { if (onAutoStartAll) onAutoStartAll(); };
-    vPlus.setButtonText (T ("Visina +"));
-    vMinus.setButtonText (T ("Visina -"));
-    vFit.setButtonText (T ("Visina auto"));
-    vPlus.setTooltip (T ("Zum talasa po visini (ili Ctrl + točkić)"));
+    vPlus.setButtonText (T ("Height +"));
+    vMinus.setButtonText (T ("Height -"));
+    vFit.setButtonText (T ("Height auto"));
+    vPlus.setTooltip (T ("Vertical wave zoom (or Ctrl + wheel)"));
     vPlus.onClick = [this] { vZoom = juce::jlimit (1.0f, 1000.0f, vZoom * 2.0f); repaint(); };
     vMinus.onClick = [this] { vZoom = juce::jlimit (1.0f, 1000.0f, vZoom * 0.5f); repaint(); };
     vFit.onClick = [this] { fitHeight(); repaint(); };
@@ -384,7 +384,7 @@ void WaveEditor::runAutoLoop()
                                    sample->sampleRate, autoSettings());
     if (! r.found)
     {
-        autoInfo.setText (T ("Loop nije nađen: ") + r.reason, juce::dontSendNotification);
+        autoInfo.setText (T ("Loop not found: ") + r.reason, juce::dontSendNotification);
         return;
     }
     auto np = pts;
@@ -393,7 +393,7 @@ void WaveEditor::runAutoLoop()
     np.end = r.end;
     np.xfade = r.crossfade;
     np.start = juce::jmin (np.start, r.start);
-    autoInfo.setText (T ("Loop nađen, poklapanje ") + juce::String (juce::roundToInt (r.quality * 100)) + " %", juce::dontSendNotification);
+    autoInfo.setText (T ("Loop found, match ") + juce::String (juce::roundToInt (r.quality * 100)) + " %", juce::dontSendNotification);
     loopView = true;
     sampleMode.setToggleState (false, juce::dontSendNotification);
     loopMode.setToggleState (true, juce::dontSendNotification);
@@ -526,7 +526,7 @@ void WaveEditor::paint (juce::Graphics& g)
     {
         g.setColour (Pal::dim);
         g.setFont (juce::FontOptions (13.0f));
-        g.drawText (T ("Izaberi zonu da vidiš njen sempl."), a, juce::Justification::centred);
+        g.drawText (T ("Select a zone to see its sample."), a, juce::Justification::centred);
         return;
     }
 
@@ -563,11 +563,11 @@ void WaveEditor::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xffffd23d));
         g.drawVerticalLine ((int) mid, (float) a.getY(), (float) a.getBottom());
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText (T ("← kraj (End)"), (int) mid - 110, a.getY() + 4, 104, 16, juce::Justification::centredRight);
+        g.drawText (T ("← end (End)"), (int) mid - 110, a.getY() + 4, 104, 16, juce::Justification::centredRight);
         g.drawText (T ("Loop start →"), (int) mid + 6, a.getY() + 4, 104, 16, juce::Justification::centredLeft);
         g.setColour (Pal::dim);
-        g.drawText (pts.loop ? T ("Spoj treba da bude gladak. Prevuci sredinu da pomeriš End, točkić zumira.")
-                             : T ("Loop je isključen."),
+        g.drawText (pts.loop ? T ("The join should be smooth. Drag the middle to move End, the wheel zooms.")
+                             : T ("Loop is off."),
                     a.reduced (8, 4), juce::Justification::bottomLeft);
         return;
     }
@@ -609,8 +609,8 @@ void WaveEditor::paint (juce::Graphics& g)
 
     g.setColour (Pal::dim);
     g.setFont (juce::FontOptions (11.0f));
-    g.drawText ((vZoom > 1.01f ? T ("visina x") + juce::String (vZoom, 1) + "  |  " : juce::String())
-                + juce::String (len / sample->sampleRate, 2) + " s  |  " + juce::String (len) + T (" semplova"),
+    g.drawText ((vZoom > 1.01f ? T ("height x") + juce::String (vZoom, 1) + "  |  " : juce::String())
+                + juce::String (len / sample->sampleRate, 2) + " s  |  " + juce::String (len) + T (" samples"),
                 a.reduced (6, 2), juce::Justification::bottomRight);
 }
 
@@ -736,7 +736,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
 {
     setWantsKeyboardFocus (true);
 
-    const char* viewNames[] = { "MAPA", "SAMPLE / LOOP EDIT" };
+    const char* viewNames[] = { "MAP", "SAMPLE / LOOP EDIT" };
     for (int b = 0; b < 2; ++b)
     {
         viewButtons[b].setButtonText (T (viewNames[b]));
@@ -768,7 +768,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         }
         commit (z, true);
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto loop",
-            T ("Loop nađen za ") + juce::String (found) + T (" od ") + juce::String (total) + T (" zona. Sačuvaj mapu dugmetom Sačuvaj."));
+            T ("Loop found for ") + juce::String (found) + T (" of ") + juce::String (total) + T (" zones. Save the map with the Save button."));
     };
     waveEditor.onAutoStartAll = [this]
     {
@@ -785,7 +785,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         }
         commit (z, true);
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto start",
-            T ("Start pomeren na početak tona za ") + juce::String (changed) + T (" zona. Sačuvaj mapu dugmetom Sačuvaj."));
+            T ("Start moved to the note onset for ") + juce::String (changed) + T (" zones. Save the map with the Save button."));
     };
     waveEditor.onChange = [this] (const WaveEditor::Points& p, bool)
     {
@@ -803,7 +803,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         }, true);
     };
 
-    title.setText ("MAPIRANJE", juce::dontSendNotification);
+    title.setText ("MAPPING", juce::dontSendNotification);
     title.setFont (juce::FontOptions (18.0f, juce::Font::bold));
     title.setColour (juce::Label::textColourId, Pal::master);
     addAndMakeVisible (title);
@@ -828,7 +828,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     userLabel.setColour (juce::Label::textColourId, Pal::dim);
     userLabel.setText ("USER:", juce::dontSendNotification);
     addAndMakeVisible (userLabel);
-    userBox.setTooltip (T ("Izaberi usera; dugmad OSC1-8 i MS1-8 biraju koji njegov multisempl mapiraš"));
+    userBox.setTooltip (T ("Choose the user; buttons OSC1-8 and MS1-8 select which of its multisamples you map"));
     userBox.onChange = [this] { const int i = userBox.getSelectedItemIndex(); if (i >= 0 && i != userIdx) setUserOsc (i, 0); };
     addAndMakeVisible (userBox);
 
@@ -838,10 +838,10 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     stateLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (stateLabel);
 
-    undoButton.setButtonText (T ("Poništi"));
+    undoButton.setButtonText (T ("Undo"));
     undoButton.setTooltip ("Ctrl+Z");
     undoButton.onClick = [this] { undo(); };
-    saveButton.setButtonText (T ("Sačuvaj"));
+    saveButton.setButtonText (T ("Save"));
     saveButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
     saveButton.onClick = [this]
     {
@@ -854,11 +854,11 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         else
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Pikaso Workstation",
-                T ("Ne mogu da sačuvam mapu (proveri da li je folder zaštićen od upisa)."));
+                T ("Cannot save the map (check that the folder is not write-protected)."));
         }
     };
-    revertButton.setButtonText (T ("Odbaci izmene"));
-    revertButton.setTooltip (T ("Vrati poslednju sačuvanu mapu"));
+    revertButton.setButtonText (T ("Discard changes"));
+    revertButton.setTooltip (T ("Go back to the last saved map"));
     revertButton.onClick = [this]
     {
         if (instName.isEmpty()) return;
@@ -866,8 +866,8 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         undoStack.clear();
         proc.reloadInstrument (instName, false);
     };
-    resetButton.setButtonText (T ("Automatsko"));
-    resetButton.setTooltip (T ("Napravi mapu ponovo iz fajla (KMP/NKI/nazivi). Sačuvana mapa se briše."));
+    resetButton.setButtonText (T ("Automatic"));
+    resetButton.setTooltip (T ("Rebuild the map from the file (KMP/NKI/names). The saved map is deleted."));
     resetButton.onClick = [this]
     {
         if (instName.isEmpty() || inst == nullptr) return;
@@ -876,11 +876,11 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         undoStack.clear();
         proc.reloadInstrument (instName, true);
     };
-    closeButton.setButtonText (T ("Zatvori"));
+    closeButton.setButtonText (T ("Close"));
     closeButton.onClick = [this] { if (onClose) onClose(); };
 
-    toolsButton.setButtonText (T ("ALATI"));
-    toolsButton.setTooltip (T ("Skrati semplove na disku, normalizuj WAV, izjednači jačinu zona"));
+    toolsButton.setButtonText (T ("TOOLS"));
+    toolsButton.setTooltip (T ("Trim samples on disk, normalize WAV, equalize zone levels"));
     toolsButton.onClick = [this] { toolsMenu(); };
     for (auto* b : { &undoButton, &saveButton, &revertButton, &resetButton, &closeButton, &toolsButton })
         addAndMakeVisible (b);
@@ -900,13 +900,13 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     table.setRowHeight (24);
     auto& h = table.getHeader();
     h.addColumn ("#", colNum, 36, 30, 50, juce::TableHeaderComponent::notSortable);
-    h.addColumn ("Sempl", colSample, 250, 100, 600, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("Sample", colSample, 250, 100, 600, juce::TableHeaderComponent::notSortable);
     h.addColumn ("Root", colRoot, 70, 50, 120, juce::TableHeaderComponent::notSortable);
-    h.addColumn ("Od", colLow, 70, 50, 120, juce::TableHeaderComponent::notSortable);
-    h.addColumn ("Do", colHigh, 70, 50, 120, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("Low", colLow, 70, 50, 120, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("High", colHigh, 70, 50, 120, juce::TableHeaderComponent::notSortable);
     h.addColumn ("Velocity", colVel, 80, 60, 120, juce::TableHeaderComponent::notSortable);
-    h.addColumn (T ("Štim"), colTune, 60, 50, 100, juce::TableHeaderComponent::notSortable);
-    h.addColumn (T ("Jačina"), colGain, 70, 50, 100, juce::TableHeaderComponent::notSortable);
+    h.addColumn (T ("Tune"), colTune, 60, 50, 100, juce::TableHeaderComponent::notSortable);
+    h.addColumn (T ("Level"), colGain, 70, 50, 100, juce::TableHeaderComponent::notSortable);
     h.addColumn ("Loop", colLoop, 60, 40, 100, juce::TableHeaderComponent::notSortable);
     h.setColour (juce::TableHeaderComponent::backgroundColourId, Pal::panelHi);
     h.setColour (juce::TableHeaderComponent::textColourId, Pal::text);
@@ -918,7 +918,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     sampleInfo.setColour (juce::Label::textColourId, Pal::text);
     addAndMakeVisible (sampleInfo);
 
-    const char* labels[] = { "Root", "Od tastera", "Do tastera", "Vel. od", "Vel. do", "Štim", "Jačina", "Pan" };
+    const char* labels[] = { "Root", "Low key", "High key", "Vel lo", "Vel hi", "Tune", "Level", "Pan" };
     for (int i = 0; i < 8; ++i)
     {
         sliderLabels[i].setText (T (labels[i]), juce::dontSendNotification);
@@ -944,10 +944,10 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     gainSlider.onValueChange    = [this] { editSelected ([this] (Zone& z) { z.gainDb = (float) gainSlider.getValue(); }); };
     panSlider.onValueChange     = [this] { editSelected ([this] (Zone& z) { z.pan = (float) panSlider.getValue(); }); };
 
-    enabledToggle.setButtonText (T ("Uključena"));
+    enabledToggle.setButtonText (T ("Enabled"));
     loopToggle.setButtonText ("Loop");
-    fixedToggle.setButtonText (T ("Ista visina"));
-    fixedToggle.setTooltip (T ("Sempl svira istom visinom na svim tasterima (bubnjevi, efekti)"));
+    fixedToggle.setButtonText (T ("Fixed pitch"));
+    fixedToggle.setTooltip (T ("The sample plays at the same pitch on all keys (drums, effects)"));
     enabledToggle.onClick = [this] { editSelected ([this] (Zone& z) { z.enabled = enabledToggle.getToggleState(); }, false); };
     loopToggle.onClick    = [this]
     {
@@ -969,7 +969,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     for (auto* t : { &enabledToggle, &loopToggle, &fixedToggle })
         addAndMakeVisible (t);
 
-    duplicateButton.setButtonText ("Dupliraj zonu");
+    duplicateButton.setButtonText ("Duplicate zone");
     duplicateButton.onClick = [this]
     {
         if (selected < 0) return;
@@ -978,7 +978,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         commit (z, true);
         select (selected + 1);
     };
-    deleteButton.setButtonText (T ("Obriši zonu"));
+    deleteButton.setButtonText (T ("Delete zone"));
     deleteButton.onClick = [this]
     {
         if (selected < 0) return;
@@ -987,10 +987,10 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         commit (z, true);
         select (juce::jmin (selected, (int) zones.size() - 1));
     };
-    octDownButton.setButtonText (T ("Sve − oktava"));
-    octDownButton.setTooltip (T ("Pomeri sve zone i root note oktavu niže"));
-    octUpButton.setButtonText (T ("Sve + oktava"));
-    octUpButton.setTooltip (T ("Pomeri sve zone i root note oktavu više"));
+    octDownButton.setButtonText (T ("All − octave"));
+    octDownButton.setTooltip (T ("Move all zones and root notes one octave down"));
+    octUpButton.setButtonText (T ("All + octave"));
+    octUpButton.setTooltip (T ("Move all zones and root notes one octave up"));
     auto shiftAll = [this] (int semis)
     {
         auto z = zones;
@@ -1007,8 +1007,8 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     octDownButton.onClick = [shiftAll] { shiftAll (-12); };
     octUpButton.onClick = [shiftAll] { shiftAll (12); };
 
-    rangesButton.setButtonText (T ("Rasponi po root"));
-    rangesButton.setTooltip (T ("Ponovo podeli tastere između zona prema root notama (za svaki velocity sloj)"));
+    rangesButton.setButtonText (T ("Ranges by root"));
+    rangesButton.setTooltip (T ("Split the keys between zones again by their root notes (for each velocity layer)"));
     rangesButton.onClick = [this]
     {
         auto z = zones;
@@ -1038,7 +1038,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     for (auto* b : { &duplicateButton, &deleteButton, &octDownButton, &octUpButton, &rangesButton })
         addAndMakeVisible (b);
 
-    hint.setText (T ("Klikni zonu da je izabereš, prevuci je ili joj vuci ivice. Sviraj da čuješ promene odmah."),
+    hint.setText (T ("Click a zone to select it, drag it or drag its edges. Play to hear the changes at once."),
                   juce::dontSendNotification);
     hint.setFont (juce::FontOptions (13.0f));
     hint.setMinimumHorizontalScale (1.0f);
@@ -1156,7 +1156,7 @@ void MappingEditor::refresh()
 void MappingEditor::updateHeader()
 {
     if (instName.isEmpty())
-        instLabel.setText (T ("(nema instrumenta na ovom delu)"), juce::dontSendNotification);
+        instLabel.setText (T ("(no instrument on this part)"), juce::dontSendNotification);
     else
         instLabel.setText (instName + (inst != nullptr ? "   [" + sourceTypeName (inst->type) + "]" : juce::String()),
                            juce::dontSendNotification);
@@ -1164,14 +1164,14 @@ void MappingEditor::updateHeader()
     juce::String state;
     juce::Colour col = Pal::dim;
     if (instName.isNotEmpty() && inst == nullptr)
-        state = T ("Učitavam...");
+        state = T ("Loading...");
     else if (dirtyNames.count (instName) > 0)
     {
-        state = T ("● Nesačuvane izmene");
+        state = T ("● Unsaved changes");
         col = juce::Colour (0xffffb340);
     }
     else if (inst != nullptr)
-        state = inst->fromMapFile ? T ("Sačuvana mapa") : T ("Automatska mapa");
+        state = inst->fromMapFile ? T ("Saved map") : T ("Automatic map");
 
     if (inst != nullptr && ! inst->warnings.isEmpty())
         state = state + T ("   ⚠ ") + inst->warnings[0];
@@ -1304,7 +1304,7 @@ void MappingEditor::updateInspector()
 
     if (! has)
     {
-        sampleInfo.setText (T ("Izaberi zonu na grafiku ili u tabeli."), juce::dontSendNotification);
+        sampleInfo.setText (T ("Select a zone in the graph or in the table."), juce::dontSendNotification);
         return;
     }
 
@@ -1328,7 +1328,7 @@ void MappingEditor::updateInspector()
         juce::String info;
         info << s.displayName << "\n"
              << juce::String (s.lengthSeconds(), 2) << " s  |  " << juce::String (s.sampleRate / 1000.0, 1) << " kHz  |  "
-             << (z.hasOwnLoop() ? T ("svoj loop zone") : (s.hasLoop ? T ("ima loop") : T ("bez loop-a"))) << "\n"
+             << (z.hasOwnLoop() ? T ("own zone loop") : (s.hasLoop ? T ("has loop") : T ("no loop"))) << "\n"
              << s.id;
         sampleInfo.setText (info, juce::dontSendNotification);
     }
@@ -1369,7 +1369,7 @@ void MappingEditor::paintCell (juce::Graphics& g, int row, int col, int w, int h
     {
         case colNum:    t = juce::String (row + 1); break;
         case colSample: t = (z.sample >= 0 && z.sample < (int) inst->samples.size() ? inst->samples[(size_t) z.sample]->displayName : "?")
-                            + (z.enabled ? juce::String() : T ("  (isključena)")); break;
+                            + (z.enabled ? juce::String() : T ("  (disabled)")); break;
         case colRoot:   t = noteName (z.rootKey) + (z.fixedPitch ? " *" : ""); break;
         case colLow:    t = noteName (z.lowKey); break;
         case colHigh:   t = noteName (z.highKey); break;
@@ -1379,7 +1379,7 @@ void MappingEditor::paintCell (juce::Graphics& g, int row, int col, int w, int h
         case colLoop:
         {
             const bool has = z.hasOwnLoop() || (z.sample >= 0 && z.sample < (int) inst->samples.size() && inst->samples[(size_t) z.sample]->hasLoop);
-            t = ! has ? "-" : (z.loop ? T ("da") : T ("isklj."));
+            t = ! has ? "-" : (z.loop ? T ("yes") : T ("off"));
             break;
         }
         default: break;
@@ -1512,15 +1512,15 @@ void MappingEditor::toolsMenu()
 {
     const bool wav = inst != nullptr && inst->type == SourceType::WavFolder;
     juce::PopupMenu m;
-    m.addSectionHeader (T ("Na disku (WAV, uz potvrdu)"));
-    m.addItem (1, T ("Skrati izabranu zonu (briše pre Start-a i posle End / Loop end)"), wav && selected >= 0);
-    m.addItem (2, T ("Skrati sve zone"), wav);
-    m.addItem (3, T ("Normalizuj WAV fajlove (isto pojačanje za sve, dinamika ostaje)"), wav);
+    m.addSectionHeader (T ("On disk (WAV, with confirmation)"));
+    m.addItem (1, T ("Trim the selected zone (deletes before Start and after End / Loop end)"), wav && selected >= 0);
+    m.addItem (2, T ("Trim all zones"), wav);
+    m.addItem (3, T ("Normalize WAV files (same gain for all, dynamics stay)"), wav);
     m.addSeparator();
-    m.addSectionHeader (T ("U mapi (ne dira fajlove)"));
-    m.addItem (4, T ("Izjednači jačinu zona (po velocity sloju)"), inst != nullptr);
-    m.addItem (5, T ("Vrati jačinu svih zona na 0 dB"), inst != nullptr);
-    if (! wav) m.addItem (99, T ("Alati za disk rade samo za WAV foldere"), false);
+    m.addSectionHeader (T ("In the map (files untouched)"));
+    m.addItem (4, T ("Equalize zone levels (per velocity layer)"), inst != nullptr);
+    m.addItem (5, T ("Reset the level of all zones to 0 dB"), inst != nullptr);
+    if (! wav) m.addItem (99, T ("Disk tools work only for WAV folders"), false);
     juce::Component::SafePointer<MappingEditor> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (toolsButton), [safe] (int r)
     {
@@ -1546,7 +1546,7 @@ bool MappingEditor::rewriteWav (const juce::File& f, const SampleData& s, int fr
     double sr = s.sampleRate;
     {
         std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
-        if (r == nullptr) { err = T ("ne mogu da pročitam ") + f.getFileName(); return false; }
+        if (r == nullptr) { err = T ("cannot read ") + f.getFileName(); return false; }
         chans = juce::jlimit (1, 2, (int) r->numChannels);
         bits = juce::jlimit (16, 32, (int) r->bitsPerSample);
         if (r->usesFloatingPointData) bits = 32;
@@ -1577,10 +1577,10 @@ bool MappingEditor::rewriteWav (const juce::File& f, const SampleData& s, int fr
         juce::WavAudioFormat wavFmt;
         auto w = wavFmt.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (chans)
                                                  .withBitsPerSample (bits).withMetadataValues (meta));
-        if (w == nullptr) { err = T ("ne mogu da upišem ") + f.getFileName(); tmp.deleteFile(); return false; }
+        if (w == nullptr) { err = T ("cannot write ") + f.getFileName(); tmp.deleteFile(); return false; }
         w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples());
     }
-    if (! tmp.moveFileTo (f)) { err = T ("ne mogu da zamenim ") + f.getFileName(); tmp.deleteFile(); return false; }
+    if (! tmp.moveFileTo (f)) { err = T ("cannot replace ") + f.getFileName(); tmp.deleteFile(); return false; }
     return true;
 }
 
@@ -1621,15 +1621,15 @@ void MappingEditor::trimToDisk (bool onlySelected)
     }
     if (files == 0)
     {
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Skrati"), T ("Nema šta da se skrati: semplovi već počinju na Start-u i završavaju se na End / Loop end."));
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Trim"), T ("Nothing to trim: the samples already start at Start and end at End / Loop end."));
         return;
     }
-    const auto msg = T ("Trajno presnimavam ") + juce::String (files) + T (" WAV fajlova u\n") + inst->source.getFullPathName()
-                   + T ("\n\nBriše se deo pre Start-a i posle End-a (kod loop-a posle Loop end-a). Oslobađa se oko ")
-                   + juce::String (saved / (1024.0 * 1024.0), 1) + " MB od " + juce::String (total / (1024.0 * 1024.0), 1) + " MB."
-                   + T ("\n\nOvo ne može da se poništi.");
+    const auto msg = T ("Permanently rewriting ") + juce::String (files) + T (" WAV files in\n") + inst->source.getFullPathName()
+                   + T ("\n\nThe part before Start and after End (with a loop: after Loop end) is deleted. Frees about ")
+                   + juce::String (saved / (1024.0 * 1024.0), 1) + " MB of " + juce::String (total / (1024.0 * 1024.0), 1) + " MB."
+                   + T ("\n\nThis cannot be undone.");
     juce::Component::SafePointer<MappingEditor> safe (this);
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Skrati semplove na disku"), msg, T ("Presnimi"), T ("Otkaži"), nullptr,
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Trim samples on disk"), msg, T ("Rewrite"), T ("Cancel"), nullptr,
         juce::ModalCallbackFunction::create ([safe, cuts] (int ok)
         {
             if (safe == nullptr || ok == 0 || safe->inst == nullptr) return;
@@ -1657,7 +1657,7 @@ void MappingEditor::trimToDisk (bool onlySelected)
             me.undoStack.clear();
             me.proc.reloadInstrument (me.instName, false);
             juce::AlertWindow::showMessageBoxAsync (errors.isEmpty() ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon,
-                T ("Skrati"), errors.isEmpty() ? T ("Gotovo. Semplovi su skraćeni i mapa je sačuvana.") : T ("Neki fajlovi nisu presnimljeni:\n") + errors.joinIntoString ("\n"));
+                T ("Trim"), errors.isEmpty() ? T ("Done. The samples are trimmed and the map is saved.") : T ("Some files were not rewritten:\n") + errors.joinIntoString ("\n"));
         }));
 }
 
@@ -1673,14 +1673,14 @@ void MappingEditor::normalizeFiles()
     const float gainDb = juce::Decibels::gainToDecibels (gain);
     if (std::abs (gainDb) < 0.1f)
     {
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Normalizuj"), T ("Semplovi su već normalizovani (najglasniji je na -0.3 dB)."));
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Normalize"), T ("The samples are already normalized (the loudest is at -0.3 dB)."));
         return;
     }
     juce::Component::SafePointer<MappingEditor> safe (this);
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Normalizuj WAV"),
-        T ("Trajno presnimavam ") + juce::String ((int) inst->samples.size()) + T (" WAV fajlova sa pojačanjem ")
-            + (gainDb > 0 ? "+" : "") + juce::String (gainDb, 1) + T (" dB (najglasniji sempl ide na -0.3 dB).\nSvi semplovi dobijaju isto pojačanje, pa razlika između tihih i jakih slojeva ostaje.\n\nOvo ne može da se poništi."),
-        T ("Presnimi"), T ("Otkaži"), nullptr,
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Normalize WAV"),
+        T ("Permanently rewriting ") + juce::String ((int) inst->samples.size()) + T (" WAV files with gain ")
+            + (gainDb > 0 ? "+" : "") + juce::String (gainDb, 1) + T (" dB (the loudest sample goes to -0.3 dB).\nAll samples get the same gain, so the difference between soft and loud layers stays.\n\nThis cannot be undone."),
+        T ("Rewrite"), T ("Cancel"), nullptr,
         juce::ModalCallbackFunction::create ([safe, gain] (int ok)
         {
             if (safe == nullptr || ok == 0 || safe->inst == nullptr) return;
@@ -1695,7 +1695,7 @@ void MappingEditor::normalizeFiles()
             }
             me.proc.reloadInstrument (me.instName, false);
             juce::AlertWindow::showMessageBoxAsync (errors.isEmpty() ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon,
-                T ("Normalizuj"), errors.isEmpty() ? T ("Gotovo.") : T ("Neki fajlovi nisu presnimljeni:\n") + errors.joinIntoString ("\n"));
+                T ("Normalize"), errors.isEmpty() ? T ("Done.") : T ("Some files were not rewritten:\n") + errors.joinIntoString ("\n"));
         }));
 }
 
@@ -1732,6 +1732,6 @@ void MappingEditor::equalizeZones()
         }
     }
     commit (z, true);
-    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Izjednači jačinu"),
-        T ("Jačina podešena za ") + juce::String (changed) + T (" zona (kolona Jačina). Tihi i jaki slojevi ostaju različiti.\nPoslušaj, pa klikni Sačuvaj (ili Poništi)."));
+    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Equalize levels"),
+        T ("Level set for ") + juce::String (changed) + T (" zones (Level column). Soft and loud layers stay different.\nListen, then click Save (or Undo)."));
 }

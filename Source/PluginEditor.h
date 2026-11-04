@@ -1,6 +1,7 @@
 #pragma once
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "MidiLearn.h"
 
 class MappingEditor;
 class PerformancePage;
@@ -43,6 +44,7 @@ public:
     juce::Label* createSliderTextBox (juce::Slider&) override;
     juce::Font getPopupMenuFont() override { return juce::FontOptions (16.0f); }
     juce::Font getComboBoxFont (juce::ComboBox&) override { return juce::FontOptions (14.0f); }
+    juce::Button* createSliderButton (juce::Slider&, bool isIncrement) override;
 };
 
 //==============================================================================
@@ -77,7 +79,7 @@ public:
     std::function<void (double)> onChange;
     void resized() override;
 
-    juce::Slider slider;
+    LearnSlider slider;
     juce::Label label;
 };
 
@@ -135,7 +137,7 @@ private:
     SamplerLookAndFeel lnf;
     LiveSamplerProcessor& proc;
     juce::Label logo, status;
-    juce::TextButton panicButton, learnButton, fullButton;
+    LearnButton panicButton, learnButton, fullButton;
     void toggleFullScreen();
     juce::TextButton tabButtons[NumTabs];
     int currentTab = TabPerformance;
@@ -152,7 +154,7 @@ private:
     std::vector<juce::Component*> pages() const;
 
     // brza traka: dugmad trenutne strane set liste
-    juce::TextButton slotButtons[16], pagePrev, pageNext;
+    LearnButton slotButtons[16], pagePrev, pageNext;
     juce::Label setListLabel;
 
     juce::MidiKeyboardComponent keyboard;

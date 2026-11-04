@@ -1,5 +1,6 @@
 #include "Pages.h"
 #include "Text.h"
+#include "MidiLearn.h"
 #include "KronosNames.h"
 #include <optional>
 
@@ -31,12 +32,120 @@ static void setSliderValue (juce::Slider& s, double v)
         s.setValue (v, juce::dontSendNotification);
 }
 
+
+//==============================================================================
+//  Izbor sa pretragom (user / multisempl): kucaj deo imena, klik ili Enter bira
+//==============================================================================
+namespace Picker
+{
+    struct Panel : public juce::Component, private juce::ListBoxModel
+    {
+        // actions: stavke koje su uvek gore (npr. "+ New user"); onPick (actionIndex ili -1, vrednost)
+        Panel (juce::StringArray labelsIn, juce::StringArray valuesIn, juce::StringArray actionsIn, const juce::String& current,
+               std::function<void (int, const juce::String&)> pick)
+            : labels (std::move (labelsIn)), values (std::move (valuesIn)), actions (std::move (actionsIn)), onPick (std::move (pick))
+        {
+            search.setTextToShowWhenEmpty ("Search...", Pal::dim);
+            search.setFont (juce::FontOptions (15.0f));
+            search.onTextChange = [this] { filter(); };
+            search.onReturnKey = [this] { if (! shown.empty()) choose (firstItemRow()); };
+            search.onEscapeKey = [this] { close(); };
+            addAndMakeVisible (search);
+            list.setModel (this);
+            list.setRowHeight (24);
+            list.setColour (juce::ListBox::backgroundColourId, Pal::bg);
+            addAndMakeVisible (list);
+            filter();
+            const int cur = values.indexOf (current);
+            for (size_t r = 0; r < shown.size(); ++r)
+                if (shown[r] == cur && cur >= 0) { list.selectRow ((int) r); list.scrollToEnsureRowIsOnscreen ((int) r); }
+            setSize (420, 460);
+        }
+        void visibilityChanged() override
+        {
+            juce::Component::SafePointer<Panel> safe (this);
+            juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->search.grabKeyboardFocus(); });
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (4);
+            search.setBounds (r.removeFromTop (30));
+            r.removeFromTop (4);
+            list.setBounds (r);
+        }
+        bool keyPressed (const juce::KeyPress& k) override
+        {
+            if (k == juce::KeyPress::returnKey && list.getSelectedRow() >= 0) { choose (list.getSelectedRow()); return true; }
+            return false;
+        }
+        int firstItemRow() const
+        {
+            for (size_t r = 0; r < shown.size(); ++r) if (shown[r] >= 0) return (int) r;
+            return 0;
+        }
+        void filter()
+        {
+            shown.clear();
+            const auto words = juce::StringArray::fromTokens (search.getText().trim(), " ", "");
+            if (search.getText().trim().isEmpty())
+                for (int a = 0; a < actions.size(); ++a) shown.push_back (-1 - a);
+            for (int i = 0; i < labels.size(); ++i)
+            {
+                bool ok = true;
+                for (auto& w : words) if (w.isNotEmpty() && ! labels[i].containsIgnoreCase (w)) { ok = false; break; }
+                if (ok) shown.push_back (i);
+            }
+            list.updateContent();
+            list.repaint();
+        }
+        int getNumRows() override { return (int) shown.size(); }
+        void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected) override
+        {
+            if (row < 0 || row >= (int) shown.size()) return;
+            const int i = shown[(size_t) row];
+            if (selected) g.fillAll (Pal::accent.withAlpha (0.35f));
+            g.setFont (juce::FontOptions (14.0f));
+            g.setColour (i < 0 ? Pal::lcdText : Pal::text);
+            g.drawText (i < 0 ? actions[-1 - i] : labels[i], 8, 0, w - 10, h, juce::Justification::centredLeft, true);
+        }
+        void listBoxItemClicked (int row, const juce::MouseEvent&) override { choose (row); }
+        void returnKeyPressed (int row) override { choose (row); }
+        void choose (int row)
+        {
+            if (row < 0 || row >= (int) shown.size()) return;
+            const int i = shown[(size_t) row];
+            auto fn = onPick;
+            const auto v = i >= 0 ? values[i] : juce::String();
+            close();
+            if (fn) fn (i < 0 ? -1 - i : -1, v);
+        }
+        void close()
+        {
+            if (auto* cb = findParentComponentOfClass<juce::CallOutBox>()) cb->dismiss();
+        }
+
+        juce::StringArray labels, values, actions;
+        std::function<void (int, const juce::String&)> onPick;
+        juce::TextEditor search;
+        juce::ListBox list;
+        std::vector<int> shown;
+    };
+
+    void show (juce::Component& target, juce::StringArray labels, juce::StringArray values, juce::StringArray actions,
+               const juce::String& current, std::function<void (int, const juce::String&)> onPick)
+    {
+        auto* top = target.getTopLevelComponent();
+        juce::CallOutBox::launchAsynchronously (std::make_unique<Panel> (std::move (labels), std::move (values), std::move (actions), current, std::move (onPick)),
+                                                top->getLocalArea (&target, target.getLocalBounds()), top);
+    }
+}
+
 //==============================================================================
 //  PartStrip
 //==============================================================================
 PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     : proc (p), editor (e), index (i), colour (Pal::part[i]),
-      volume (T ("Jačina"), Pal::part[i], -60.0, 6.0, -12.0, UI::dbText, 0.0),
+      volume (T ("Volume"), Pal::part[i], -60.0, 6.0, -12.0, UI::dbText, 0.0),
       pan ("Pan", Pal::part[i], -1.0, 1.0, 0.0, UI::panText, 0.0),
       reverb ("Reverb", Pal::part[i], 0.0, 1.0, 0.0, UI::pctText, 0.2),
       delay ("Delay", Pal::part[i], 0.0, 1.0, 0.0, UI::pctText, 0.0)
@@ -50,7 +159,15 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     userButton.setColour (juce::TextButton::buttonColourId, Pal::bg);
     userButton.getProperties().set ("fontSize", 14.0f);
     userButton.onClick = [this] { showUserMenu(); };
+    userButton.setTooltip ("Choose the user (type to search)");
     addAndMakeVisible (userButton);
+    userPrev.setButtonText ("-");
+    userNext.setButtonText ("+");
+    userPrev.setTooltip ("Previous user (by number)");
+    userNext.setTooltip ("Next user (by number)");
+    userPrev.onClick = [this] { stepUser (-1); };
+    userNext.onClick = [this] { stepUser (1); };
+    for (auto* b : { &userPrev, &userNext }) { b->getProperties().set ("fontSize", 12.0f); addAndMakeVisible (b); }
 
     editButton.setButtonText ("EDIT USER");
     editButton.getProperties().set ("fontSize", 11.0f);
@@ -58,13 +175,13 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     addAndMakeVisible (editButton);
 
     partMenu.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xbe"));
-    partMenu.setTooltip (T ("Kopiraj / nalepi ceo deo (user, jačina, EQ, split...) u drugi performans"));
+    partMenu.setTooltip (T ("Copy / paste the whole part (user, volume, EQ, split...) into another performance"));
     partMenu.onClick = [this] { showPartMenu(); };
     addAndMakeVisible (partMenu);
 
     eqButton.setButtonText ("EQ");
     eqButton.getProperties().set ("fontSize", 11.0f);
-    eqButton.setTooltip (T ("Doteraj EQ ovog dela (dodaje se na EQ usera)"));
+    eqButton.setTooltip (T ("Adjust the EQ of this part (added to the user's EQ)"));
     eqButton.onClick = [this] { showEq(); };
     addAndMakeVisible (eqButton);
 
@@ -82,7 +199,7 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     UI::setupNoteBox (keyHigh, c3);
     UI::setupIncDec (velLow, 1, 127, 1);
     UI::setupIncDec (velHigh, 1, 127, 1);
-    UI::setupIncDec (channel, 0, 16, 1, [] (double v) { return v < 0.5 ? T ("Svi") : juce::String ((int) v); });
+    UI::setupIncDec (channel, 0, 16, 1, [] (double v) { return v < 0.5 ? T ("All") : juce::String ((int) v); });
 
     transpose.onValueChange = [this] { edit ([this] (PerfPart& pp) { pp.transpose = (int) transpose.getValue(); }); };
     octave.onValueChange    = [this] { edit ([this] (PerfPart& pp) { pp.octave = (int) octave.getValue(); }); };
@@ -92,7 +209,7 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     velHigh.onValueChange   = [this] { edit ([this] (PerfPart& pp) { pp.velHigh = (int) velHigh.getValue(); pp.velLow = juce::jmin (pp.velLow, pp.velHigh); }); };
     channel.onValueChange   = [this] { edit ([this] (PerfPart& pp) { pp.midiChannel = (int) channel.getValue(); }); };
 
-    const char* names[] = { "Transp", "Oktava", "Od", "Do", "Vel od", "Vel do", "Kanal" };
+    const char* names[] = { "Transp", "Octave", "Low", "High", "Vel lo", "Vel hi", "Channel" };
     juce::Slider* boxes[] = { &transpose, &octave, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
     for (int k = 0; k < 7; ++k)
     {
@@ -101,11 +218,11 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
         addAndMakeVisible (boxes[k]);
     }
 
-    tercaButton.setButtonText ("TERCA");
+    tercaButton.setButtonText ("HARM");
     tercaButton.setClickingTogglesState (true);
     tercaButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3ddc84));
     tercaButton.getProperties().set ("fontSize", 12.0f);
-    tercaButton.setTooltip (T ("Ovaj deo dobija terce kad su uključene"));
+    tercaButton.setTooltip (T ("This part gets the harmony (terca) when it is on"));
     tercaButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.terca = tercaButton.getToggleState(); }); };
     addAndMakeVisible (tercaButton);
 
@@ -113,7 +230,7 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     sustainButton.setClickingTogglesState (true);
     sustainButton.setColour (juce::TextButton::buttonOnColourId, Pal::dim);
     sustainButton.getProperties().set ("fontSize", 12.0f);
-    sustainButton.setTooltip (T ("Sustain pedala utiče na ovaj deo"));
+    sustainButton.setTooltip (T ("Sustain pedal affects this part"));
     sustainButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.sustainPedal = sustainButton.getToggleState(); }); };
     addAndMakeVisible (sustainButton);
 
@@ -121,9 +238,32 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     exprButton.setClickingTogglesState (true);
     exprButton.setColour (juce::TextButton::buttonOnColourId, Pal::dim);
     exprButton.getProperties().set ("fontSize", 12.0f);
-    exprButton.setTooltip (T ("Expression (CC11) utiče na ovaj deo"));
+    exprButton.setTooltip (T ("Expression (CC11) affects this part"));
     exprButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.expression = exprButton.getToggleState(); }); };
     addAndMakeVisible (exprButton);
+
+    // MIDI Learn (desni klik)
+    {
+        auto& ml = MidiLearn::get();
+        const juce::String id = "perf.part" + juce::String (i + 1) + ".";
+        ml.bindButton (onButton, id + "on");
+        ml.bindSlider (volume.slider, id + "volume");
+        ml.bindSlider (pan.slider, id + "pan");
+        ml.bindSlider (reverb.slider, id + "reverb");
+        ml.bindSlider (delay.slider, id + "delay");
+        ml.bindSlider (transpose, id + "transpose");
+        ml.bindSlider (octave, id + "octave");
+        ml.bindButton (tercaButton, id + "terca");
+        ml.bindButton (sustainButton, id + "sustain");
+        ml.bindButton (exprButton, id + "expression");
+        // EQ dela (kontrole su u malom prozoru, pa se uci po vrednosti)
+        const char* bands[] = { "eq.low", "eq.mid", "eq.high" };
+        for (int k = 0; k < 3; ++k)
+            ml.addKnob (id + bands[k], -15.0, 15.0, 0.0, [this, k] (double v)
+            {
+                edit ([k, v] (PerfPart& pp) { (k == 0 ? pp.eqLowDb : k == 1 ? pp.eqMidDb : pp.eqHighDb) = (float) v; });
+            });
+    }
 
     refresh();
 }
@@ -141,20 +281,22 @@ namespace
             if (u >= 0)
             {
                 const auto& us = proc.getUser (u);
-                info.setText (T ("EQ usera: bas ") + db (us.eqLowDb) + T (", sredina ") + db (us.eqMidDb)
-                              + " @ " + juce::String (juce::roundToInt (us.eqMidFreq)) + T (" Hz, visoki ") + db (us.eqHighDb)
-                              + T ("\nOvde podešavaš samo za ovaj performans."), juce::dontSendNotification);
+                info.setText (T ("User EQ: low ") + db (us.eqLowDb) + T (", mid ") + db (us.eqMidDb)
+                              + " @ " + juce::String (juce::roundToInt (us.eqMidFreq)) + T (" Hz, high ") + db (us.eqHighDb)
+                              + T ("\nHere you adjust it for this performance only."), juce::dontSendNotification);
             }
             info.setFont (juce::FontOptions (12.0f));
             info.setColour (juce::Label::textColourId, Pal::dim);
             addAndMakeVisible (info);
 
-            const char* names[] = { "Bas", "Sredina", "Visoki" };
+            const char* names[] = { "Low", "Mid", "High" };
             const float vals[] = { part.eqLowDb, part.eqMidDb, part.eqHighDb };
             for (int k = 0; k < 3; ++k)
             {
                 auto* kn = knobs.add (new ValueKnob (T (names[k]), c, -15.0, 15.0, 0.0, db, 0.0));
                 kn->setValue (vals[k]);
+                const char* bands[] = { "eq.low", "eq.mid", "eq.high" };
+                kn->slider.setLearnId ("perf.part" + juce::String (index + 1) + "." + bands[k]);
                 kn->onChange = [this, k] (double v)
                 {
                     auto perf = proc.getPerformance();
@@ -234,16 +376,16 @@ namespace Vector
 void PartStrip::showPartMenu()
 {
     juce::PopupMenu m;
-    m.addItem (1, T ("Kopiraj deo"));
-    m.addItem (2, T ("Nalepi deo"), Clip::part.has_value());
+    m.addItem (1, T ("Copy part"));
+    m.addItem (2, T ("Paste part"), Clip::part.has_value());
     m.addSeparator();
-    m.addItem (3, T ("Isprazni deo"));
+    m.addItem (3, T ("Clear part"));
     {
         const auto& pp = proc.getPerformance().parts[(size_t) index];
         juce::PopupMenu vm;
-        for (int d = 0; d <= 4; ++d) vm.addItem (100 + d, T ("Smer: ") + Vector::dirName (d), true, pp.vectorDir == d);
+        for (int d = 0; d <= 4; ++d) vm.addItem (100 + d, T ("Direction: ") + Vector::dirName (d), true, pp.vectorDir == d);
         vm.addSeparator();
-        for (int c = 0; c <= 4; ++c) vm.addItem (110 + c, T ("Jačina u centru: ") + juce::String (c * 25) + "%", pp.vectorDir != 0,
+        for (int c = 0; c <= 4; ++c) vm.addItem (110 + c, T ("Level at center: ") + juce::String (c * 25) + "%", pp.vectorDir != 0,
                                                  std::abs (pp.vectorCenter - c * 0.25f) < 0.01f);
         m.addSeparator();
         m.addSubMenu (T ("Vector joystick (") + Vector::dirName (pp.vectorDir) + ")", vm);
@@ -273,51 +415,54 @@ void PartStrip::edit (std::function<void (PerfPart&)> fn)
     proc.updatePerformance (perf);
 }
 
+void PartStrip::stepUser (int dir)
+{
+    const int n = proc.getNumUsers();
+    if (n == 0) return;
+    const int cur = proc.findUser (proc.getPerformance().parts[(size_t) index].user);
+    const int next = cur < 0 ? (dir > 0 ? 0 : n - 1) : juce::jlimit (0, n - 1, cur + dir);
+    const auto name = proc.getUser (next).name;
+    edit ([name] (PerfPart& pp) { pp.user = name; pp.on = true; });
+}
+
 void PartStrip::showUserMenu()
 {
     const auto& part = proc.getPerformance().parts[(size_t) index];
-    juce::PopupMenu menu;
-    const auto names = proc.getUserNames();
-    for (int i = 0; i < names.size(); ++i)
-        menu.addItem (i + 1, names[i], true, names[i] == part.user);
-    menu.addSeparator();
-    menu.addItem (90001, T ("+ Novi user od instrumenta..."));
-    menu.addItem (90002, T ("+ Prazan novi user"));
-    menu.addItem (90003, T ("(bez usera)"));
-
+    juce::StringArray labels, values;
+    for (int i = 0; i < proc.getNumUsers(); ++i)
+    {
+        const auto& u = proc.getUser (i);
+        labels.add (juce::String (i + 1).paddedLeft ('0', 3) + "  " + u.name + (u.category.isNotEmpty() ? "   [" + u.category + "]" : juce::String()));
+        values.add (u.name);
+    }
     juce::Component::SafePointer<PartStrip> safe (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&userButton).withMinimumWidth (240),
-        [safe, names] (int r)
+    Picker::show (userButton, labels, values, { "+ New user from instrument...", "+ Empty new user", "(no user)" }, part.user,
+        [safe] (int action, const juce::String& name)
         {
-            if (safe == nullptr || r == 0) return;
+            if (safe == nullptr) return;
             auto& self = *safe;
-            if (r == 90001)
+            if (action == 0)
             {
                 UI::showInstrumentMenu (&self.userButton, self.proc.getInstrumentList(), {}, false,
                     [safe] (const juce::String& inst)
                     {
                         if (safe == nullptr || inst.isEmpty()) return;
                         const int u = safe->proc.createUserFromInstrument (inst);
-                        const auto name = safe->proc.getUser (u).name;
-                        safe->edit ([name] (PerfPart& pp) { pp.user = name; pp.on = true; });
+                        const auto nm = safe->proc.getUser (u).name;
+                        safe->edit ([nm] (PerfPart& pp) { pp.user = nm; pp.on = true; });
                     });
             }
-            else if (r == 90002)
+            else if (action == 1)
             {
                 const int u = self.proc.createUser ("User");
-                const auto name = self.proc.getUser (u).name;
-                self.edit ([name] (PerfPart& pp) { pp.user = name; pp.on = true; });
-                self.editor.editUser (name);
+                const auto nm = self.proc.getUser (u).name;
+                self.edit ([nm] (PerfPart& pp) { pp.user = nm; pp.on = true; });
+                self.editor.editUser (nm);
             }
-            else if (r == 90003)
-            {
+            else if (action == 2)
                 self.edit ([] (PerfPart& pp) { pp.user = {}; pp.on = false; });
-            }
-            else if (r - 1 < names.size())
-            {
-                const auto name = names[r - 1];
+            else if (name.isNotEmpty())
                 self.edit ([name] (PerfPart& pp) { pp.user = name; pp.on = true; });
-            }
         });
 }
 
@@ -325,7 +470,7 @@ void PartStrip::refresh()
 {
     const auto& p = proc.getPerformance().parts[(size_t) index];
     onButton.setToggleState (p.on, juce::dontSendNotification);
-    userButton.setButtonText (p.user.isEmpty() ? T ("— izaberi usera —") : p.user);
+    userButton.setButtonText (p.user.isEmpty() ? T ("— choose user —") : p.user);
     editButton.setEnabled (p.user.isNotEmpty());
     volume.setValue (p.volumeDb);
     pan.setValue (p.pan);
@@ -390,7 +535,12 @@ void PartStrip::resized()
         onButton.setBounds (row);
     }
     r.removeFromTop (4);
-    userButton.setBounds (r.removeFromTop (40));
+    {
+        auto row = r.removeFromTop (40);
+        userPrev.setBounds (row.removeFromLeft (19).reduced (0, 4));
+        userNext.setBounds (row.removeFromRight (19).reduced (0, 4));
+        userButton.setBounds (row.reduced (1, 0));
+    }
     r.removeFromTop (2);
     {
         auto row = r.removeFromTop (20);
@@ -477,7 +627,7 @@ void KeyRangeView::paint (juce::Graphics& g)
     {
         g.setColour (Pal::dim);
         g.setFont (juce::FontOptions (13.0f));
-        g.drawText (T ("Nijedan deo nije uključen"), area, juce::Justification::centred);
+        g.drawText (T ("No part is on"), area, juce::Justification::centred);
         return;
     }
 
@@ -506,7 +656,7 @@ void KeyRangeView::paint (juce::Graphics& g)
 PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     : proc (p), editor (e), ranges (p)
 {
-    styleLabel (nameLabel, T ("IME PERFORMANSA"), 12.5f);
+    styleLabel (nameLabel, T ("PERFORMANCE NAME"), 12.5f);
     addAndMakeVisible (nameLabel);
 
     nameEdit.setEditable (true);
@@ -516,7 +666,7 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     nameEdit.onTextChange = [this]
     {
         auto perf = proc.getPerformance();
-        perf.name = nameEdit.getText().trim().isEmpty() ? juce::String ("Performans") : nameEdit.getText().trim();
+        perf.name = nameEdit.getText().trim().isEmpty() ? juce::String ("Performance") : nameEdit.getText().trim();
         proc.updatePerformance (perf);
     };
     addAndMakeVisible (nameEdit);
@@ -525,7 +675,7 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         addChildComponent (strips.add (new PartStrip (p, e, i)));
     addAndMakeVisible (ranges);
 
-    const char* pageNames[] = { "DELOVI 1-8", "DELOVI 9-16" };
+    const char* pageNames[] = { "PARTS 1-8", "PARTS 9-16" };
     for (int b = 0; b < 2; ++b)
     {
         pageButtons[b].setButtonText (pageNames[b]);
@@ -535,9 +685,9 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         addAndMakeVisible (pageButtons[b]);
     }
 
-    saveButton.setButtonText (T ("SAČUVAJ"));
+    saveButton.setButtonText (T ("SAVE"));
     saveButton.setColour (juce::TextButton::buttonColourId, Pal::red.withAlpha (0.8f));
-    saveButton.setTooltip (T ("Otvara LISTE spremne za snimanje: klikni mesto gde da se sačuva ovaj performans"));
+    saveButton.setTooltip (T ("Opens LISTS ready to write: click the slot where this performance is saved"));
     saveButton.onClick = [this] { editor.showTab (LiveSamplerEditor::TabLists); editor.armListWrite(); };
     addAndMakeVisible (saveButton);
 
@@ -549,21 +699,23 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     vectorOn.setButtonText ("VECTOR");
     vectorOn.setClickingTogglesState (true);
     vectorOn.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
-    vectorOn.setTooltip (T ("Vector joystick menja jačinu delova (kao Vector Volume Control na Kronosu)"));
+    vectorOn.setTooltip (T ("Vector joystick changes the part volumes (like Vector Volume Control on Kronos)"));
     vectorOn.onClick = [this] { auto perf = proc.getPerformance(); perf.vectorOn = vectorOn.getToggleState(); proc.updatePerformance (perf); };
     vectorEqual.setButtonText ("EQ.POW");
     vectorEqual.setClickingTogglesState (true);
     vectorEqual.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
-    vectorEqual.setTooltip (T ("Equal Power: pretapanje bez pada jačine u sredini"));
+    vectorEqual.setTooltip (T ("Equal Power: crossfade without a level dip in the middle"));
     vectorEqual.onClick = [this] { auto perf = proc.getPerformance(); perf.vectorEqualPower = vectorEqual.getToggleState(); proc.updatePerformance (perf); };
     for (int a = 0; a < 2; ++a)
     {
         auto& b = a == 0 ? vectorCcX : vectorCcY;
-        b.setTooltip (T ("Klikni pa pomeri kontrolu na iPad-u / Impulse-u (LEARN)"));
+        b.setTooltip (T ("Click, then move a control on iPad / Impulse (LEARN)"));
         b.onClick = [this, a] { learnAxis = a; proc.learnVectorCc (a); updateVectorButtons(); };
         addAndMakeVisible (b);
     }
     for (auto* b : { &vectorOn, &vectorEqual, &vectorCcX, &vectorCcY }) { b->getProperties().set ("fontSize", 11.5f); addAndMakeVisible (b); }
+    MidiLearn::get().bindButton (vectorOn, "perf.vector.on");
+    MidiLearn::get().bindButton (vectorEqual, "perf.vector.equalpower");
     updateVectorButtons();
 }
 
@@ -574,8 +726,8 @@ void PerformancePage::updateVectorButtons()
     vectorEqual.setToggleState (perf.vectorEqualPower, juce::dontSendNotification);
     const bool learning = proc.isLearningVector();
     if (! learning) learnAxis = -1;
-    vectorCcX.setButtonText (learnAxis == 0 ? T ("pomeri...") : "X: CC " + juce::String (proc.getVectorCc (0)));
-    vectorCcY.setButtonText (learnAxis == 1 ? T ("pomeri...") : "Y: CC " + juce::String (proc.getVectorCc (1)));
+    vectorCcX.setButtonText (learnAxis == 0 ? T ("move...") : "X: CC " + juce::String (proc.getVectorCc (0)));
+    vectorCcY.setButtonText (learnAxis == 1 ? T ("move...") : "Y: CC " + juce::String (proc.getVectorCc (1)));
 }
 
 void PerformancePage::refresh()
@@ -593,7 +745,7 @@ void PerformancePage::refresh()
         for (int i = b * 8; i < b * 8 + 8; ++i)
             any = any || (proc.getPerformance().parts[(size_t) i].on && proc.getPerformance().parts[(size_t) i].user.isNotEmpty());
         pageButtons[b].setToggleState (b == page, juce::dontSendNotification);
-        pageButtons[b].setButtonText (juce::String (b == 0 ? "DELOVI 1-8" : "DELOVI 9-16") + (any ? juce::String::fromUTF8 (" \xe2\x97\x8f") : juce::String()));
+        pageButtons[b].setButtonText (juce::String (b == 0 ? "PARTS 1-8" : "PARTS 9-16") + (any ? juce::String::fromUTF8 (" \xe2\x97\x8f") : juce::String()));
     }
     ranges.repaint();
 }
@@ -655,27 +807,25 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int r, std::funct
 
     instButton.setColour (juce::TextButton::buttonColourId, Pal::bg);
     instButton.getProperties().set ("fontSize", 13.0f);
-    instButton.onClick = [this]
-    {
-        const auto& u = proc.getUser (userIndex());
-        juce::Component::SafePointer<OscRow> safe (this);
-        UI::showInstrumentMenu (&instButton, proc.getInstrumentList(), u.osc[(size_t) oscIndex()].instrument, true,
-            [safe] (const juce::String& name)
-            {
-                if (safe == nullptr) return;
-                safe->edit ([name] (OscSettings& s) { s.instrument = name; s.on = name.isNotEmpty(); });
-            });
-    };
+    instButton.onClick = [this] { pickInstrument(); };
+    instButton.setTooltip ("Choose the multisample (type to search)");
     addAndMakeVisible (instButton);
+    instPrev.setButtonText ("-");
+    instNext.setButtonText ("+");
+    instPrev.setTooltip ("Previous multisample in the library");
+    instNext.setTooltip ("Next multisample in the library");
+    instPrev.onClick = [this] { stepInstrument (-1); };
+    instNext.onClick = [this] { stepInstrument (1); };
+    for (auto* b : { &instPrev, &instNext }) { b->getProperties().set ("fontSize", 12.0f); addAndMakeVisible (b); }
 
-    mapButton.setButtonText ("MAPA");
+    mapButton.setButtonText ("MAP");
     mapButton.getProperties().set ("fontSize", 11.0f);
-    mapButton.setTooltip (T ("Otvori editor mapiranja za ovaj instrument"));
+    mapButton.setTooltip (T ("Open the mapping editor for this instrument"));
     mapButton.onClick = [this] { editor.editMapping (proc.getUser (userIndex()).name, oscIndex()); };
     addAndMakeVisible (mapButton);
 
     menuButton.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xbe"));
-    menuButton.setTooltip (T ("Kopiraj / nalepi / obriši ovaj MS"));
+    menuButton.setTooltip (T ("Copy / paste / delete this MS"));
     menuButton.onClick = [this] { showMenu(); };
     addAndMakeVisible (menuButton);
 
@@ -683,14 +833,14 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int r, std::funct
     keyOffButton.setClickingTogglesState (true);
     keyOffButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
     keyOffButton.getProperties().set ("fontSize", 11.0f);
-    keyOffButton.setTooltip (T ("Key off: ovaj MS svira kad pustiš taster (zvuk puštanja žice, klik i sl.)"));
+    keyOffButton.setTooltip (T ("Key off: this MS plays when you release the key (string release noise, click etc.)"));
     keyOffButton.onClick = [this] { edit ([this] (OscSettings& s) { s.keyOff = keyOffButton.getToggleState(); }); };
     addAndMakeVisible (keyOffButton);
 
     eqButton.setButtonText ("EQ");
     eqButton.setClickingTogglesState (false);
     eqButton.getProperties().set ("fontSize", 11.0f);
-    eqButton.setTooltip (T ("EQ samo za ovaj MS"));
+    eqButton.setTooltip (T ("EQ for this MS only"));
     eqButton.onClick = [this] { showEq(); };
     addAndMakeVisible (eqButton);
 
@@ -715,6 +865,58 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int r, std::funct
 
     for (auto* s : { &level, &pan, &transpose, &fine, &keyLow, &keyHigh, &velLow, &velHigh })
         addAndMakeVisible (s);
+
+    // MIDI Learn: vazi za MS koji se vidi (izabrani user i OSC)
+    auto& ml = MidiLearn::get();
+    const juce::String id = "user.ms" + juce::String (r + 1) + ".";
+    ml.bindButton (onButton, id + "on");
+    ml.bindButton (keyOffButton, id + "keyoff");
+    ml.bindSlider (level, id + "level");
+    ml.bindSlider (pan, id + "pan");
+    ml.bindSlider (transpose, id + "transpose");
+    ml.bindSlider (fine, id + "fine");
+    struct B { const char* n; double lo, hi, c; };
+    const B bands[] = { { "eq.low", -15, 15, 0 }, { "eq.mid", -15, 15, 0 }, { "eq.midfreq", 100, 8000, 1000 }, { "eq.high", -15, 15, 0 } };
+    for (int k = 0; k < 4; ++k)
+        ml.addKnob (id + bands[k].n, bands[k].lo, bands[k].hi, bands[k].c, [this, k] (double v)
+        {
+            edit ([k, v] (OscSettings& os) { (k == 0 ? os.eqLowDb : k == 1 ? os.eqMidDb : k == 2 ? os.eqMidFreq : os.eqHighDb) = (float) v; });
+        });
+}
+
+void OscRow::pickInstrument()
+{
+    const int ui = userIndex();
+    if (ui < 0 || ui >= proc.getNumUsers()) return;
+    const auto names = proc.getInstrumentList();
+    const auto current = proc.getUser (ui).osc[(size_t) oscIndex()].instrument;
+    juce::Component::SafePointer<OscRow> safe (this);
+    Picker::show (instButton, names, names, { "Browse folders...", "(empty)" }, current, [safe, names, current] (int action, const juce::String& name)
+    {
+        if (safe == nullptr) return;
+        if (action == 0)
+        {
+            UI::showInstrumentMenu (&safe->instButton, names, current, true, [safe] (const juce::String& n)
+            {
+                if (safe != nullptr) safe->edit ([n] (OscSettings& s) { s.instrument = n; s.on = n.isNotEmpty(); });
+            });
+            return;
+        }
+        const auto n = action == 1 ? juce::String() : name;
+        safe->edit ([n] (OscSettings& s) { s.instrument = n; s.on = n.isNotEmpty(); });
+    });
+}
+
+void OscRow::stepInstrument (int dir)
+{
+    const int ui = userIndex();
+    if (ui < 0 || ui >= proc.getNumUsers()) return;
+    const auto names = proc.getInstrumentList();
+    if (names.isEmpty()) return;
+    const int cur = names.indexOf (proc.getUser (ui).osc[(size_t) oscIndex()].instrument);
+    const int next = cur < 0 ? (dir > 0 ? 0 : names.size() - 1) : juce::jlimit (0, names.size() - 1, cur + dir);
+    const auto n = names[next];
+    edit ([n] (OscSettings& s) { s.instrument = n; s.on = true; });
 }
 
 void OscRow::showMenu()
@@ -722,26 +924,26 @@ void OscRow::showMenu()
     const int u = userIndex();
     if (u < 0 || u >= proc.getNumUsers()) return;
     juce::PopupMenu m;
-    m.addItem (1, T ("Kopiraj MS"));
-    m.addItem (2, T ("Nalepi MS"), Clip::ms.has_value());
+    m.addItem (1, T ("Copy MS"));
+    m.addItem (2, T ("Paste MS"), Clip::ms.has_value());
     m.addSeparator();
-    m.addItem (3, T ("Obriši MS"));
+    m.addItem (3, T ("Delete MS"));
     {
         const auto& cur = proc.getUser (u).osc[(size_t) oscIndex()];
         const auto layers = cur.on ? proc.velocityLayersOf (cur.instrument) : std::vector<int>();
         if (layers.size() > 1)
         {
             m.addSeparator();
-            m.addSectionHeader (T ("Velocity slojevi (") + juce::String ((int) layers.size()) + ")");
-            m.addItem (4, T ("Razloži slojeve na MS1-MS") + juce::String ((int) layers.size()));
-            m.addItem (5, T ("Obriši ovaj velocity sloj sa diska (") + juce::String (cur.velLow) + "-" + juce::String (cur.velHigh) + ")...");
+            m.addSectionHeader (T ("Velocity layers (") + juce::String ((int) layers.size()) + ")");
+            m.addItem (4, T ("Split layers to MS1-MS") + juce::String ((int) layers.size()));
+            m.addItem (5, T ("Delete this velocity layer from disk (") + juce::String (cur.velLow) + "-" + juce::String (cur.velHigh) + ")...");
         }
     }
     juce::Component::SafePointer<OscRow> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&menuButton), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
-        auto info = [] (const juce::String& t) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Velocity slojevi"), t); };
+        auto info = [] (const juce::String& t) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Velocity layers"), t); };
         if (r == 4)
         {
             juce::String rep;
@@ -752,10 +954,10 @@ void OscRow::showMenu()
         if (r == 5)
         {
             const auto& o = safe->proc.getUser (safe->userIndex()).osc[(size_t) safe->oscIndex()];
-            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Obriši velocity sloj"),
-                T ("Trajno brišem sa diska sve semplove ovog sloja (jačina ") + juce::String (o.velLow) + "-" + juce::String (o.velHigh)
-                    + T (") za:\n") + o.instrument + T ("\n\nSusedni sloj preuzima njegov opseg. Ovo važi za sve usere koji koriste ovaj zvuk."),
-                T ("Obriši"), T ("Otkaži"), nullptr,
+            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Delete velocity layer"),
+                T ("Permanently deleting from disk all samples of this layer (velocity ") + juce::String (o.velLow) + "-" + juce::String (o.velHigh)
+                    + T (") for:\n") + o.instrument + T ("\n\nThe neighbouring layer takes over its range. This applies to all users that use this sound."),
+                T ("Delete"), T ("Cancel"), nullptr,
                 juce::ModalCallbackFunction::create ([safe, info] (int ok)
                 {
                     if (safe == nullptr || ok == 0) return;
@@ -782,12 +984,14 @@ namespace
             auto db = [] (double v) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; };
             const auto& s = proc.getUser (u).osc[(size_t) o];
             struct K { const char* n; double lo, hi, centre, def, val; std::function<juce::String (double)> f; };
-            const K ks[] = { { "Bas", -15, 15, 0, 0, s.eqLowDb, db }, { "Sredina", -15, 15, 0, 0, s.eqMidDb, db },
-                             { "Sredina Hz", 100, 8000, 1000, 1000, s.eqMidFreq, UI::hzText }, { "Visoki", -15, 15, 0, 0, s.eqHighDb, db } };
+            const K ks[] = { { "Low", -15, 15, 0, 0, s.eqLowDb, db }, { "Mid", -15, 15, 0, 0, s.eqMidDb, db },
+                             { "Mid Hz", 100, 8000, 1000, 1000, s.eqMidFreq, UI::hzText }, { "High", -15, 15, 0, 0, s.eqHighDb, db } };
             for (int k = 0; k < 4; ++k)
             {
                 auto* kn = knobs.add (new ValueKnob (T (ks[k].n), c, ks[k].lo, ks[k].hi, ks[k].centre, ks[k].f, ks[k].def));
                 kn->setValue (ks[k].val);
+                const char* bands[] = { "eq.low", "eq.mid", "eq.midfreq", "eq.high" };
+                kn->slider.setLearnId ("user.ms" + juce::String (o % kMsPerOsc + 1) + "." + bands[k]);
                 kn->onChange = [this, k] (double v)
                 {
                     auto user = proc.getUser (u);
@@ -840,7 +1044,7 @@ void OscRow::refresh()
     onButton.setToggleState (s.on, juce::dontSendNotification);
     auto instText = s.instrument.isEmpty() ? T ("— instrument —") : s.instrument.fromFirstOccurrenceOf ("/", false, false);
     if (s.instrument.isNotEmpty() && ! proc.getInstrumentList().contains (s.instrument))
-        instText = T ("⚠ nema: ") + s.instrument;
+        instText = T ("⚠ missing: ") + s.instrument;
     instButton.setButtonText (instText);
     mapButton.setEnabled (s.instrument.isNotEmpty());
     onButton.setColour (juce::TextButton::buttonOnColourId, Pal::part[blockFn()]);
@@ -877,7 +1081,9 @@ void OscRow::resized()
     juce::Slider* boxes[] = { &level, &pan, &transpose, &fine, &keyLow, &keyHigh, &velLow, &velHigh };
     const int fixed = boxW * 8 + 56 + 6 + 72;
     auto instArea = r.removeFromLeft (r.getWidth() - fixed);
-    instButton.setBounds (instArea);
+    instPrev.setBounds (instArea.removeFromLeft (20).reduced (0, 2));
+    instNext.setBounds (instArea.removeFromRight (20).reduced (0, 2));
+    instButton.setBounds (instArea.reduced (1, 0));
     r.removeFromLeft (4);
     mapButton.setBounds (r.removeFromLeft (52));
     r.removeFromLeft (2);
@@ -952,10 +1158,13 @@ void EnvelopeView::paint (juce::Graphics& g)
 //==============================================================================
 static juce::String levelText (double v)  { return juce::String (juce::roundToInt (v * 100.0)); }
 static juce::String centsText (double v)  { return juce::String (juce::roundToInt (v)) + " c"; }
-static juce::String octText (double v)    { return (v > 0 ? "+" : "") + juce::String (v, 1) + " okt"; }
+static juce::String octText (double v)    { return (v > 0 ? "+" : "") + juce::String (v, 1) + " oct"; }
 static juce::String eqDb (double v)       { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; }
 static juce::String hzText2 (double v)    { return juce::String (v, 2) + " Hz"; }
 static juce::String stText (double v)     { return (v > 0 ? "+" : "") + juce::String (v, 1) + " st"; }
+
+static std::vector<std::vector<SoundEditor::Param>> sectionParams (int section);
+static juce::String sectionKey (int section);
 
 SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     : proc (p), userIndex (std::move (ui))
@@ -965,12 +1174,12 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
         blockButtons[b].setButtonText ("OSC" + juce::String (b + 1));
         blockButtons[b].setColour (juce::TextButton::buttonOnColourId, Pal::part[b]);
         blockButtons[b].getProperties().set ("fontSize", 12.0f);
-        blockButtons[b].setTooltip (T ("Izaberi OSC: gore se vide njegovi MS1-MS8, dole njegov zvuk. Kronos koristi OSC1 i OSC2."));
+        blockButtons[b].setTooltip (T ("Select OSC: its MS1-MS8 are shown above, its sound below. Kronos uses OSC1 and OSC2."));
         blockButtons[b].onClick = [this, b] { block = b; rebuildKnobs(); if (onBlockChanged) onBlockChanged(); };
         addAndMakeVisible (blockButtons[b]);
     }
     blockMenu.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xbe"));
-    blockMenu.setTooltip (T ("Kopiraj / nalepi / obriši ceo OSC (zvuk i svih 8 MS)"));
+    blockMenu.setTooltip (T ("Copy / paste / delete the whole OSC (sound and all 8 MS)"));
     blockMenu.onClick = [this] { showBlockMenu(); };
     addAndMakeVisible (blockMenu);
 
@@ -981,11 +1190,11 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
         l.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         l.setColour (juce::Label::textColourId, Pal::dim);
     };
-    styleL (monoLabel, T ("MONO OPSEG (van opsega: poly, bez portamenta)"));
-    styleL (articLabel, T ("PRELAZ: na koje intervale (polustepene) se pali ovaj OSC"));
-    articHelp.setText (T ("Uključi PRELAZ na više OSC-ova. OSC bez izabranih intervala svira prvi ton. Dok držiš ton i odsviraš "
-                          "sledeći, OSC čiji je interval pogođen se pali, a prethodni se gasi (kao prelaz žice preko pragova). "
-                          "Radi kad je user Mono / Mono legato."), juce::dontSendNotification);
+    styleL (monoLabel, T ("MONO RANGE (outside the range: poly, no portamento)"));
+    styleL (articLabel, T ("ARTICULATION: on which intervals (semitones) this OSC is triggered"));
+    articHelp.setText (T ("Turn ARTICULATION on for several OSCs. The OSC without selected intervals plays the first note. While you hold a note and play "
+                          "the next one, the OSC whose interval matches is triggered and the previous one stops (like a string slide over frets). "
+                          "Works when the user is Mono / Mono legato."), juce::dontSendNotification);
     articHelp.setFont (juce::FontOptions (12.0f));
     articHelp.setColour (juce::Label::textColourId, Pal::dim);
     articHelp.setJustificationType (juce::Justification::topLeft);
@@ -994,19 +1203,19 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     UI::setupNoteBox (monoHigh, c3);
     monoLow.onValueChange = [this] { const int v = (int) monoLow.getValue(); const int b = block; edit ([v, b] (UserProgram& u) { auto& s = u.block[(size_t) b]; s.monoLow = v; s.monoHigh = juce::jmax (s.monoHigh, v); }); };
     monoHigh.onValueChange = [this] { const int v = (int) monoHigh.getValue(); const int b = block; edit ([v, b] (UserProgram& u) { auto& s = u.block[(size_t) b]; s.monoHigh = v; s.monoLow = juce::jmin (s.monoLow, v); }); };
-    articOn.setButtonText (T ("PRELAZ"));
+    articOn.setButtonText (T ("ARTIC"));
     articOn.setClickingTogglesState (true);
     articOn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
     articOn.onClick = [this] { const bool v = articOn.getToggleState(); const int b = block; edit ([v, b] (UserProgram& u) { u.block[(size_t) b].articOn = v; }); };
-    articDir.addItemList ({ T ("Gore i dole"), T ("Samo gore"), T ("Samo dole") }, 1);
+    articDir.addItemList ({ T ("Up and down"), T ("Up only"), T ("Down only") }, 1);
     articDir.onChange = [this] { const int v = articDir.getSelectedItemIndex(); const int b = block; edit ([v, b] (UserProgram& u) { u.block[(size_t) b].articDir = v; }); };
-    const char* iv[] = { "mala sekunda", "velika sekunda", "mala terca", "velika terca", "kvarta", "triton", "kvinta",
-                         "mala seksta", "velika seksta", "mala septima", "velika septima", "oktava" };
+    const char* iv[] = { "minor second", "major second", "minor third", "major third", "fourth", "tritone", "fifth",
+                         "minor sixth", "major sixth", "minor seventh", "major seventh", "octave" };
     for (int i = 0; i < 24; ++i)
     {
         auto& b = intervalButtons[i];
         b.setButtonText (juce::String (i + 1));
-        b.setTooltip (juce::String (i + 1) + T (" polustepen(a)") + (i < 12 ? juce::String (" - ") + T (iv[i]) : (i == 23 ? T (" - dve oktave") : T (" - preko oktave"))));
+        b.setTooltip (juce::String (i + 1) + T (" semitone(s)") + (i < 12 ? juce::String (" - ") + T (iv[i]) : (i == 23 ? T (" - two octaves") : T (" - over an octave"))));
         b.setClickingTogglesState (true);
         b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
         b.getProperties().set ("fontSize", 11.0f);
@@ -1022,7 +1231,7 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     for (auto& b : intervalButtons)
         addChildComponent (b);
 
-    const char* secNames[] = { "PITCH", "FILTER", "AMP", "MONO / PRELAZ", "ZAJEDNIČKO", "EFEKAT / EQ" };
+    const char* secNames[] = { "PITCH", "FILTER", "AMP", "MONO / ARTIC", "COMMON", "EFFECT / EQ" };
     for (int s = 0; s < NumSections; ++s)
     {
         sectionButtons[s].setButtonText (T (secNames[s]));
@@ -1032,9 +1241,9 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     }
     addAndMakeVisible (envView);
 
-    filterType.addItemList ({ T ("Isključen"), "Lowpass 24 dB", "Lowpass 12 dB", "Highpass", "Bandpass" }, 1);
+    filterType.addItemList ({ T ("Off"), "Lowpass 24 dB", "Lowpass 12 dB", "Highpass", "Bandpass" }, 1);
     filterType.onChange = [this] { const int t = filterType.getSelectedItemIndex(); const int b = block; edit ([t, b] (UserProgram& u) { u.block[(size_t) b].filterType = t; }); };
-    filterLabel.setText ("TIP FILTERA", juce::dontSendNotification);
+    filterLabel.setText ("FILTER TYPE", juce::dontSendNotification);
     filterLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     filterLabel.setColour (juce::Label::textColourId, Pal::dim);
     addChildComponent (filterType);
@@ -1042,7 +1251,7 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
 
     voiceMode.addItemList ({ "Poly", "Mono", "Mono legato" }, 1);
     voiceMode.onChange = [this] { const int v = voiceMode.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.voiceMode = v; }); };
-    priority.addItemList ({ T ("Poslednja nota"), T ("Najviša nota"), T ("Najniža nota") }, 1);
+    priority.addItemList ({ T ("Last note"), T ("Highest note"), T ("Lowest note") }, 1);
     priority.onChange = [this] { const int v = priority.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.priority = v; }); };
     for (auto* b : { &portaOn, &portaFingered, &portaConstRate })
     {
@@ -1051,19 +1260,19 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
         b->getProperties().set ("fontSize", 13.0f);
     }
     portaOn.setButtonText ("PORTAMENTO");
-    portaFingered.setButtonText ("Samo vezano (fingered)");
-    portaConstRate.setButtonText ("Konstantna brzina");
-    portaConstRate.setTooltip (T ("Veći skok traje duže (vreme je po oktavi)"));
+    portaFingered.setButtonText ("Fingered only");
+    portaConstRate.setButtonText ("Constant rate");
+    portaConstRate.setTooltip (T ("A bigger jump takes longer (time is per octave)"));
     portaOn.onClick = [this] { const bool v = portaOn.getToggleState(); edit ([v] (UserProgram& u) { u.portaOn = v; }); };
     portaFingered.onClick = [this] { const bool v = portaFingered.getToggleState(); edit ([v] (UserProgram& u) { u.portaFingered = v; }); };
     portaConstRate.onClick = [this] { const bool v = portaConstRate.getToggleState(); edit ([v] (UserProgram& u) { u.portaConstRate = v; }); };
-    portaTime = std::make_unique<ValueKnob> ("Vreme", Pal::accent, 0.001, 3.0, 0.3, UI::timeText, 0.1);
+    portaTime = std::make_unique<ValueKnob> ("Time", Pal::accent, 0.001, 3.0, 0.3, UI::timeText, 0.1);
     portaTime->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.portamento = (float) v; }); };
     UI::setupIncDec (bendUp, 0, 24, 1);
     UI::setupIncDec (bendDown, 0, 24, 1);
     bendUp.onValueChange = [this] { const int v = (int) bendUp.getValue(); edit ([v] (UserProgram& u) { u.bendUp = v; }); };
     bendDown.onValueChange = [this] { const int v = (int) bendDown.getValue(); edit ([v] (UserProgram& u) { u.bendDown = v; }); };
-    const char* cl[] = { "GLAS", "PRIORITET", "BEND GORE", "BEND DOLE" };
+    const char* cl[] = { "VOICE", "PRIORITY", "BEND UP", "BEND DOWN" };
     for (int i = 0; i < 4; ++i)
     {
         commonLabels[i].setText (T (cl[i]), juce::dontSendNotification);
@@ -1077,11 +1286,52 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
 
     fxType.addItemList (InsertFx::getTypeNames(), 1);
     fxType.onChange = [this] { const int v = fxType.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.fxType = v; }); };
-    fxLabel.setText ("INSERT EFEKAT", juce::dontSendNotification);
+    fxLabel.setText ("INSERT EFFECT", juce::dontSendNotification);
     fxLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     fxLabel.setColour (juce::Label::textColourId, Pal::dim);
     addChildComponent (fxType);
     addChildComponent (fxLabel);
+
+    // OSC on/off (svih 8 MS ovog OSC-a)
+    oscOnButton.setButtonText ("ON");
+    oscOnButton.setClickingTogglesState (true);
+    oscOnButton.getProperties().set ("fontSize", 12.0f);
+    oscOnButton.setTooltip ("Selected OSC on / off (all its MS)");
+    oscOnButton.onClick = [this] { const bool v = oscOnButton.getToggleState(); const int b = block; edit ([v, b] (UserProgram& u) { u.block[(size_t) b].on = v; }); };
+    oscOnButton.learnId = [this] { return "user.osc" + juce::String (block + 1) + ".on"; };
+    addAndMakeVisible (oscOnButton);
+
+    // MIDI Learn: vazi za izabranog usera; parametri zvuka za izabrani OSC
+    auto& ml = MidiLearn::get();
+    for (int b = 0; b < kNumBlocks; ++b)
+        ml.addToggle ("user.osc" + juce::String (b + 1) + ".on",
+                      [this, b] { const int ui2 = userIndex(); return ui2 >= 0 && ui2 < proc.getNumUsers() && proc.getUser (ui2).block[(size_t) b].on; },
+                      [this, b] (bool v) { edit ([v, b] (UserProgram& u) { u.block[(size_t) b].on = v; }); });
+    for (int sec : { (int) Pitch, (int) Filter, (int) Amp, (int) Effect })
+    {
+        const auto prs = sectionParams (sec);
+        for (size_t ri = 0; ri < prs.size(); ++ri)
+            for (size_t pi = 0; pi < prs[ri].size(); ++pi)
+            {
+                const auto& prm = prs[ri][pi];
+                auto ref = prm.ref;
+                ml.addKnob ("user." + sectionKey (sec) + "." + juce::String ((int) ri) + "." + juce::String ((int) pi), prm.lo, prm.hi, prm.centre,
+                            [this, ref] (double v) { const int b = block; edit ([ref, b, v] (UserProgram& u) { ref (u, b) = (float) v; }); });
+            }
+    }
+    ml.bindCombo (filterType, "user.filter.type");
+    ml.bindCombo (voiceMode, "user.common.voice");
+    ml.bindCombo (priority, "user.common.priority");
+    ml.bindButton (portaOn, "user.common.portamento");
+    ml.bindButton (portaFingered, "user.common.fingered");
+    ml.bindButton (portaConstRate, "user.common.constrate");
+    ml.bindSlider (portaTime->slider, "user.common.portatime");
+    ml.bindSlider (bendUp, "user.common.bendup");
+    ml.bindSlider (bendDown, "user.common.benddown");
+    ml.bindCombo (fxType, "user.effect.type");
+    ml.bindButton (articOn, "user.mono.artic");
+    ml.bindSlider (monoLow, "user.mono.low");
+    ml.bindSlider (monoHigh, "user.mono.high");
 
     showSection (Filter);
 }
@@ -1103,76 +1353,92 @@ void SoundEditor::showSection (int s)
 
 static std::vector<SoundEditor::Param> envParams (std::function<EnvSettings& (UserProgram&, int)> env, bool bipolar, bool withReleaseLevel);
 
-void SoundEditor::rebuildKnobs()
+static std::vector<std::vector<SoundEditor::Param>> sectionParams (int section)
 {
-    knobs.clear();
-    rows.clear();
-    const auto acc = Pal::part[block];
-
+    using SE = SoundEditor;
+    std::vector<std::vector<SE::Param>> rows;
     auto P = [] (const char* n, double lo, double hi, double c, double d, std::function<juce::String (double)> f,
-                 std::function<float& (UserProgram&, int)> r) { return Param { T (n), lo, hi, c, d, std::move (f), std::move (r) }; };
+                 std::function<float& (UserProgram&, int)> r) { return SE::Param { T (n), lo, hi, c, d, std::move (f), std::move (r) }; };
     using U = UserProgram;
+    enum { Pitch = SE::Pitch, Filter = SE::Filter, Amp = SE::Amp, Effect = SE::Effect };
 
     switch (section)
     {
         case Pitch:
             rows.push_back ({
-                P ("EG intenz.", -12, 12, 0, 0, stText, [] (U& u, int b) -> float& { return u.block[(size_t) b].pitchEgInt; }),
-                P ("Vibrato brz.", 0.1, 12, 4, 5.5, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibRate; }),
-                P ("Vibrato dub.", 0, 300, 50, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDepth; }),
-                P ("Kašnjenje", 0, 5, 0.5, 0.3, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDelay; }),
+                P ("EG int.", -12, 12, 0, 0, stText, [] (U& u, int b) -> float& { return u.block[(size_t) b].pitchEgInt; }),
+                P ("Vibrato rate", 0.1, 12, 4, 5.5, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibRate; }),
+                P ("Vibrato depth", 0, 300, 50, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDepth; }),
+                P ("Delay", 0, 5, 0.5, 0.3, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibDelay; }),
                 P ("Fade", 0, 5, 0.5, 0.25, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibFade; }),
                 P ("Offset", -1, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].vibOffset; }),
-                P ("Točkić→vib", 0, 300, 50, 30, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToVib; }),
-                P ("Aftert.→vib", 0, 100, 0, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToVib; }) });
+                P ("ModWh→vib", 0, 300, 50, 30, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToVib; }),
+                P ("Aftert→vib", 0, 100, 0, 0, centsText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToVib; }) });
             rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].pitchEg; }, true, true));
             break;
 
         case Filter:
             rows.push_back ({
                 P ("Cutoff", 40, 20000, 1500, 20000, UI::hzText, [] (U& u, int b) -> float& { return u.block[(size_t) b].cutoff; }),
-                P ("Rezonanca", 0, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].resonance; }),
+                P ("Resonance", 0, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].resonance; }),
                 P ("Key track", 0, 2, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].keyTrack; }),
                 P ("Velocity", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].velToCutoff; }),
-                P ("EG intenz.", -10, 10, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterEgInt; }),
+                P ("EG int.", -10, 10, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterEgInt; }),
                 P ("Vel→EG", -10, 10, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].velToFilterEg; }),
                 P ("Bend→cut", -6, 6, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].bendToCutoff; }),
-                P ("LFO brzina", 0.05, 15, 3, 2, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoRate; }),
-                P ("LFO dubina", 0, 3, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoDepth; }),
-                P ("Točkić→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToCutoff; }),
-                P ("Aftert.→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToCutoff; }) });
+                P ("LFO rate", 0.05, 15, 3, 2, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoRate; }),
+                P ("LFO depth", 0, 3, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoDepth; }),
+                P ("ModWh→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToCutoff; }),
+                P ("Aftert→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToCutoff; }) });
             rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].filterEg; }, true, true));
             break;
 
         case Amp:
             rows.push_back ({
                 P ("Velocity", 0, 1, 0, 0.8, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].velSens; }),
-                P ("Vel. kriva", 0.3, 4, 1.4, 1.6, [] (double v) { return juce::String (v, 2); }, [] (U& u, int b) -> float& { return u.block[(size_t) b].velCurve; }),
-                P ("Aftert.→jač.", 0, 12, 0, 0, [] (double v) { return "+" + juce::String (v, 1) + " dB"; }, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToAmp; }) });
+                P ("Vel curve", 0.3, 4, 1.4, 1.6, [] (double v) { return juce::String (v, 2); }, [] (U& u, int b) -> float& { return u.block[(size_t) b].velCurve; }),
+                P ("Aftert→amp", 0, 12, 0, 0, [] (double v) { return "+" + juce::String (v, 1) + " dB"; }, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToAmp; }) });
             rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].ampEg; }, false, false));
             break;
 
         case Effect:
             rows.push_back ({
-                P ("FX brzina", 0, 1, 0, 0.3, UI::pctText, [] (U& u, int) -> float& { return u.fxRate; }),
-                P ("FX dubina", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxDepth; }),
+                P ("FX rate", 0, 1, 0, 0.3, UI::pctText, [] (U& u, int) -> float& { return u.fxRate; }),
+                P ("FX depth", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxDepth; }),
                 P ("FX mix", 0, 1, 0, 0.5, UI::pctText, [] (U& u, int) -> float& { return u.fxMix; }),
                 P ("Send reverb", 0, 1, 0, 1, UI::pctText, [] (U& u, int) -> float& { return u.send1; }),
                 P ("Send delay", 0, 1, 0, 1, UI::pctText, [] (U& u, int) -> float& { return u.send2; }),
-                P ("EQ bas", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqLowDb; }),
-                P ("EQ sredina", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqMidDb; }),
-                P ("Sredina Hz", 100, 8000, 1000, 1000, UI::hzText, [] (U& u, int) -> float& { return u.eqMidFreq; }),
-                P ("EQ visoki", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqHighDb; }) });
+                P ("EQ low", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqLowDb; }),
+                P ("EQ mid", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqMidDb; }),
+                P ("Mid Hz", 100, 8000, 1000, 1000, UI::hzText, [] (U& u, int) -> float& { return u.eqMidFreq; }),
+                P ("EQ high", -15, 15, 0, 0, eqDb, [] (U& u, int) -> float& { return u.eqHighDb; }) });
             break;
 
         default:
             break;
     }
 
-    for (auto& row : rows)
-        for (auto& prm : row)
+    return rows;
+}
+
+static juce::String sectionKey (int section)
+{
+    const char* k[] = { "pitch", "filter", "amp", "mono", "common", "effect" };
+    return k[juce::jlimit (0, 5, section)];
+}
+
+void SoundEditor::rebuildKnobs()
+{
+    knobs.clear();
+    rows = sectionParams (section);
+    const auto acc = Pal::part[block];
+
+    for (size_t ri = 0; ri < rows.size(); ++ri)
+        for (size_t pi = 0; pi < rows[ri].size(); ++pi)
         {
+            auto& prm = rows[ri][pi];
             auto* k = knobs.add (new ValueKnob (prm.name, acc, prm.lo, prm.hi, prm.centre, prm.fmt, prm.def));
+            k->slider.setLearnId ("user." + sectionKey (section) + "." + juce::String ((int) ri) + "." + juce::String ((int) pi));
             auto ref = prm.ref;
             k->onChange = [this, ref] (double v)
             {
@@ -1221,14 +1487,14 @@ static std::vector<SoundEditor::Param> envParams (std::function<EnvSettings& (Us
     };
     lvl ("Start", 0.0, &EnvSettings::start);
     tim ("Attack", 0.001, &EnvSettings::attackTime);
-    lvl ("Attack niv.", 1.0, &EnvSettings::attackLevel);
+    lvl ("Attack lvl", 1.0, &EnvSettings::attackLevel);
     tim ("Decay", 0.3, &EnvSettings::decayTime);
-    lvl ("Break niv.", 1.0, &EnvSettings::breakLevel);
+    lvl ("Break lvl", 1.0, &EnvSettings::breakLevel);
     tim ("Slope", 0.3, &EnvSettings::slopeTime);
     lvl ("Sustain", 1.0, &EnvSettings::sustain);
     tim ("Release", 0.3, &EnvSettings::releaseTime);
     if (withReleaseLevel)
-        lvl ("Release niv.", 0.0, &EnvSettings::releaseLevel);
+        lvl ("Release lvl", 0.0, &EnvSettings::releaseLevel);
     return v;
 }
 
@@ -1261,6 +1527,8 @@ void SoundEditor::refresh()
         envView.setEnvelope (*e, bip, Pal::part[block]);
 
     filterType.setSelectedItemIndex (u.block[(size_t) block].filterType, juce::dontSendNotification);
+    oscOnButton.setToggleState (u.block[(size_t) block].on, juce::dontSendNotification);
+    oscOnButton.setColour (juce::TextButton::buttonOnColourId, Pal::part[block]);
     voiceMode.setSelectedItemIndex (u.voiceMode, juce::dontSendNotification);
     priority.setSelectedItemIndex (u.priority, juce::dontSendNotification);
     portaOn.setToggleState (u.portaOn, juce::dontSendNotification);
@@ -1291,6 +1559,7 @@ void SoundEditor::refresh()
         for (int m = 0; m < kMsPerOsc; ++m)
             any = any || u.osc[(size_t) (b * kMsPerOsc + m)].instrument.isNotEmpty();
         blockButtons[b].setAlpha (any || b == block ? 1.0f : 0.45f);
+        blockButtons[b].setButtonText ("OSC" + juce::String (b + 1) + (u.block[(size_t) b].on ? "" : " off"));
     }
 }
 
@@ -1299,10 +1568,10 @@ void SoundEditor::showBlockMenu()
     const int ui = userIndex();
     if (ui < 0 || ui >= proc.getNumUsers()) return;
     juce::PopupMenu m;
-    m.addItem (1, T ("Kopiraj OSC") + juce::String (block + 1));
-    m.addItem (2, T ("Nalepi u OSC") + juce::String (block + 1), Clip::osc.has_value());
+    m.addItem (1, T ("Copy OSC") + juce::String (block + 1));
+    m.addItem (2, T ("Paste into OSC") + juce::String (block + 1), Clip::osc.has_value());
     m.addSeparator();
-    m.addItem (3, T ("Obriši OSC") + juce::String (block + 1));
+    m.addItem (3, T ("Delete OSC") + juce::String (block + 1));
     juce::Component::SafePointer<SoundEditor> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&blockMenu), [safe] (int r)
     {
@@ -1343,7 +1612,9 @@ void SoundEditor::resized()
     for (auto& b : blockButtons)
         b.setBounds (top.removeFromLeft (50).reduced (1, 0));
     blockMenu.setBounds (top.removeFromLeft (20));
-    top.removeFromLeft (10);
+    top.removeFromLeft (4);
+    oscOnButton.setBounds (top.removeFromLeft (40).reduced (1, 0));
+    top.removeFromLeft (8);
     const int sw = juce::jmin (110, top.getWidth() / NumSections);
     for (auto& b : sectionButtons)
         b.setBounds (top.removeFromLeft (sw).reduced (2, 0));
@@ -1451,7 +1722,7 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     list.setOutlineThickness (1);
     addAndMakeVisible (list);
 
-    newButton.setButtonText ("Novi");
+    newButton.setButtonText ("New");
     newButton.onClick = [this]
     {
         juce::Component::SafePointer<UserPage> safe (this);
@@ -1462,22 +1733,22 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
             safe->selectUser (u);
         });
     };
-    copyButton.setButtonText ("Kopiraj");
+    copyButton.setButtonText ("Copy");
     copyButton.onClick = [this]
     {
         if (userIndex < 0 || userIndex >= proc.getNumUsers()) return;
         auto u = proc.getUser (userIndex);
         selectUser (proc.createUser (u.name, &u));
     };
-    deleteButton.setButtonText (T ("Obriši"));
+    deleteButton.setButtonText (T ("Delete"));
     deleteButton.onClick = [this]
     {
         if (userIndex < 0 || userIndex >= proc.getNumUsers()) return;
         juce::Component::SafePointer<UserPage> safe (this);
         const int idx = userIndex;
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("Obriši usera"),
-            T ("Obrisati usera \"") + proc.getUser (idx).name + T ("\"? Delovi performansa koji ga koriste ostaće bez zvuka."),
-            T ("Obriši"), T ("Otkaži"), nullptr,
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("Delete user"),
+            T ("Delete user \"") + proc.getUser (idx).name + T ("\"? Performance parts that use it will have no sound."),
+            T ("Delete"), T ("Cancel"), nullptr,
             juce::ModalCallbackFunction::create ([safe, idx] (int result)
             {
                 if (safe == nullptr || result == 0) return;
@@ -1488,15 +1759,46 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     for (auto* b : { &newButton, &copyButton, &deleteButton })
         addAndMakeVisible (b);
 
+    search.setTextToShowWhenEmpty ("Search users...", Pal::dim);
+    search.setFont (juce::FontOptions (14.0f));
+    search.onTextChange = [this] { rebuildVisible(); list.updateContent(); list.repaint(); };
+    search.onEscapeKey = [this] { search.clear(); rebuildVisible(); list.updateContent(); list.repaint(); };
+    addAndMakeVisible (search);
+
+    catFilter.onChange = [this] { rebuildVisible(); list.updateContent(); list.repaint(); };
+    catFilter.setTooltip ("Show only users of this category");
+    addAndMakeVisible (catFilter);
+
+    sortButton.setButtonText ("#");
+    sortButton.setTooltip ("List order: by number (#) or alphabetical (A-Z)");
+    sortButton.onClick = [this] { sortAlpha = ! sortAlpha; sortButton.setButtonText (sortAlpha ? "A-Z" : "#"); rebuildVisible(); list.updateContent(); list.repaint(); };
+    catButton.setButtonText ("Category");
+    catButton.setTooltip ("Set the category of this user, or add / rename / delete categories");
+    catButton.onClick = [this] { categoryMenu(); };
+    numButton.setButtonText ("No.");
+    numButton.setTooltip ("Change the number (position) of this user");
+    numButton.onClick = [this] { askNumber(); };
+    upButton.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xb2"));
+    upButton.setTooltip ("Move up (number - 1)");
+    upButton.onClick = [this] { if (userIndex > 0) { proc.moveUser (userIndex, userIndex - 1); selectUser (userIndex - 1); } };
+    downButton.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xbc"));
+    downButton.setTooltip ("Move down (number + 1)");
+    downButton.onClick = [this] { if (userIndex < proc.getNumUsers() - 1) { proc.moveUser (userIndex, userIndex + 1); selectUser (userIndex + 1); } };
+    for (auto* b : { &sortButton, &catButton, &numButton, &upButton, &downButton })
+    {
+        b->getProperties().set ("fontSize", 12.0f);
+        addAndMakeVisible (b);
+    }
+
     nameEdit.setEditable (true);
     nameEdit.setFont (juce::FontOptions (20.0f, juce::Font::bold));
     nameEdit.setColour (juce::Label::backgroundColourId, Pal::lcdBg);
     nameEdit.setColour (juce::Label::textColourId, Pal::lcdText);
-    nameEdit.setTooltip (T ("Klikni da promeniš ime usera"));
+    nameEdit.setTooltip (T ("Click to rename the user"));
     nameEdit.onTextChange = [this] { edit ([this] (UserProgram& u) { u.name = nameEdit.getText(); }); };
     addAndMakeVisible (nameEdit);
 
-    const char* headers[] = { "Multisempl", "", "", "Jačina dB", "Pan", "Transp", "Fino c", "Od", "Do", "Vel od / do" };
+    const char* headers[] = { "Multisample", "", "", "Level dB", "Pan", "Transp", "Fine c", "Low", "High", "Vel lo / hi" };
     for (int i = 0; i < 10; ++i)
     {
         styleLabel (headerLabels[i], T (headers[i]), 11.5f);
@@ -1520,50 +1822,178 @@ void UserPage::edit (std::function<void (UserProgram&)> fn)
 void UserPage::selectUser (int index)
 {
     userIndex = juce::jlimit (0, juce::jmax (0, proc.getNumUsers() - 1), index);
+    rebuildVisible();
     list.updateContent();
-    list.selectRow (userIndex, false, true);
+    const auto it = std::find (visible.begin(), visible.end(), userIndex);
+    if (it != visible.end()) list.selectRow ((int) (it - visible.begin()), false, true);
+    else list.deselectAllRows();
     refresh();
 }
 
-int UserPage::getNumRows() { return proc.getNumUsers(); }
+void UserPage::rebuildVisible()
+{
+    // kategorije u filteru
+    {
+        const auto cats = proc.getUserCategories();
+        const auto cur = catFilter.getText();
+        if (catFilter.getNumItems() != cats.size() + 2 || [&] { for (int i = 0; i < cats.size(); ++i) if (catFilter.getItemText (i + 2) != cats[i]) return true; return false; }())
+        {
+            catFilter.clear (juce::dontSendNotification);
+            catFilter.addItem ("All categories", 1);
+            catFilter.addItem ("No category", 2);
+            for (int i = 0; i < cats.size(); ++i) catFilter.addItem (cats[i], i + 3);
+            int id = 1;
+            for (int i = 0; i < catFilter.getNumItems(); ++i) if (catFilter.getItemText (i) == cur) id = catFilter.getItemId (i);
+            catFilter.setSelectedId (id, juce::dontSendNotification);
+        }
+        if (catFilter.getSelectedId() == 0) catFilter.setSelectedId (1, juce::dontSendNotification);
+    }
+    const int cf = catFilter.getSelectedId();
+    const auto catName = cf >= 3 ? catFilter.getText() : juce::String();
+    const auto q = search.getText().trim();
+    visible.clear();
+    for (int i = 0; i < proc.getNumUsers(); ++i)
+    {
+        const auto& u = proc.getUser (i);
+        if (cf == 2 && u.category.isNotEmpty()) continue;
+        if (cf >= 3 && u.category != catName) continue;
+        if (q.isNotEmpty())
+        {
+            bool all = true;
+            for (auto& w : juce::StringArray::fromTokens (q, " ", ""))
+                if (w.isNotEmpty() && ! u.name.containsIgnoreCase (w) && ! u.category.containsIgnoreCase (w)
+                    && juce::String (i + 1) != w) all = false;
+            if (! all) continue;
+        }
+        visible.push_back (i);
+    }
+    if (sortAlpha)
+        std::stable_sort (visible.begin(), visible.end(), [this] (int a, int b)
+        {
+            return proc.getUser (a).name.compareNatural (proc.getUser (b).name) < 0;
+        });
+}
+
+int UserPage::getNumRows() { return (int) visible.size(); }
 
 void UserPage::paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool selected)
 {
-    if (row < 0 || row >= proc.getNumUsers()) return;
+    if (row < 0 || row >= (int) visible.size()) return;
+    const int ui = visible[(size_t) row];
+    if (ui < 0 || ui >= proc.getNumUsers()) return;
+    const auto& u = proc.getUser (ui);
     if (selected) g.fillAll (Pal::accent.withAlpha (0.35f));
+    g.setColour (Pal::dim);
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.drawText (juce::String (ui + 1).paddedLeft ('0', 3), 4, 0, 30, h, juce::Justification::centredLeft);
+    int right = w - 4;
+    if (u.category.isNotEmpty())
+    {
+        g.setFont (juce::FontOptions (11.0f));
+        const int cw = juce::jmin (80, juce::GlyphArrangement::getStringWidthInt (juce::FontOptions (11.0f), u.category) + 8);
+        g.setColour (Pal::lcdText.withAlpha (0.7f));
+        g.drawText (u.category, right - cw, 0, cw, h, juce::Justification::centredRight, true);
+        right -= cw + 4;
+    }
     g.setColour (Pal::text);
     g.setFont (juce::FontOptions (14.0f));
-    g.drawText (proc.getUser (row).name, 8, 0, w - 10, h, juce::Justification::centredLeft, true);
+    g.drawText (u.name, 36, 0, right - 36, h, juce::Justification::centredLeft, true);
 }
 
 void UserPage::selectedRowsChanged (int lastRowSelected)
 {
-    if (lastRowSelected >= 0 && lastRowSelected != userIndex)
+    if (lastRowSelected >= 0 && lastRowSelected < (int) visible.size() && visible[(size_t) lastRowSelected] != userIndex)
     {
-        userIndex = lastRowSelected;
+        userIndex = visible[(size_t) lastRowSelected];
         refresh();
     }
 }
 
+void UserPage::categoryMenu()
+{
+    if (userIndex < 0 || userIndex >= proc.getNumUsers()) return;
+    const auto cats = proc.getUserCategories();
+    const auto cur = proc.getUser (userIndex).category;
+    juce::PopupMenu m;
+    m.addSectionHeader ("Category of \"" + proc.getUser (userIndex).name + "\"");
+    for (int i = 0; i < cats.size(); ++i) m.addItem (i + 1, cats[i], true, cats[i] == cur);
+    m.addItem (1000, "(no category)", true, cur.isEmpty());
+    m.addSeparator();
+    m.addItem (2000, "New category...");
+    juce::PopupMenu ren, del;
+    for (int i = 0; i < cats.size(); ++i) { ren.addItem (3000 + i, cats[i]); del.addItem (4000 + i, cats[i]); }
+    m.addSubMenu ("Rename category", ren, cats.size() > 0);
+    m.addSubMenu ("Delete category", del, cats.size() > 0);
+    juce::Component::SafePointer<UserPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&catButton), [safe, cats] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r <= cats.size() || r == 1000)
+        {
+            const auto c = r == 1000 ? juce::String() : cats[r - 1];
+            safe->edit ([c] (UserProgram& u) { u.category = c; });
+            return;
+        }
+        if (r >= 4000) { safe->proc.editUserCategory (cats[r - 4000], {}); return; }
+        const auto old = r >= 3000 ? cats[r - 3000] : juce::String();
+        auto* aw = new juce::AlertWindow (old.isEmpty() ? "New category" : "Rename category", {}, juce::MessageBoxIconType::NoIcon);
+        aw->addTextEditor ("name", old, "Name:");
+        aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw, old] (int ok)
+        {
+            const auto name = aw->getTextEditorContents ("name").trim();
+            if (safe == nullptr || ok == 0 || name.isEmpty()) return;
+            safe->proc.editUserCategory (old, name);
+            if (old.isEmpty()) safe->edit ([name] (UserProgram& u) { u.category = name; });   // nova: odmah na ovog usera
+        }), true);
+    });
+}
+
+void UserPage::askNumber()
+{
+    if (userIndex < 0 || userIndex >= proc.getNumUsers()) return;
+    auto* aw = new juce::AlertWindow ("User number", "Move \"" + proc.getUser (userIndex).name + "\" to number (1-"
+                                      + juce::String (proc.getNumUsers()) + "):", juce::MessageBoxIconType::NoIcon);
+    aw->addTextEditor ("n", juce::String (userIndex + 1));
+    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<UserPage> safe (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw] (int ok)
+    {
+        if (safe == nullptr || ok == 0) return;
+        const int n = aw->getTextEditorContents ("n").getIntValue();
+        if (n < 1) return;
+        const int to = juce::jlimit (0, safe->proc.getNumUsers() - 1, n - 1);
+        safe->proc.moveUser (safe->userIndex, to);
+        safe->selectUser (to);
+    }), true);
+}
+
 void UserPage::refresh()
 {
-    list.updateContent();
-    list.repaint();
     if (userIndex >= proc.getNumUsers())
         userIndex = juce::jmax (0, proc.getNumUsers() - 1);
-    if (list.getSelectedRow() != userIndex && proc.getNumUsers() > 0)
-        list.selectRow (userIndex, true, true);
+    rebuildVisible();
+    list.updateContent();
+    list.repaint();
+    {
+        const auto it = std::find (visible.begin(), visible.end(), userIndex);
+        const int row = it != visible.end() ? (int) (it - visible.begin()) : -1;
+        if (row >= 0 && list.getSelectedRow() != row) list.selectRow (row, true, true);
+    }
+    numButton.setButtonText (userIndex < proc.getNumUsers() ? "No. " + juce::String (userIndex + 1) : juce::String ("No."));
 
     const bool valid = userIndex >= 0 && userIndex < proc.getNumUsers();
     for (auto* r : rows)
         r->refresh();
     sound.refresh();
 
-    for (auto* c : std::initializer_list<juce::Component*> { &nameEdit, &copyButton, &deleteButton })
+    for (auto* c : std::initializer_list<juce::Component*> { &nameEdit, &copyButton, &deleteButton, &catButton, &numButton, &upButton, &downButton })
         c->setEnabled (valid);
     if (! valid)
     {
-        nameEdit.setText (T ("Nema usera: klikni Novi"), juce::dontSendNotification);
+        nameEdit.setText (T ("No users: click New"), juce::dontSendNotification);
         return;
     }
     if (! nameEdit.isBeingEdited())
@@ -1573,7 +2003,7 @@ void UserPage::refresh()
 void UserPage::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds();
-    r.removeFromLeft (222);
+    r.removeFromLeft (262);
     g.setColour (Pal::panel);
     g.fillRoundedRectangle (r.toFloat(), 8.0f);
 }
@@ -1581,13 +2011,30 @@ void UserPage::paint (juce::Graphics& g)
 void UserPage::resized()
 {
     auto r = getLocalBounds();
-    auto left = r.removeFromLeft (210);
+    auto left = r.removeFromLeft (250);
     r.removeFromLeft (12);
+    search.setBounds (left.removeFromTop (28));
+    left.removeFromTop (4);
+    {
+        auto row = left.removeFromTop (26);
+        sortButton.setBounds (row.removeFromRight (44));
+        row.removeFromRight (4);
+        catFilter.setBounds (row);
+    }
+    left.removeFromTop (4);
     auto btns = left.removeFromBottom (30);
     const int bw = btns.getWidth() / 3;
     newButton.setBounds (btns.removeFromLeft (bw).reduced (2, 0));
     copyButton.setBounds (btns.removeFromLeft (bw).reduced (2, 0));
     deleteButton.setBounds (btns.reduced (2, 0));
+    left.removeFromBottom (4);
+    {
+        auto row = left.removeFromBottom (26);
+        catButton.setBounds (row.removeFromLeft (84).reduced (2, 0));
+        numButton.setBounds (row.removeFromLeft (76).reduced (2, 0));
+        upButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 0));
+        downButton.setBounds (row.reduced (2, 0));
+    }
     left.removeFromBottom (6);
     list.setBounds (left);
 
@@ -1643,7 +2090,7 @@ TercePage::RuleRow::RuleRow (TercePage& o, int i) : owner (o), index (i)
         };
         addAndMakeVisible (notes[k]);
     }
-    notes[0].setTooltip (T ("Tonika akorda (uvek uključena)"));
+    notes[0].setTooltip (T ("Chord root (always on)"));
 
     scale.onChange = [this]
     {
@@ -1653,7 +2100,7 @@ TercePage::RuleRow::RuleRow (TercePage& o, int i) : owner (o), index (i)
     addAndMakeVisible (scale);
 
     UI::setupIncDec (shift, -11, 11, 1, semis);
-    shift.setTooltip (T ("Pomeraj tonaliteta od tonike akorda. Npr. E7 sa +5 daje A mol."));
+    shift.setTooltip (T ("Key shift from the chord root. E.g. E7 with +5 gives A minor."));
     shift.onValueChange = [this]
     {
         const int v = (int) shift.getValue();
@@ -1699,7 +2146,7 @@ void TercePage::RuleRow::refresh()
     juce::StringArray chord;
     for (int k = 0; k < 12; ++k)
         if (r.mask & (1 << k)) chord.add (Terca::pcName (2 + k));
-    example.setText (T ("npr. ") + chord.joinIntoString (" ") + "  ->  " + Terca::keyName (2 + r.rootShift, t, r.scale),
+    example.setText (T ("e.g. ") + chord.joinIntoString (" ") + "  ->  " + Terca::keyName (2 + r.rootShift, t, r.scale),
                      juce::dontSendNotification);
 }
 
@@ -1725,7 +2172,7 @@ void TercePage::RuleRow::resized()
 }
 
 TercePage::TercePage (LiveSamplerProcessor& p)
-    : proc (p), velocity (T ("Jačina terce"), juce::Colour (0xff3ddc84), 0.1, 1.5, 0.0, UI::pctText, 0.8)
+    : proc (p), velocity (T ("Harmony velocity"), juce::Colour (0xff3ddc84), 0.1, 1.5, 0.0, UI::pctText, 0.8)
 {
     onButton.setClickingTogglesState (true);
     onButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3ddc84));
@@ -1745,21 +2192,21 @@ TercePage::TercePage (LiveSamplerProcessor& p)
     addAndMakeVisible (keyRoot);
     addAndMakeVisible (keyScale);
 
-    learnButton.setButtonText (T ("LEARN dugme"));
+    learnButton.setButtonText (T ("LEARN button"));
     learnButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
     learnButton.onClick = [this] { proc.startLearn (! proc.isLearning()); };
     addAndMakeVisible (learnButton);
     learnLabel.setFont (juce::FontOptions (13.5f));
     addAndMakeVisible (learnLabel);
 
-    voiceMode.addItemList ({ "Terca iznad", "Terca ispod", "Iznad i ispod" }, 1);
+    voiceMode.addItemList ({ "Third above", "Third below", "Above and below" }, 1);
     voiceMode.onChange = [this] { const int v = voiceMode.getSelectedItemIndex(); edit ([v] (TercaSettings& t) { t.voiceMode = v; }); };
     addAndMakeVisible (voiceMode);
 
     velocity.onChange = [this] (double v) { edit ([v] (TercaSettings& t) { t.velocity = (float) v; }); };
     addAndMakeVisible (velocity);
 
-    topOnly.setButtonText (T ("Samo na najviši ton (melodija)"));
+    topOnly.setButtonText (T ("Top note only (melody)"));
     topOnly.onClick = [this] { const bool b = topOnly.getToggleState(); edit ([b] (TercaSettings& t) { t.topNoteOnly = b; }); };
     addAndMakeVisible (topOnly);
 
@@ -1774,7 +2221,7 @@ TercePage::TercePage (LiveSamplerProcessor& p)
     scaleName.setEditable (true);
     scaleName.setColour (juce::Label::backgroundColourId, Pal::bg);
     scaleName.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    scaleName.setTooltip (T ("Klikni da promeniš ime skale"));
+    scaleName.setTooltip (T ("Click to rename the scale"));
     scaleName.onTextChange = [this]
     {
         const auto n = scaleName.getText().trim();
@@ -1783,19 +2230,19 @@ TercePage::TercePage (LiveSamplerProcessor& p)
     };
     addAndMakeVisible (scaleName);
 
-    addScale.setButtonText ("Nova skala");
+    addScale.setButtonText ("New scale");
     addScale.onClick = [this]
     {
         edit ([this] (TercaSettings& t)
         {
             auto copy = t.scales.empty() ? TercaSettings::makeDefault().scales[0] : t.scales[(size_t) juce::jmin (scaleIndex, (int) t.scales.size() - 1)];
-            copy.name = "User skala " + juce::String ((int) t.scales.size() + 1);
+            copy.name = "User scale " + juce::String ((int) t.scales.size() + 1);
             t.scales.push_back (copy);
         });
         scaleIndex = (int) proc.getTerca().scales.size() - 1;
         refresh();
     };
-    deleteScale.setButtonText (T ("Obriši"));
+    deleteScale.setButtonText (T ("Delete"));
     deleteScale.onClick = [this]
     {
         if (proc.getTerca().scales.size() <= 1) return;
@@ -1813,8 +2260,8 @@ TercePage::TercePage (LiveSamplerProcessor& p)
     addAndMakeVisible (addScale);
     addAndMakeVisible (deleteScale);
 
-    styleLabel (aboveLabel, "IZNAD", 12.0f, Pal::text);
-    styleLabel (belowLabel, "ISPOD", 12.0f, Pal::text);
+    styleLabel (aboveLabel, "ABOVE", 12.0f, Pal::text);
+    styleLabel (belowLabel, "BELOW", 12.0f, Pal::text);
     addAndMakeVisible (aboveLabel);
     addAndMakeVisible (belowLabel);
 
@@ -1844,15 +2291,15 @@ TercePage::TercePage (LiveSamplerProcessor& p)
     }
 
     // pravila
-    addRule.setButtonText ("Dodaj pravilo");
+    addRule.setButtonText ("Add rule");
     addRule.onClick = [this]
     {
         edit ([] (TercaSettings& t) { t.rules.push_back ({ 1 | (1 << 4) | (1 << 7), 0, 0 }); });
         rebuildRules();
     };
     addAndMakeVisible (addRule);
-    rulesHelp.setText (T ("Uključi tonove akorda (od tonike). Kad držiš TERCA dugme i odsviraš takav akord, uključuje se izabrana skala. "
-                          "Pravila se proveravaju redom, prvo koje odgovara pobeđuje."), juce::dontSendNotification);
+    rulesHelp.setText (T ("Turn on the chord notes (from the root). When you hold the HARMONY button and play such a chord, the selected scale is used. "
+                          "Rules are checked in order, the first one that matches wins."), juce::dontSendNotification);
     rulesHelp.setFont (juce::FontOptions (12.5f));
     rulesHelp.setColour (juce::Label::textColourId, Pal::dim);
     addAndMakeVisible (rulesHelp);
@@ -1892,7 +2339,7 @@ void TercePage::refresh()
 
     const bool on = proc.isTercaOn();
     onButton.setToggleState (on, juce::dontSendNotification);
-    onButton.setButtonText (on ? "TERCE: ON" : "TERCE: OFF");
+    onButton.setButtonText (on ? "HARMONY: ON" : "HARMONY: OFF");
     stateLabel.setText (proc.getTercaText(), juce::dontSendNotification);
     keyRoot.setSelectedItemIndex (proc.getTercaRoot(), juce::dontSendNotification);
     keyScale.clear (juce::dontSendNotification);
@@ -1901,7 +2348,7 @@ void TercePage::refresh()
     keyScale.setSelectedItemIndex (proc.getTercaScale(), juce::dontSendNotification);
 
     learnButton.setToggleState (proc.isLearning(), juce::dontSendNotification);
-    learnLabel.setText (proc.isLearning() ? T ("Pritisni dugme na klavijaturi...") : T ("Dugme: ") + t.learn.describe(),
+    learnLabel.setText (proc.isLearning() ? T ("Press a button on the keyboard...") : T ("Button: ") + t.learn.describe(),
                         juce::dontSendNotification);
     voiceMode.setSelectedItemIndex (t.voiceMode, juce::dontSendNotification);
     velocity.setValue (t.velocity);
@@ -1946,11 +2393,11 @@ void TercePage::paint (juce::Graphics& g)
     r.removeFromTop (10);
     g.fillRoundedRectangle (r.toFloat(), 8.0f);
 
-    UI::sectionTitle (g, left.reduced (12, 0).withHeight (26).withY (left.getY() + 4), "TERCE", juce::Colour (0xff3ddc84));
+    UI::sectionTitle (g, left.reduced (12, 0).withHeight (26).withY (left.getY() + 4), "HARMONY", juce::Colour (0xff3ddc84));
     UI::sectionTitle (g, scalesArea.reduced (12, 0).withHeight (26).withY (scalesArea.getY() + 4),
-                      T ("SKALE: za svaki ton koliko polutonova gore / dole (0 = bez terce)"), Pal::lcdText);
+                      T ("SCALES: for each note how many semitones up / down (0 = no harmony)"), Pal::lcdText);
     UI::sectionTitle (g, r.reduced (12, 0).withHeight (26).withY (r.getY() + 4),
-                      T ("PRAVILA: koji akord (ili dva tona) pali koju skalu"), Pal::lcdText);
+                      T ("RULES: which chord (or two notes) selects which scale"), Pal::lcdText);
 }
 
 void TercePage::resized()
@@ -2035,16 +2482,16 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
 
     auto ms = [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; };
     auto sec = [] (double v) { return juce::String (v, 1) + " s"; };
-    add ("PLATE REVERB", { { "Veličina", 0, 1, 0, 0.5, UI::pctText }, { "Trajanje", 0.3, 10, 2, 2.2, sec },
-                           { "Predelay", 0, 150, 30, 20, ms }, { "Prigušenje", 0, 1, 0, 0.5, UI::pctText },
+    add ("PLATE REVERB", { { "Size", 0, 1, 0, 0.5, UI::pctText }, { "Decay", 0.3, 10, 2, 2.2, sec },
+                           { "Predelay", 0, 150, 30, 20, ms }, { "Damping", 0, 1, 0, 0.5, UI::pctText },
                            { "Low cut", 20, 1000, 150, 150, UI::hzText }, { "High cut", 1000, 16000, 5000, 6000, UI::hzText },
-                           { "Gustina", 0, 1, 0, 0.7, UI::pctText }, { "Modulacija", 0, 1, 0, 0.3, UI::pctText },
-                           { "Širina", 0, 1, 0, 1.0, UI::pctText }, { "Nivo", 0, 1, 0, 0.8, UI::pctText } });
-    add ("DELAY", { { "Vreme", 20, 1500, 350, 350, [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; } },
-                    { "Ponavljanje", 0, 0.95, 0, 0.35, UI::pctText }, { "Nivo", 0, 1, 0, 0.6, UI::pctText } });
-    add ("EQ", { { "Bas", -12, 12, 0, 0, db }, { "Sredina", -12, 12, 0, 0, db }, { "Visoki", -12, 12, 0, 0, db } });
-    add ("KOMPRESOR", { { "Prag", -40, 0, 0, -12, db }, { "Odnos (1=isklj.)", 1, 10, 3, 1, [] (double v) { return juce::String (v, 1) + ":1"; } } });
-    add ("PERFORMANS", { { "Jačina", -60, 6, -12, 0, UI::dbText } });
+                           { "Density", 0, 1, 0, 0.7, UI::pctText }, { "Modulation", 0, 1, 0, 0.3, UI::pctText },
+                           { "Width", 0, 1, 0, 1.0, UI::pctText }, { "Level", 0, 1, 0, 0.8, UI::pctText } });
+    add ("DELAY", { { "Time", 20, 1500, 350, 350, [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; } },
+                    { "Feedback", 0, 0.95, 0, 0.35, UI::pctText }, { "Level", 0, 1, 0, 0.6, UI::pctText } });
+    add ("EQ", { { "Low", -12, 12, 0, 0, db }, { "Mid", -12, 12, 0, 0, db }, { "High", -12, 12, 0, 0, db } });
+    add ("COMPRESSOR", { { "Threshold", -40, 0, 0, -12, db }, { "Ratio (1 = off)", 1, 10, 3, 1, [] (double v) { return juce::String (v, 1) + ":1"; } } });
+    add ("PERFORMANCE", { { "Volume", -60, 6, -12, 0, UI::dbText } });
 
     auto setter = [this] (int i, std::function<void (MasterSettings&, float)> fn)
     {
@@ -2074,6 +2521,14 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     globalVolume = std::make_unique<ValueKnob> ("MASTER", juce::Colours::white, -60.0, 6.0, -12.0, UI::dbText, 0.0);
     globalVolume->onChange = [this] (double v) { proc.setGlobalVolume ((float) v); };
     addAndMakeVisible (*globalVolume);
+
+    // MIDI Learn
+    const char* ids[] = { "reverb.size", "reverb.decay", "reverb.predelay", "reverb.damping", "reverb.lowcut", "reverb.highcut",
+                          "reverb.density", "reverb.mod", "reverb.width", "reverb.level", "delay.time", "delay.feedback", "delay.level",
+                          "eq.low", "eq.mid", "eq.high", "comp.threshold", "comp.ratio", "perf.volume" };
+    for (int i = 0; i < knobs.size() && i < 19; ++i)
+        MidiLearn::get().bindSlider (knobs[i]->slider, juce::String ("fx.") + ids[i]);
+    MidiLearn::get().bindSlider (globalVolume->slider, "master.volume");
 }
 
 void EffectsPage::edit (std::function<void (MasterSettings&)> fn)
@@ -2105,10 +2560,10 @@ void EffectsPage::paint (juce::Graphics& g)
         UI::sectionTitle (g, juce::Rectangle<int> (a.getX(), a.getY() - 34, b.getRight() - a.getX(), 24), s.title, Pal::master);
     }
     auto gv = globalVolume->getBounds();
-    UI::sectionTitle (g, juce::Rectangle<int> (gv.getX(), gv.getY() - 34, gv.getWidth(), 24), T ("MASTER (svi performansi)"), juce::Colours::white);
+    UI::sectionTitle (g, juce::Rectangle<int> (gv.getX(), gv.getY() - 34, gv.getWidth(), 24), T ("MASTER (all performances)"), juce::Colours::white);
     g.setColour (Pal::dim);
     g.setFont (juce::FontOptions (13.0f));
-    g.drawText (T ("Efekti se čuvaju u performansu. Koliko svaki deo šalje u reverb i delay podešava se na stranici PERFORMANS."),
+    g.drawText (T ("Effects are saved in the performance. How much each part sends to reverb and delay is set on the PERFORMANCE page."),
                 getLocalBounds().reduced (20).removeFromBottom (24), juce::Justification::centredLeft);
 }
 
@@ -2144,10 +2599,10 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     folders.setOutlineThickness (1);
     addAndMakeVisible (folders);
 
-    addButton.setButtonText ("Dodaj folder / USB");
+    addButton.setButtonText ("Add folder / USB");
     addButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser> (T ("Izaberi folder sa semplovima (može i ceo USB stick)"),
+        chooser = std::make_unique<juce::FileChooser> (T ("Choose a sample folder (a whole USB stick works too)"),
                                                        juce::File::getSpecialLocation (juce::File::userHomeDirectory), "*");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
             [this] (const juce::FileChooser& fc)
@@ -2157,19 +2612,19 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
                     proc.addLibraryFolder (f);
             });
     };
-    removeButton.setButtonText ("Ukloni");
+    removeButton.setButtonText ("Remove");
     removeButton.onClick = [this] { proc.removeLibraryFolder (folders.getSelectedRow()); };
-    rescanButton.setButtonText (T ("Osveži (ubačen USB)"));
+    rescanButton.setButtonText (T ("Refresh (USB inserted)"));
     rescanButton.onClick = [this] { proc.rescanLibrary(); };
     for (auto* b : { &addButton, &removeButton, &rescanButton })
         addAndMakeVisible (b);
 
-    backupButton.setButtonText (T ("BACKUP CELOG PROJEKTA..."));
+    backupButton.setButtonText (T ("BACKUP WHOLE PROJECT..."));
     backupButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
-    backupButton.setTooltip (T ("Useri, performansi, liste, set liste, terce, kategorije i SVI semplovi koje useri koriste, u jedan folder"));
+    backupButton.setTooltip (T ("Users, performances, lists, set lists, harmony, categories and ALL samples used by the users, into one folder"));
     backupButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser> (T ("Folder za backup (npr. USB disk)"),
+        chooser = std::make_unique<juce::FileChooser> (T ("Backup folder (e.g. USB disk)"),
                                                        juce::File::getSpecialLocation (juce::File::userDesktopDirectory), "*");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
             [this] (const juce::FileChooser& fc)
@@ -2178,31 +2633,31 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
                 if (f == juce::File()) return;
                 const auto dest = f.getChildFile ("Pikaso backup " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M"));
                 if (! proc.startBackup (dest))
-                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Backup", T ("Ne mogu da napravim folder ") + dest.getFullPathName());
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Backup", T ("Cannot create the folder ") + dest.getFullPathName());
                 startTimerHz (4);
             });
     };
-    restoreButton.setButtonText (T ("VRATI BACKUP..."));
-    restoreButton.setTooltip (T ("Na drugom računaru: izaberi folder \"Pikaso backup ...\""));
+    restoreButton.setButtonText (T ("RESTORE BACKUP..."));
+    restoreButton.setTooltip (T ("On another computer: choose the folder \"Pikaso backup ...\""));
     restoreButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser> (T ("Izaberi folder \"Pikaso backup ...\""),
+        chooser = std::make_unique<juce::FileChooser> (T ("Choose the folder \"Pikaso backup ...\""),
                                                        juce::File::getSpecialLocation (juce::File::userDesktopDirectory), "*");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
             [this] (const juce::FileChooser& fc)
             {
                 const auto folder = fc.getResult();
                 if (! folder.isDirectory()) return;
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Vrati backup"),
-                    T ("Useri, performansi, liste i ostala podešavanja ovog računara biće zamenjeni onima iz backup-a:\n")
-                        + folder.getFullPathName() + T ("\n\nDosadašnji podaci se čuvaju pored, kao kopija."),
-                    T ("Vrati"), T ("Otkaži"), nullptr,
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Restore backup"),
+                    T ("Users, performances, lists and other settings of this computer will be replaced with the ones from the backup:\n")
+                        + folder.getFullPathName() + T ("\n\nThe current data is kept next to it, as a copy."),
+                    T ("Restore"), T ("Cancel"), nullptr,
                     juce::ModalCallbackFunction::create ([this, folder] (int ok)
                     {
                         if (ok == 0) return;
                         juce::String rep;
                         const bool done = proc.restoreBackup (folder, rep);
-                        juce::AlertWindow::showMessageBoxAsync (done ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, T ("Vrati backup"), rep);
+                        juce::AlertWindow::showMessageBoxAsync (done ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon, T ("Restore backup"), rep);
                     }));
             });
     };
@@ -2211,18 +2666,18 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     backupStatus.setColour (juce::Label::textColourId, Pal::lcdText);
     addAndMakeVisible (backupStatus);
 
-    velCurveLabel.setText (T ("Kriva jačine (velocity) ulaza:"), juce::dontSendNotification);
+    velCurveLabel.setText (T ("Input velocity curve:"), juce::dontSendNotification);
     velCurveLabel.setColour (juce::Label::textColourId, Pal::text);
     addAndMakeVisible (velCurveLabel);
     {
-        const char* names[] = { "Normalno (bez promene)", "Lakše 1", "Lakše 2", "Lakše 3", "Lakše 4", "Teže 1", "Teže 2" };
+        const char* names[] = { "Normal (no change)", "Lighter 1", "Lighter 2", "Lighter 3", "Lighter 4", "Heavier 1", "Heavier 2" };
         for (int i = 0; i < 7; ++i) velCurveBox.addItem (T (names[i]), i + 1);
     }
-    velCurveBox.setTooltip (T ("Ako na Impulse-u (ili drugoj klavijaturi) moraš jače da pritiskaš nego na Kronosu, izaberi Lakše 1-4"));
+    velCurveBox.setTooltip (T ("If you have to play harder on the Impulse (or another keyboard) than on the Kronos, choose Lighter 1-4"));
     velCurveBox.onChange = [this] { proc.setVelocityCurve (velCurveBox.getSelectedId() - 1); };
     addAndMakeVisible (velCurveBox);
 
-    c3Toggle.setButtonText (T ("C3 = MIDI 60 (Yamaha/Korg). Isključeno: C4 = 60"));
+    c3Toggle.setButtonText (T ("C3 = MIDI 60 (Yamaha/Korg). Off: C4 = 60"));
     c3Toggle.onClick = [this] { proc.setC3Is60 (c3Toggle.getToggleState()); };
     addAndMakeVisible (c3Toggle);
 
@@ -2240,7 +2695,7 @@ void SettingsPage::paintListBoxItem (int row, juce::Graphics& g, int w, int h, b
     if (selected) g.fillAll (Pal::accent.withAlpha (0.35f));
     g.setColour (f.isDirectory() ? Pal::text : Pal::red);
     g.setFont (juce::FontOptions (14.5f));
-    g.drawText (f.getFullPathName() + (f.isDirectory() ? juce::String() : T ("   (nije dostupan)")), 10, 0, w - 12, h,
+    g.drawText (f.getFullPathName() + (f.isDirectory() ? juce::String() : T ("   (not available)")), 10, 0, w - 12, h,
                 juce::Justification::centredLeft, true);
 }
 
@@ -2250,10 +2705,10 @@ void SettingsPage::refresh()
     folders.repaint();
     c3Toggle.setToggleState (proc.getC3Is60(), juce::dontSendNotification);
     velCurveBox.setSelectedId (proc.getVelocityCurve() + 1, juce::dontSendNotification);
-    info.setText (T ("Svaki folder se pretražuje sa podfolderima: WAV folderi, Korg KMP i Kontakt NKI postaju instrumenti.\n"
-                     "USB stick: ubaci ga, klikni \"Dodaj folder / USB\" i izaberi stick. Ako ga izvadiš i vratiš, klikni \"Osveži\".\n"
-                     "Zvučna kartica i MIDI klavijatura: dugme Options u gornjem levom uglu prozora.\n\n"
-                     "Useri, performansi i terce se čuvaju automatski u:\n") + proc.getDataFile().getFullPathName(),
+    info.setText (T ("Each folder is scanned with its subfolders: WAV folders, Korg KMP and Kontakt NKI become instruments.\n"
+                     "USB stick: insert it, click \"Add folder / USB\" and choose the stick. If you remove it and put it back, click \"Refresh\".\n"
+                     "Audio interface and MIDI keyboard: the Options button in the top left corner of the window.\n\n"
+                     "Users, performances and harmony are saved automatically in:\n") + proc.getDataFile().getFullPathName(),
                   juce::dontSendNotification);
 }
 
@@ -2268,7 +2723,7 @@ void SettingsPage::paint (juce::Graphics& g)
 {
     g.setColour (Pal::panel);
     g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
-    UI::sectionTitle (g, getLocalBounds().reduced (20, 0).withHeight (26).withY (8), "FOLDERI SA SEMPLOVIMA", Pal::lcdText);
+    UI::sectionTitle (g, getLocalBounds().reduced (20, 0).withHeight (26).withY (8), "SAMPLE FOLDERS", Pal::lcdText);
 }
 
 void SettingsPage::resized()
@@ -2312,10 +2767,10 @@ enum KronosCols { kcBank = 1, kcNum, kcName, kcOsc1, kcOsc2, kcState };
 
 KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
 {
-    loadButton.setButtonText (T ("Učitaj Kronos PCG..."));
+    loadButton.setButtonText (T ("Load Kronos PCG..."));
     loadButton.onClick = [this]
     {
-        chooser = std::make_unique<juce::FileChooser> (T ("Izaberi Kronos PCG fajl"),
+        chooser = std::make_unique<juce::FileChooser> (T ("Choose a Kronos PCG file"),
                                                        proc.getKronosFile().existsAsFile() ? proc.getKronosFile() : juce::File::getSpecialLocation (juce::File::userHomeDirectory),
                                                        "*.PCG;*.pcg");
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
@@ -2330,16 +2785,16 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     infoLabel.setColour (juce::Label::textColourId, Pal::dim);
     addAndMakeVisible (infoLabel);
 
-    onlyUser.setButtonText (T ("Samo programi sa mojim semplovima"));
+    onlyUser.setButtonText (T ("Only programs with my samples"));
     onlyUser.setToggleState (true, juce::dontSendNotification);
     onlyUser.onClick = [this] { rebuildRows(); };
     addAndMakeVisible (onlyUser);
 
-    keepChannels.setButtonText (T ("Zadrži MIDI kanale iz kombija"));
-    keepChannels.setTooltip (T ("Isključeno: svi delovi sviraju sa tvoje klavijature, na bilo kom kanalu. Uključi samo ako sviraš sa više klavijatura na različitim kanalima."));
+    keepChannels.setButtonText (T ("Keep MIDI channels from the combi"));
+    keepChannels.setTooltip (T ("Off: all parts play from your keyboard, on any channel. Turn on only if you play from several keyboards on different channels."));
     addChildComponent (keepChannels);
 
-    search.setTextToShowWhenEmpty (T ("Traži po imenu..."), Pal::dim);
+    search.setTextToShowWhenEmpty (T ("Search by name..."), Pal::dim);
     search.onTextChange = [this] { rebuildRows(); };
     addAndMakeVisible (search);
 
@@ -2348,17 +2803,17 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     table.setMultipleSelectionEnabled (true);
     table.setColour (juce::ListBox::backgroundColourId, Pal::bg);
     auto& h = table.getHeader();
-    h.addColumn ("Banka", kcBank, 80, 60, 120, juce::TableHeaderComponent::notSortable);
-    h.addColumn ("Br.", kcNum, 50, 40, 80, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("Bank", kcBank, 80, 60, 120, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("No.", kcNum, 50, 40, 80, juce::TableHeaderComponent::notSortable);
     h.addColumn ("Program", kcName, 230, 120, 400, juce::TableHeaderComponent::notSortable);
-    h.addColumn ("OSC1 multisempl", kcOsc1, 260, 120, 500, juce::TableHeaderComponent::notSortable);
-    h.addColumn ("OSC2 multisempl", kcOsc2, 260, 120, 500, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("OSC1 multisample", kcOsc1, 260, 120, 500, juce::TableHeaderComponent::notSortable);
+    h.addColumn ("OSC2 multisample", kcOsc2, 260, 120, 500, juce::TableHeaderComponent::notSortable);
     h.addColumn ("User", kcState, 150, 80, 300, juce::TableHeaderComponent::notSortable);
     h.setColour (juce::TableHeaderComponent::backgroundColourId, Pal::panelHi);
     h.setColour (juce::TableHeaderComponent::textColourId, Pal::text);
     addAndMakeVisible (table);
 
-    createSelected.setButtonText (T ("Napravi usere od izabranih"));
+    createSelected.setButtonText (T ("Create users from selected"));
     createSelected.onClick = [this]
     {
         auto* pcg = proc.getKronosPcg();
@@ -2369,13 +2824,13 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
                 userFor (pcg->programs[(size_t) rows[(size_t) sel[i]]]);
         table.repaint();
     };
-    createAll.setButtonText (T ("Napravi usere od svih prikazanih"));
+    createAll.setButtonText (T ("Create users from all shown"));
     createAll.onClick = [this]
     {
         juce::Component::SafePointer<KronosPage> safe (this);
         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Kronos",
-            T ("Napraviti usere od ") + juce::String ((int) rows.size()) + T (" programa? Postojeći useri sa istim imenom se ne dupliraju."),
-            T ("Napravi"), T ("Otkaži"), nullptr,
+            T ("Create users from ") + juce::String ((int) rows.size()) + T (" programs? Existing users with the same name are not duplicated."),
+            T ("Create"), T ("Cancel"), nullptr,
             juce::ModalCallbackFunction::create ([safe] (int r)
             {
                 if (safe == nullptr || r == 0 || safe->proc.getKronosPcg() == nullptr) return;
@@ -2384,8 +2839,8 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
                 safe->table.repaint();
             }));
     };
-    playButton.setButtonText (T ("Sviraj (PART 1)"));
-    playButton.setTooltip (T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
+    playButton.setButtonText (T ("Play (PART 1)"));
+    playButton.setTooltip (T ("Create a user and put it on PART 1 of the current performance. Double-click on a program works too."));
     playButton.onClick = [this]
     {
         const int r = table.getSelectedRow();
@@ -2393,7 +2848,7 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
         if (combiMode && table.getNumSelectedRows() > 1) { loadCombisToList (table.getSelectedRows()); return; }
         if (combiMode) loadCombiRow (r); else playRow (r);
     };
-    const char* modeNames[] = { "PROGRAMI", "KOMBIJI" };
+    const char* modeNames[] = { "PROGRAMS", "COMBIS" };
     for (int b = 0; b < 2; ++b)
     {
         modeButtons[b].setButtonText (modeNames[b]);
@@ -2405,8 +2860,8 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     for (auto* b : { &createSelected, &createAll, &playButton })
         addAndMakeVisible (b);
 
-    help.setText (T ("Programi: dupli klik pravi usera (OSC1/OSC2, zone, filter, EG...) i stavlja ga na PART 1. "
-                     "Kombiji: dupli klik pravi performans od 16 timbre-a; fabrički ROM programi se preskaču."),
+    help.setText (T ("Programs: double-click creates a user (OSC1/OSC2, zones, filter, EG...) and puts it on PART 1. "
+                     "Combis: double-click creates a performance from 16 timbres; factory ROM programs are skipped."),
                   juce::dontSendNotification);
     help.setFont (juce::FontOptions (12.5f));
     help.setColour (juce::Label::textColourId, Pal::dim);
@@ -2417,7 +2872,7 @@ void KronosPage::loadPcg (const juce::File& f)
 {
     juce::String err;
     if (! proc.loadKronosPcg (f, err))
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos", T ("Ne mogu da učitam PCG: ") + err);
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos", T ("Cannot load the PCG: ") + err);
     refresh();
 }
 
@@ -2438,18 +2893,18 @@ void KronosPage::setMode (bool combis)
     for (int b = 0; b < 2; ++b)
         modeButtons[b].setToggleState ((b == 1) == combis, juce::dontSendNotification);
     auto& h = table.getHeader();
-    h.setColumnName (kcName, combis ? T ("Kombi") : T ("Program"));
-    h.setColumnName (kcOsc1, combis ? T ("Timbre-i (Play)") : T ("OSC1 multisempl"));
-    h.setColumnName (kcOsc2, combis ? T ("Fabrički (ROM)") : T ("OSC2 multisempl"));
-    h.setColumnName (kcState, combis ? T ("U listi / kanal") : T ("User"));
+    h.setColumnName (kcName, combis ? T ("Combi") : T ("Program"));
+    h.setColumnName (kcOsc1, combis ? T ("Timbres (Play)") : T ("OSC1 multisample"));
+    h.setColumnName (kcOsc2, combis ? T ("Factory (ROM)") : T ("OSC2 multisample"));
+    h.setColumnName (kcState, combis ? T ("In list / channel") : T ("User"));
     h.setColumnWidth (kcState, combis ? 220 : 150);
     h.setColumnWidth (kcOsc1, combis ? 520 : 260);
     h.setColumnWidth (kcOsc2, combis ? 120 : 260);
-    onlyUser.setButtonText (combis ? T ("Samo kombiji sa mojim semplovima") : T ("Samo programi sa mojim semplovima"));
-    playButton.setButtonText (combis ? T ("Učitaj u performans") : T ("Sviraj (PART 1)"));
-    playButton.setTooltip (combis ? T ("Jedan kombi postaje trenutni performans (16 delova); može i dupli klik. "
-                                       "Više izabranih (Ctrl / Shift + klik) se učitava odjednom u listu performansa.")
-                                  : T ("Napravi usera i stavi ga na PART 1 trenutnog performansa. Može i dupli klik na program."));
+    onlyUser.setButtonText (combis ? T ("Only combis with my samples") : T ("Only programs with my samples"));
+    playButton.setButtonText (combis ? T ("Load into performance") : T ("Play (PART 1)"));
+    playButton.setTooltip (combis ? T ("One combi becomes the current performance (16 parts); double-click works too. "
+                                       "Several selected (Ctrl / Shift + click) are loaded at once into the performance list.")
+                                  : T ("Create a user and put it on PART 1 of the current performance. Double-click on a program works too."));
     createSelected.setVisible (! combis);
     keepChannels.setVisible (combis);
     createAll.setVisible (! combis);
@@ -2503,7 +2958,7 @@ void KronosPage::offerAutosample (const juce::String& message, const juce::Strin
 {
     juce::Component::SafePointer<KronosPage> safe (this);
     juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Kronos", message,
-        T ("Presempluj sa Kronosa"), T ("Zatvori"), nullptr,
+        T ("Resample from Kronos"), T ("Close"), nullptr,
         juce::ModalCallbackFunction::create ([safe, args] (int r)
         {
             if (safe == nullptr || r == 0) return;
@@ -2511,7 +2966,7 @@ void KronosPage::offerAutosample (const juce::String& message, const juce::Strin
             if (! exe.existsAsFile())
             {
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos",
-                    T ("Ne nalazim \"Pikaso Autosampler.exe\". Raspakuj PikasoAutosampler-Windows pored Pikaso Workstation ili na Desktop."));
+                    T ("Cannot find \"Pikaso Autosampler.exe\". Unzip PikasoAutosampler-Windows next to Pikaso Workstation or on the Desktop."));
                 return;
             }
             exe.startAsProcess (args);
@@ -2532,15 +2987,15 @@ void KronosPage::loadCombiRow (int row)
         const int bank = proc.getCurrentBank();
         int firstFree = 0;
         while (firstFree < kPerfPerBank && proc.getSlot (bank * kPerfPerBank + firstFree).used) ++firstFree;
-        auto* aw = new juce::AlertWindow (T ("Sačuvaj performans"),
-            T ("Kombi \"") + combi.name + T ("\" je učitan. Gde da ga sačuvam?"), juce::MessageBoxIconType::QuestionIcon);
+        auto* aw = new juce::AlertWindow (T ("Save performance"),
+            T ("Combi \"") + combi.name + T ("\" is loaded. Where should I save it?"), juce::MessageBoxIconType::QuestionIcon);
         juce::StringArray lists;
         for (int b = 0; b < kNumPerfBanks; ++b) lists.add (juce::String (b + 1) + "  " + proc.getBankName (b));
-        aw->addComboBox ("list", lists, T ("Lista:"));
+        aw->addComboBox ("list", lists, T ("List:"));
         aw->getComboBoxComponent ("list")->setSelectedItemIndex (bank);
-        aw->addTextEditor ("slot", juce::String (juce::jmin (kPerfPerBank, firstFree + 1)), T ("Mesto (1-128):"));
-        aw->addButton (T ("Sačuvaj"), 1, juce::KeyPress (juce::KeyPress::returnKey));
-        aw->addButton (T ("Samo učitaj"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->addTextEditor ("slot", juce::String (juce::jmin (kPerfPerBank, firstFree + 1)), T ("Slot (1-128):"));
+        aw->addButton (T ("Save"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton (T ("Load only"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
         juce::Component::SafePointer<KronosPage> safe (this);
         aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw] (int r)
         {
@@ -2556,24 +3011,24 @@ void KronosPage::loadCombiRow (int row)
                 safe->table.repaint();
             };
             if (pr.getSlot (slot).used)
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Sačuvaj performans"),
-                    T ("Na mestu ") + juce::String (list + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3)
-                        + T (" je \"") + pr.getSlot (slot).name + T ("\". Zameniti?"),
-                    T ("Zameni"), T ("Otkaži"), nullptr, juce::ModalCallbackFunction::create ([store] (int ok) { if (ok) store(); }));
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Save performance"),
+                    T ("Slot ") + juce::String (list + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3)
+                        + T (" is \"") + pr.getSlot (slot).name + T ("\". Replace?"),
+                    T ("Replace"), T ("Cancel"), nullptr, juce::ModalCallbackFunction::create ([store] (int ok) { if (ok) store(); }));
             else store();
         }), true);
     }
     if (skipped.isEmpty())
         return;
     bool rom = false;
-    for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("presemplovan");
-    const auto msg = T ("Ovi timbre-i nisu preneti:\n\n") + skipped.joinIntoString ("\n");
+    for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("resampled");
+    const auto msg = T ("These timbres were not transferred:\n\n") + skipped.joinIntoString ("\n");
     if (! rom)
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
         return;
     }
-    offerAutosample (msg + T ("\n\nDa ih presemplujem sa Kronosa (Pikaso Autosampler)? ROM programima se snimaju multisemplovi, a EXi programima (AL-1, CX-3, SGX-2...) ceo zvuk."),
+    offerAutosample (msg + T ("\n\nResample them from the Kronos (Pikaso Autosampler)? ROM programs are recorded as multisamples, EXi programs (AL-1, CX-3, SGX-2...) as the whole sound."),
                      "--pcg \"" + pcg->file.getFullPathName() + "\" --combi " + juce::String (combi.bankId) + ":" + juce::String (combi.number));
 }
 
@@ -2586,17 +3041,17 @@ void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
         if (sel[i] >= 0 && sel[i] < (int) rows.size()) combis.push_back (rows[(size_t) sel[i]]);
     if (combis.empty()) return;
 
-    auto* aw = new juce::AlertWindow (T ("Učitaj kombije u listu"),
-        juce::String ((int) combis.size()) + T (" kombija postaje performans u listi. Izaberi listu i od kog mesta."), juce::MessageBoxIconType::QuestionIcon);
+    auto* aw = new juce::AlertWindow (T ("Load combis into a list"),
+        juce::String ((int) combis.size()) + T (" combis become performances in a list. Choose the list and the start slot."), juce::MessageBoxIconType::QuestionIcon);
     juce::StringArray lists;
     for (int b = 0; b < kNumPerfBanks; ++b) lists.add (juce::String (b + 1) + "  " + proc.getBankName (b));
-    aw->addComboBox ("list", lists, T ("Lista:"));
+    aw->addComboBox ("list", lists, T ("List:"));
     aw->getComboBoxComponent ("list")->setSelectedItemIndex (proc.getCurrentBank());
-    aw->addTextEditor ("from", "1", T ("Od mesta (1-128):"));
-    aw->addComboBox ("mode", { T ("Samo prazna mesta (zauzeta se preskaču)"), T ("Redom, preko postojećih") }, T ("Mesta:"));
+    aw->addTextEditor ("from", "1", T ("From slot (1-128):"));
+    aw->addComboBox ("mode", { T ("Only empty slots (used ones are skipped)"), T ("In order, over existing ones") }, T ("Slots:"));
     aw->getComboBoxComponent ("mode")->setSelectedItemIndex (0);
-    aw->addButton (T ("Učitaj"), 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton (T ("Otkaži"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->addButton (T ("Load"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton (T ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
     juce::Component::SafePointer<KronosPage> safe (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw, combis] (int r)
     {
@@ -2622,18 +3077,18 @@ void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
             ++slot;
             ++loaded;
             bool rom = false;
-            for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("presemplovan");
+            for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("resampled");
             if (! skipped.isEmpty()) skippedAll.add (combi.id() + " " + combi.name + ": " + juce::String (skipped.size()) + " timbre");
             if (rom) { needSampling = true; args << " --combi " << juce::String (combi.bankId) << ":" << juce::String (combi.number); }
         }
         pr.setCurrentBank (list);
         safe->editor.showTab (LiveSamplerEditor::TabLists);
-        juce::String msg = T ("Učitano ") + juce::String (loaded) + T (" kombija u listu ") + juce::String (list + 1) + ".";
-        if (! notPlaced.isEmpty()) msg << T ("\n\nNema mesta u listi za: ") << notPlaced.joinIntoString (", ");
-        if (! skippedAll.isEmpty()) msg << T ("\n\nNisu preneti svi timbre-i:\n") << skippedAll.joinIntoString ("\n");
+        juce::String msg = T ("Loaded ") + juce::String (loaded) + T (" combis into list ") + juce::String (list + 1) + ".";
+        if (! notPlaced.isEmpty()) msg << T ("\n\nNo room in the list for: ") << notPlaced.joinIntoString (", ");
+        if (! skippedAll.isEmpty()) msg << T ("\n\nNot all timbres were transferred:\n") << skippedAll.joinIntoString ("\n");
         if (needSampling)
-            safe->offerAutosample (msg + T ("\n\nDa presemplujem sa Kronosa sve što fali u ovim kombijima, odjednom (Pikaso Autosampler)?"
-                                            " Posle snimanja klikni Osveži (PODEŠAVANJA) i učitaj ove kombije ponovo."),
+            safe->offerAutosample (msg + T ("\n\nResample everything missing in these combis from the Kronos at once (Pikaso Autosampler)?"
+                                            " After recording, click Refresh (SETTINGS) and load these combis again."),
                                    "--pcg \"" + pcg2->file.getFullPathName() + "\"" + args);
         else
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
@@ -2652,17 +3107,17 @@ void KronosPage::playRow (int row)
         bool rom = false;
         for (auto& o : prog.osc) for (auto& z : o) rom = rom || z.romKey.isNotEmpty();
         if (prog.exi)
-            offerAutosample (T ("Program \"") + prog.name + T ("\" je EXi program (") + prog.engineText()
-                             + T (" sinteza) i još nije presemplovan.\n\nDa ga presemplujem sa Kronosa (Pikaso Autosampler)? Snima se ceo zvuk programa, svaki treći ton, u više jačina."),
+            offerAutosample (T ("Program \"") + prog.name + T ("\" is an EXi program (") + prog.engineText()
+                             + T (" synthesis) and is not resampled yet.\n\nResample it from the Kronos (Pikaso Autosampler)? The whole sound of the program is recorded, every third note, at several velocities."),
                              "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
         else if (prog.drumKit)
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", T ("Ovo je drum kit program; drum kitovi još nisu podržani."));
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", T ("This is a drum kit program; drum kits are not supported yet."));
         else if (rom)
-            offerAutosample (T ("Program \"") + prog.name + T ("\" koristi fabričke ROM multisemplove koji još nisu presemplovani.\n\nDa ih presemplujem sa Kronosa (Pikaso Autosampler)?"),
+            offerAutosample (T ("Program \"") + prog.name + T ("\" uses factory ROM multisamples that are not resampled yet.\n\nResample them from the Kronos (Pikaso Autosampler)?"),
                              "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
         else
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos",
-                T ("Semplovi ovog programa nisu u biblioteci. Proveri da je KSC kolekcija u folderu biblioteke (PODEŠAVANJA)."));
+                T ("The samples of this program are not in the library. Check that the KSC collection is in a library folder (SETTINGS)."));
         return;
     }
     auto perf = proc.getPerformance();
@@ -2722,8 +3177,8 @@ void KronosPage::refresh()
 
     if (pcg == nullptr)
     {
-        fileLabel.setText (T ("Nije učitan PCG"), juce::dontSendNotification);
-        infoLabel.setText (T ("Učitaj PCG sa Kronosa. KSC fajl i folder sa semplovima treba da budu pored njega."), juce::dontSendNotification);
+        fileLabel.setText (T ("No PCG loaded"), juce::dontSendNotification);
+        infoLabel.setText (T ("Load a PCG from the Kronos. The KSC file and the sample folder should be next to it."), juce::dontSendNotification);
         return;
     }
 
@@ -2735,9 +3190,9 @@ void KronosPage::refresh()
         if (p.usesUser()) ++user;
     }
     fileLabel.setText (pcg->file.getFileName(), juce::dontSendNotification);
-    infoLabel.setText (juce::String ((int) pcg->programs.size()) + T (" programa (") + juce::String (hd1) + T (" HD-1, ") + juce::String (exi) + T (" EXi), ")
-                       + juce::String (user) + T (" sa tvojim semplovima  |  ") + juce::String ((int) pcg->combis.size()) + T (" kombija  |  ")
-                       + juce::String (pcg->drumKits) + T (" bubanj kitova") + (proc.isScanning() ? T ("  |  pretražujem semplove...") : juce::String()),
+    infoLabel.setText (juce::String ((int) pcg->programs.size()) + T (" programs (") + juce::String (hd1) + T (" HD-1, ") + juce::String (exi) + T (" EXi), ")
+                       + juce::String (user) + T (" with your samples  |  ") + juce::String ((int) pcg->combis.size()) + T (" combis  |  ")
+                       + juce::String (pcg->drumKits) + T (" drum kits") + (proc.isScanning() ? T ("  |  scanning samples...") : juce::String()),
                        juce::dontSendNotification);
 }
 
@@ -2764,7 +3219,7 @@ juce::String KronosPage::msText (const Kronos::Zone& z) const
         return "ROM MS" + juce::String (z.ms);
     }
     const auto inst = proc.findKronosMultisample (z.uuid, z.ms);
-    if (inst.isEmpty()) return "MS" + juce::String (z.ms) + T ("  (nije u biblioteci)");
+    if (inst.isEmpty()) return "MS" + juce::String (z.ms) + T ("  (not in library)");
     return inst.fromLastOccurrenceOf ("/", false, false);
 }
 
@@ -2816,7 +3271,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                 const auto& cur = proc.getPerformance();
                 if (where.isEmpty() && cur.kronosSource == key && (cur.kronosPcg.isEmpty() || cur.kronosPcg == pcg->file.getFileName()))
                 {
-                    t = T ("● učitan, nije sačuvan");
+                    t = T ("● loaded, not saved");
                     c = Pal::accent;
                 }
                 else if (! where.isEmpty())
@@ -2851,7 +3306,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
             {
                 const auto inst = proc.resolveKronosExi (p);
                 if (col == kcOsc1) t = "EXi " + p.engineText();
-                else t = inst.isNotEmpty() ? T ("presemplovan") : T ("nije presemplovan");
+                else t = inst.isNotEmpty() ? T ("resampled") : T ("not resampled");
                 if (inst.isEmpty()) c = Pal::dim;
                 break;
             }
@@ -2877,7 +3332,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                 else if (us.kronosSource.isEmpty() && us.name == p.name) mine = true;
                 else if (us.name == p.name) otherPcg = true;
             }
-            t = mine ? T ("✓ napravljen") : otherPcg ? T ("isto ime iz drugog PCG-a") : juce::String();
+            t = mine ? T ("✓ created") : otherPcg ? T ("same name from another PCG") : juce::String();
             c = mine ? juce::Colour (0xff3ddc84) : Pal::dim;
             break;
         }
@@ -2936,14 +3391,14 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
         bankButtons[b].onClick = [this, b] { proc.setCurrentBank (b); };
         addAndMakeVisible (bankButtons[b]);
     }
-    writeButton.setButtonText ("SNIMI");
+    writeButton.setButtonText ("WRITE");
     writeButton.setClickingTogglesState (true);
     writeButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
-    writeButton.setTooltip (T ("Uključi SNIMI pa klikni mesto da sačuvaš trenutni performans"));
+    writeButton.setTooltip (T ("Turn WRITE on, then click a slot to save the current performance"));
     writeButton.onClick = [this] { repaint(); };
     addAndMakeVisible (writeButton);
 
-    styleLabel (nameLabel, T ("IME LISTE"), 12.5f);
+    styleLabel (nameLabel, T ("LIST NAME"), 12.5f);
     addAndMakeVisible (nameLabel);
     nameEdit.setEditable (true);
     nameEdit.setFont (juce::FontOptions (16.0f, juce::Font::bold));
@@ -2952,21 +3407,21 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
     nameEdit.onTextChange = [this] { proc.setBankName (proc.getCurrentBank(), nameEdit.getText()); };
     addAndMakeVisible (nameEdit);
 
-    styleLabel (filterLabel, T ("KATEGORIJA"), 12.5f);
+    styleLabel (filterLabel, T ("CATEGORY"), 12.5f);
     addAndMakeVisible (filterLabel);
     catFilter.onChange = [this] { repaint(); };
     addAndMakeVisible (catFilter);
-    categoriesButton.setButtonText (T ("KATEGORIJE..."));
-    categoriesButton.setTooltip (T ("Izmeni, dodaj, obriši ili preuredi kategorije"));
+    categoriesButton.setButtonText (T ("CATEGORIES..."));
+    categoriesButton.setTooltip (T ("Edit, add, delete or reorder categories"));
     categoriesButton.onClick = [this] { categoriesMenu(); };
     addAndMakeVisible (categoriesButton);
     missingLabel.setFont (juce::FontOptions (12.5f, juce::Font::bold));
     missingLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff8a3d));
     addAndMakeVisible (missingLabel);
 
-    help.setText (T ("Klik: učitaj. SNIMI + klik: sačuvaj trenutni performans. Desni klik: meni (kategorija, snimi, u set listu, obriši). "
-                     "Narandžast okvir = performans bez kategorije. "
-                     "MIDI: Bank Select (CC0) bira listu, Program Change 0-127 performans."), juce::dontSendNotification);
+    help.setText (T ("Click: load. WRITE + click: save the current performance. Right-click: menu (category, write, add to set list, delete). "
+                     "Orange frame = performance without a category. "
+                     "MIDI: Bank Select (CC0) selects the list, Program Change 0-127 the performance."), juce::dontSendNotification);
     help.setFont (juce::FontOptions (12.0f));
     help.setColour (juce::Label::textColourId, Pal::dim);
     addAndMakeVisible (help);
@@ -2987,8 +3442,8 @@ void ListsPage::refresh()
     const auto& cats = proc.getCategories();
     const int sel = catFilter.getSelectedId();
     catFilter.clear (juce::dontSendNotification);
-    catFilter.addItem (T ("Sve"), 1);
-    catFilter.addItem (T ("Bez kategorije"), 2);
+    catFilter.addItem (T ("All"), 1);
+    catFilter.addItem (T ("No category"), 2);
     catFilter.addSeparator();
     for (int c = 0; c < cats.size(); ++c)
         catFilter.addItem (cats[c], 10 + c);
@@ -3007,9 +3462,9 @@ void ListsPage::refresh()
         all += n;
         if (b == bank) here = n;
         bankButtons[b].setButtonText (juce::String (b + 1) + (n > 0 ? juce::String::fromUTF8 (" \xe2\x80\xa2") : juce::String()));
-        bankButtons[b].setTooltip (proc.getBankName (b) + (n > 0 ? "  (" + juce::String (n) + T (" bez kategorije)") : juce::String()));
+        bankButtons[b].setTooltip (proc.getBankName (b) + (n > 0 ? "  (" + juce::String (n) + T (" without category)") : juce::String()));
     }
-    missingLabel.setText (all == 0 ? juce::String() : juce::String (here) + T (" bez kategorije u ovoj listi, ") + juce::String (all) + T (" u svim listama"),
+    missingLabel.setText (all == 0 ? juce::String() : juce::String (here) + T (" without category in this list, ") + juce::String (all) + T (" in all lists"),
                           juce::dontSendNotification);
     repaint();
 }
@@ -3076,7 +3531,7 @@ void ListsPage::paint (juce::Graphics& g)
             // kategorija desno (skraceno), ili narandzast okvir ako je nema
             const int ci = proc.categoryIndex (s);
             const bool missing = ci < 0;
-            const auto cat = missing ? T ("BEZ KAT.") : s.category;
+            const auto cat = missing ? T ("NO CAT.") : s.category;
             if (! missing)
             {
                 // boja kategorije (kao u Live Kontroleru): traka levo
@@ -3132,11 +3587,11 @@ void ListsPage::cellMenu (int i)
             // iz kog PCG-a (seta) i kog kombija je ovaj performans
             const auto bankId = (juce::uint32) sp.kronosSource.upToFirstOccurrenceOf (":", false, false).getLargeIntValue();
             const int num = sp.kronosSource.fromFirstOccurrenceOf (":", false, false).getIntValue();
-            m.addSectionHeader (T ("Iz: ") + (sp.kronosPcg.isNotEmpty() ? sp.kronosPcg : T ("Kronos PCG")) + "  "
+            m.addSectionHeader (T ("From: ") + (sp.kronosPcg.isNotEmpty() ? sp.kronosPcg : T ("Kronos PCG")) + "  "
                                 + Kronos::combiBankName (bankId) + " " + juce::String (num).paddedLeft ('0', 3));
         }
     }
-    m.addItem (1, T ("Učitaj"), used);
+    m.addItem (1, T ("Load"), used);
     {
         juce::PopupMenu cm;
         const auto& cats = proc.getCategories();
@@ -3144,15 +3599,15 @@ void ListsPage::cellMenu (int i)
         for (int c = 0; c < cats.size(); ++c)
             cm.addItem (1000 + c, cats[c], true, cur == c);
         cm.addSeparator();
-        cm.addItem (999, T ("Bez kategorije"), true, cur < 0);
-        cm.addItem (998, T ("Izmeni kategorije..."));
-        m.addSubMenu (T ("Kategorija"), cm, used);
+        cm.addItem (999, T ("No category"), true, cur < 0);
+        cm.addItem (998, T ("Edit categories..."));
+        m.addSubMenu (T ("Category"), cm, used);
     }
-    m.addItem (2, T ("Snimi trenutni performans ovde"));
-    m.addItem (5, T ("Nov prazan (inicijalizovan) performans ovde"));
-    m.addItem (3, T ("Dodaj u set listu (prvo prazno mesto)"), used);
+    m.addItem (2, T ("Write the current performance here"));
+    m.addItem (5, T ("New empty (initialized) performance here"));
+    m.addItem (3, T ("Add to set list (first empty button)"), used);
     m.addSeparator();
-    m.addItem (4, T ("Obriši"), used);
+    m.addItem (4, T ("Delete"), used);
     juce::Component::SafePointer<ListsPage> safe (this);
     m.showMenuAsync ({}, [safe, slot] (int r)
     {
@@ -3168,9 +3623,9 @@ void ListsPage::cellMenu (int i)
         {
             if (pr.getSlot (slot).used)
             {
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("Nov performans"),
-                    T ("Na ovom mestu je \"") + pr.getSlot (slot).name + T ("\". Zameniti ga praznim performansom?"),
-                    T ("Zameni"), T ("Otkaži"), nullptr,
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("New performance"),
+                    T ("This slot holds \"") + pr.getSlot (slot).name + T ("\". Replace it with an empty performance?"),
+                    T ("Replace"), T ("Cancel"), nullptr,
                     juce::ModalCallbackFunction::create ([safe, slot] (int ok)
                     {
                         if (safe == nullptr || ok == 0) return;
@@ -3242,17 +3697,17 @@ namespace
                 b.onClick = std::move (f);
                 addAndMakeVisible (b);
             };
-            btn (addB, T ("Dodaj"), [this]
+            btn (addB, T ("Add"), [this]
             {
-                names.add (T ("Nova kategorija"));
+                names.add (T ("New category"));
                 colours.push_back (juce::Colour (0xff8a93a6));
                 origin.push_back (-1);
                 list.updateContent();
                 list.selectRow (names.size() - 1);
                 renameRow (names.size() - 1);
             });
-            btn (renB, T ("Preimenuj"), [this] { renameRow (list.getSelectedRow()); });
-            btn (delB, T ("Obriši"), [this]
+            btn (renB, T ("Rename"), [this] { renameRow (list.getSelectedRow()); });
+            btn (delB, T ("Delete"), [this]
             {
                 const int r = list.getSelectedRow();
                 if (r < 0 || r >= names.size()) return;
@@ -3262,10 +3717,10 @@ namespace
                 list.updateContent();
                 list.repaint();
             });
-            btn (upB, T ("Gore"), [this] { move (-1); });
-            btn (downB, T ("Dole"), [this] { move (1); });
-            btn (kronosB, T ("Boja..."), [this] { pickColour (list.getSelectedRow()); });
-            btn (factoryB, T ("Kao Live Kontroler"), [this]
+            btn (upB, T ("Up"), [this] { move (-1); });
+            btn (downB, T ("Down"), [this] { move (1); });
+            btn (kronosB, T ("Colour..."), [this] { pickColour (list.getSelectedRow()); });
+            btn (factoryB, T ("Like Live Kontroler"), [this]
             {
                 names = LiveSamplerProcessor::defaultCategories();
                 colours = LiveSamplerProcessor::defaultCategoryColours();
@@ -3281,11 +3736,11 @@ namespace
                     if (origin[(size_t) i] >= 0 && origin[(size_t) i] < (int) remap.size())
                         remap[(size_t) origin[(size_t) i]] = i;
                 juce::StringArray clean;
-                for (auto& n : names) clean.add (n.trim().isEmpty() ? T ("Bez imena") : n.trim());
+                for (auto& n : names) clean.add (n.trim().isEmpty() ? T ("No name") : n.trim());
                 proc.setCategories (clean, colours, remap);
                 close();
             });
-            btn (cancelB, T ("Otkaži"), [this] { close(); });
+            btn (cancelB, T ("Cancel"), [this] { close(); });
             okB.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
             setSize (460, 520);
         }
@@ -3336,10 +3791,10 @@ namespace
         void renameRow (int row)
         {
             if (row < 0 || row >= names.size()) return;
-            auto* aw = new juce::AlertWindow (T ("Kategorija"), T ("Ime kategorije:"), juce::MessageBoxIconType::NoIcon);
+            auto* aw = new juce::AlertWindow (T ("Category"), T ("Category name:"), juce::MessageBoxIconType::NoIcon);
             aw->addTextEditor ("name", names[row]);
             aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-            aw->addButton (T ("Otkaži"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            aw->addButton (T ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
             juce::Component::SafePointer<CategoryEditor> safe (this);
             aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, aw, row] (int r)
             {
@@ -3408,20 +3863,20 @@ void ListsPage::categoriesMenu()
     juce::PopupMenu m;
     if (proc.isKontrolerLinked())
     {
-        m.addSectionHeader (T ("Povezano sa Live Kontrolerom (uređaj Pikaso Workstation)"));
+        m.addSectionHeader (T ("Linked with Live Kontroler (device Pikaso Workstation)"));
         m.addItem (99, proc.getKontrolerFile().getFullPathName(), false);
         m.addItem (98, proc.getKontrolerStatus(), false);
-        m.addItem (4, T ("Uredi kategorije..."));
-        m.addItem (1, T ("Sinhronizuj sada"));
-        m.addItem (2, T ("Izaberi drugi fajl Live Kontrolera..."));
+        m.addItem (4, T ("Edit categories..."));
+        m.addItem (1, T ("Sync now"));
+        m.addItem (2, T ("Choose another Live Kontroler file..."));
         m.addSeparator();
-        m.addItem (3, T ("Prekini vezu"));
+        m.addItem (3, T ("Unlink"));
     }
     else
     {
-        m.addItem (4, T ("Uredi kategorije..."));
+        m.addItem (4, T ("Edit categories..."));
         m.addSeparator();
-        m.addItem (2, T ("Poveži sa Live Kontrolerom (iste kategorije i boje)..."));
+        m.addItem (2, T ("Link with Live Kontroler (same categories and colours)..."));
     }
     juce::Component::SafePointer<ListsPage> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (categoriesButton), [safe] (int r)
@@ -3435,7 +3890,7 @@ void ListsPage::categoriesMenu()
         if (r == 2)
         {
             auto start = pr.getKontrolerFile().existsAsFile() ? pr.getKontrolerFile() : LiveSamplerProcessor::defaultKontrolerFile();
-            safe->chooser = std::make_unique<juce::FileChooser> (T ("Live Kontroler podešavanja (podesavanja-server.json)"), start, "*.json");
+            safe->chooser = std::make_unique<juce::FileChooser> (T ("Live Kontroler settings (podesavanja-server.json)"), start, "*.json");
             safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                 [safe, show] (const juce::FileChooser& fc)
                 {
@@ -3453,7 +3908,7 @@ void ListsPage::editCategories()
 {
     juce::DialogWindow::LaunchOptions o;
     o.content.setOwned (new CategoryEditor (proc));
-    o.dialogTitle = T ("Kategorije performansa");
+    o.dialogTitle = T ("Performance categories");
     o.dialogBackgroundColour = Pal::panel;
     o.escapeKeyTriggersCloseButton = true;
     o.useNativeTitleBar = true;
@@ -3481,7 +3936,7 @@ SetListPage::SetListPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc 
     nameEdit.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     nameEdit.setColour (juce::Label::backgroundColourId, Pal::bg);
     nameEdit.setColour (juce::Label::textColourId, Pal::lcdText);
-    nameEdit.setTooltip (T ("Ime set liste (dupli klik za izmenu)"));
+    nameEdit.setTooltip (T ("Set list name (double-click to edit)"));
     nameEdit.onTextChange = [this]
     {
         auto sl = proc.getSetList (proc.getCurrentSetList());
@@ -3501,12 +3956,12 @@ SetListPage::SetListPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc 
     editButton.setButtonText ("EDIT");
     editButton.setClickingTogglesState (true);
     editButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
-    editButton.setTooltip (T ("Uključi EDIT pa klikni dugme: stavi performans, natpis, boju"));
+    editButton.setTooltip (T ("Turn EDIT on, then click a button: set performance, label, colour"));
     editButton.onClick = [this] { repaint(); };
     addAndMakeVisible (editButton);
 
-    pcMode.setButtonText (T ("Program Change bira set listu"));
-    pcMode.setTooltip (T ("Uključeno: CC0 bira set listu, Program Change 0-127 dugme. Isključeno: Program Change bira performans iz liste."));
+    pcMode.setButtonText (T ("Program Change selects set list"));
+    pcMode.setTooltip (T ("On: CC0 selects the set list, Program Change 0-127 the button. Off: Program Change selects a performance from the list."));
     pcMode.onClick = [this] { proc.setProgramChangeMode (pcMode.getToggleState() ? 1 : 0); };
     addAndMakeVisible (pcMode);
 }
@@ -3517,13 +3972,13 @@ void SetListPage::refresh()
     for (int i = 0; i < kNumSetLists; ++i)
     {
         const auto& n = proc.getSetList (i).name;
-        listSelect.addItem (juce::String (i + 1) + "  " + (n.isNotEmpty() ? n : T ("Set lista")), i + 1);
+        listSelect.addItem (juce::String (i + 1) + "  " + (n.isNotEmpty() ? n : T ("Set list")), i + 1);
     }
     listSelect.setSelectedItemIndex (proc.getCurrentSetList(), juce::dontSendNotification);
     if (! nameEdit.isBeingEdited())
     {
         const auto& n = proc.getSetList (proc.getCurrentSetList()).name;
-        nameEdit.setText (n.isNotEmpty() ? n : T ("Set lista ") + juce::String (proc.getCurrentSetList() + 1), juce::dontSendNotification);
+        nameEdit.setText (n.isNotEmpty() ? n : T ("Set list ") + juce::String (proc.getCurrentSetList() + 1), juce::dontSendNotification);
     }
     for (int i = 0; i < kSetListSlots / 16; ++i)
         pageButtons[i].setToggleState (i == proc.getSetListPage(), juce::dontSendNotification);
@@ -3599,7 +4054,7 @@ void SetListPage::mouseDown (const juce::MouseEvent& e)
 void SetListPage::editSlot (int slot)
 {
     juce::PopupMenu m, pick, colours;
-    m.addItem (1, T ("Stavi trenutni performans"), proc.getCurrentSlot() >= 0);
+    m.addItem (1, T ("Put the current performance"), proc.getCurrentSlot() >= 0);
     for (int b = 0; b < kNumPerfBanks; ++b)
     {
         juce::PopupMenu sub;
@@ -3609,14 +4064,14 @@ void SetListPage::editSlot (int slot)
         if (sub.getNumItems() > 0)
             pick.addSubMenu (proc.getBankName (b), sub);
     }
-    m.addSubMenu (T ("Izaberi performans"), pick);
-    m.addItem (2, T ("Natpis na dugmetu..."));
-    const char* cn[] = { "Siva", "Narandžasta", "Plava", "Zelena", "Ljubičasta", "Žuta", "Tirkizna", "Indigo" };
+    m.addSubMenu (T ("Choose performance"), pick);
+    m.addItem (2, T ("Button label..."));
+    const char* cn[] = { "Grey", "Orange", "Blue", "Green", "Purple", "Yellow", "Turquoise", "Indigo" };
     for (int c = 0; c < 8; ++c)
         colours.addColouredItem (100 + c, T (cn[c]), slotColour (c).brighter (0.4f));
-    m.addSubMenu (T ("Boja"), colours);
+    m.addSubMenu (T ("Colour"), colours);
     m.addSeparator();
-    m.addItem (3, T ("Isprazni dugme"));
+    m.addItem (3, T ("Clear button"));
 
     juce::Component::SafePointer<SetListPage> safe (this);
     m.showMenuAsync ({}, [safe, slot] (int r)
@@ -3631,10 +4086,10 @@ void SetListPage::editSlot (int slot)
         if (r == 3) s = SetListSlot();
         if (r == 2)
         {
-            auto* w = new juce::AlertWindow (T ("Natpis"), T ("Tekst na dugmetu (prazno = ime performansa)"), juce::MessageBoxIconType::NoIcon);
+            auto* w = new juce::AlertWindow (T ("Label"), T ("Button text (empty = performance name)"), juce::MessageBoxIconType::NoIcon);
             w->addTextEditor ("t", s.label);
             w->addButton ("OK", 1);
-            w->addButton (T ("Otkaži"), 0);
+            w->addButton (T ("Cancel"), 0);
             w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, slot, w] (int res)
             {
                 if (safe == nullptr || res == 0) return;

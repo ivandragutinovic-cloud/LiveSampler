@@ -61,6 +61,9 @@ public:
     int createUserFromInstrument (const juce::String& instrument);
     void updateUser (int index, const UserProgram& u);         // promena se cuje odmah
     void deleteUser (int index);
+    void moveUser (int from, int to);                         // broj usera = mesto u listi
+    const juce::StringArray& getUserCategories() const { return userCategories; }
+    void editUserCategory (const juce::String& oldName, const juce::String& newName);   // old "" = new, new "" = delete
     juce::String uniqueUserName (const juce::String& base, int ignoreIndex = -1) const;
 
     // Performans (radna kopija) i 64 mesta
@@ -290,6 +293,8 @@ private:
 
     // korisnicki podaci
     std::vector<UserProgram> users;
+    juce::StringArray userCategories { "Piano", "E.Piano", "Organ", "Keys", "Strings", "Brass", "Woodwind", "Guitar", "Bass",
+                                       "Synth Lead", "Synth Pad", "Choir", "Drums", "Percussion", "Ethnic", "FX" };
     std::array<Performance, kNumPerfSlots> slots;
     Performance perf;
     int currentSlot = -1, currentBank = 0;

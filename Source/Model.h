@@ -48,6 +48,7 @@ namespace FilterType { enum { Off = 0, LP24, LP12, HP, BP, Num }; }
 
 struct SoundBlock
 {
+    bool on = true;                     // OSC on/off (all its MS)
     // pitch
     float pitchEgInt = 0.0f;            // polutonovi na pun nivo pitch EG-a
     EnvSettings pitchEg { 0.0f, 0.001f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f };
@@ -87,7 +88,7 @@ namespace Priority  { enum { Last = 0, High, Low }; }
 
 struct UserProgram
 {
-    juce::String name { "Novi user" };
+    juce::String name { "New user" };
     std::array<OscSettings, kNumOsc> osc;
     std::array<SoundBlock, kNumBlocks> block;
 
@@ -103,6 +104,7 @@ struct UserProgram
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;
 
     float send1 = 1.0f, send2 = 1.0f;   // koliko ovaj zvuk salje u reverb / delay (mnozi send dela)
+    juce::String category;                  // kategorija usera (lista USER)
     juce::String kronosPcg, kronosSource;   // napravljen od Kronos programa: ime PCG fajla i "bankId:broj"
 
     int fxType = 0;

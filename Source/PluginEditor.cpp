@@ -84,6 +84,24 @@ juce::Font SamplerLookAndFeel::getTextButtonFont (juce::TextButton& b, int butto
     return juce::FontOptions (juce::jmin (16.0f, buttonHeight * 0.5f), juce::Font::bold);
 }
 
+// +/- dugmad na brojcanicima: desni klik ne menja vrednost (otvara MIDI Learn meni na brojcaniku)
+namespace
+{
+    struct IncDecButton : public juce::TextButton
+    {
+        using juce::TextButton::TextButton;
+        bool popup = false;
+        void mouseDown (const juce::MouseEvent& e) override { popup = e.mods.isPopupMenu(); if (! popup) juce::TextButton::mouseDown (e); }
+        void mouseUp (const juce::MouseEvent& e) override   { if (popup) { popup = false; return; } juce::TextButton::mouseUp (e); }
+        void mouseDrag (const juce::MouseEvent& e) override { if (! popup) juce::TextButton::mouseDrag (e); }
+    };
+}
+
+juce::Button* SamplerLookAndFeel::createSliderButton (juce::Slider&, bool isIncrement)
+{
+    return new IncDecButton (isIncrement ? "+" : "-", {});
+}
+
 juce::Label* SamplerLookAndFeel::createSliderTextBox (juce::Slider& s)
 {
     auto* l = LookAndFeel_V4::createSliderTextBox (s);
@@ -157,7 +175,7 @@ namespace UI
         if (names.isEmpty())
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Pikaso Workstation",
-                T ("Nema instrumenata. Dodaj folder sa semplovima u PODEŠAVANJIMA."));
+                T ("No instruments. Add a sample folder in SETTINGS."));
             return;
         }
 
@@ -195,7 +213,7 @@ namespace UI
         if (allowEmpty)
         {
             menu.addSeparator();
-            menu.addItem (100000, T ("(prazno)"));
+            menu.addItem (100000, T ("(empty)"));
         }
 
         auto namesCopy = names;
@@ -322,7 +340,7 @@ void LiveSamplerEditor::TercaButton::paint (juce::Graphics& g)
 
     auto inner = getLocalBounds().reduced (10, 6);
     g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-    g.drawText (on ? "TERCA ON" : "TERCA OFF", inner.removeFromTop (16), juce::Justification::centredLeft);
+    g.drawText (on ? "HARMONY ON" : "HARMONY OFF", inner.removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (on ? Pal::text : Pal::dim);
     g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
     g.drawText (proc->getTercaText(), inner, juce::Justification::centredLeft);
@@ -347,12 +365,12 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     content.addAndMakeVisible (display);
 
     tercaButton.proc = &proc;
-    tercaButton.setTooltip (T ("Drži i odsviraj akord: terce u tom tonalitetu. Kratak klik: pali/gasi terce."));
+    tercaButton.setTooltip (T ("Hold and play a chord: harmony (terca) in that key. Short click: harmony on / off."));
     content.addAndMakeVisible (tercaButton);
 
     learnButton.setButtonText ("LEARN");
     learnButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
-    learnButton.setTooltip (T ("Dodeli dugme sa klavijature (npr. Impulse) za terce: klikni LEARN pa pritisni dugme."));
+    learnButton.setTooltip (T ("Assign a keyboard button (e.g. Impulse) to the harmony (terca): click LEARN, then press the button."));
     learnButton.onClick = [this] { proc.startLearn (! proc.isLearning()); };
     content.addAndMakeVisible (learnButton);
 
@@ -361,17 +379,17 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     status.setJustificationType (juce::Justification::centredRight);
     content.addAndMakeVisible (status);
 
-    panicButton.setButtonText ("PANIK");
+    panicButton.setButtonText ("PANIC");
     panicButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff7a2230));
     panicButton.onClick = [this] { proc.panic(); };
     content.addAndMakeVisible (panicButton);
 
-    fullButton.setButtonText (T ("CEO EKRAN"));
-    fullButton.setTooltip (T ("Ceo ekran (na širokom ekranu stane svih 16 delova). Ponovni klik vraća prozor."));
+    fullButton.setButtonText (T ("FULL SCREEN"));
+    fullButton.setTooltip (T ("Full screen (a wide screen shows all 16 parts). Click again to return to the window."));
     fullButton.onClick = [this] { toggleFullScreen(); };
     content.addAndMakeVisible (fullButton);
 
-    const char* tabNames[] = { "PERFORMANS", "SET LISTA", "LISTE", "USER", "MAPIRANJE", "TERCE", "EFEKTI", "KRONOS", "PODEŠAVANJA" };
+    const char* tabNames[] = { "PERFORMANCE", "SET LIST", "LISTS", "USER", "MAPPING", "HARMONY", "EFFECTS", "KRONOS", "SETTINGS" };
     for (int i = 0; i < NumTabs; ++i)
     {
         tabButtons[i].setButtonText (T (tabNames[i]));
@@ -400,10 +418,15 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
         slotButtons[i].onClick = [this, i] { proc.recallSetListSlot (proc.getSetListPage() * 16 + i); };
         content.addAndMakeVisible (slotButtons[i]);
     }
+    for (int i = 0; i < 16; ++i)
+        MidiLearn::get().bindButton (slotButtons[i], "setlist.button" + juce::String (i + 1));
+    MidiLearn::get().bindButton (panicButton, "panic");
     pagePrev.setButtonText ("<");
     pageNext.setButtonText (">");
     pagePrev.onClick = [this] { proc.setSetListPage (proc.getSetListPage() - 1); };
     pageNext.onClick = [this] { proc.setSetListPage (proc.getSetListPage() + 1); };
+    MidiLearn::get().bindButton (pagePrev, "setlist.pageprev");
+    MidiLearn::get().bindButton (pageNext, "setlist.pagenext");
     content.addAndMakeVisible (pagePrev);
     content.addAndMakeVisible (pageNext);
     setListLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
@@ -431,6 +454,8 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
 LiveSamplerEditor::~LiveSamplerEditor()
 {
     proc.removeChangeListener (this);
+    MidiLearn::get().cancelLearn();
+    MidiLearn::get().removeAllTargets();
     performancePage.reset();
     userPage.reset();
     mappingEditor.reset();
@@ -539,7 +564,7 @@ void LiveSamplerEditor::refreshSlots()
 {
     const auto& sl = proc.getSetList (proc.getCurrentSetList());
     const int page = proc.getSetListPage();
-    setListLabel.setText ((sl.name.isNotEmpty() ? sl.name : T ("Set lista ") + juce::String (proc.getCurrentSetList() + 1))
+    setListLabel.setText ((sl.name.isNotEmpty() ? sl.name : T ("Set list ") + juce::String (proc.getCurrentSetList() + 1))
                           + "\n" + juce::String (page * 16 + 1) + "-" + juce::String (page * 16 + 16), juce::dontSendNotification);
     pagePrev.setEnabled (page > 0);
     pageNext.setEnabled (page < kSetListSlots / 16 - 1);
@@ -578,8 +603,8 @@ void LiveSamplerEditor::refreshAll()
     display.repaint();
     tercaButton.repaint();
     learnButton.setToggleState (proc.isLearning(), juce::dontSendNotification);
-    learnButton.setButtonText (proc.isLearning() ? T ("PRITISNI...") : "LEARN");
-    status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" glasova"), juce::dontSendNotification);
+    learnButton.setButtonText (proc.isLearning() ? T ("PRESS...") : "LEARN");
+    status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" voices"), juce::dontSendNotification);
     keyboard.setOctaveForMiddleC (proc.getC3Is60() ? 3 : 4);
     refreshSlots();
 
@@ -605,10 +630,13 @@ void LiveSamplerEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void LiveSamplerEditor::timerCallback()
 {
-    status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" glasova"), juce::dontSendNotification);
+    if (MidiLearn::get().isLearning())
+        status.setText ("MIDI LEARN: move a knob or press a key", juce::dontSendNotification);
+    else
+        status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" voices"), juce::dontSendNotification);
     tercaButton.repaint();
     learnButton.setToggleState (proc.isLearning(), juce::dontSendNotification);
-    learnButton.setButtonText (proc.isLearning() ? T ("PRITISNI...") : "LEARN");
+    learnButton.setButtonText (proc.isLearning() ? T ("PRESS...") : "LEARN");
 }
 
 void LiveSamplerEditor::armListWrite()

@@ -29,7 +29,7 @@ namespace AutoLoop
     {
         Result r;
         const int len = juce::jmin (length, buf.getNumSamples());
-        if (len < (int) (sampleRate * 0.3)) { r.reason = "prekratko"; return r; }
+        if (len < (int) (sampleRate * 0.3)) { r.reason = "too short"; return r; }
 
         // mono signal
         std::vector<float> m ((size_t) len);
@@ -49,7 +49,7 @@ namespace AutoLoop
             env[(size_t) b] = (float) std::sqrt (e / blk);
             peak = juce::jmax (peak, env[(size_t) b]);
         }
-        if (peak < 1.0e-5f) { r.reason = "tisina"; return r; }
+        if (peak < 1.0e-5f) { r.reason = "silence"; return r; }
 
         const float thr = peak * juce::Decibels::decibelsToGain (s.sustainDb);
         int peakBlock = 0;
@@ -60,7 +60,7 @@ namespace AutoLoop
         const int regionStart = (peakBlock * blk) + (int) (sampleRate * 0.15);
         const int regionEnd = lastBlock * blk - (int) (sampleRate * 0.1);
         const int minLen = (int) (s.minLoopSec * sampleRate), maxLen = (int) (s.maxLoopSec * sampleRate);
-        if (regionEnd - regionStart < minLen + 1024) { r.reason = "zvuk ne drzi dovoljno dugo"; return r; }
+        if (regionEnd - regionStart < minLen + 1024) { r.reason = "the sound does not sustain long enough"; return r; }
 
         auto risingZero = [&m] (int i) { return m[(size_t) i - 1] < 0.0f && m[(size_t) i] >= 0.0f; };
 
@@ -83,7 +83,7 @@ namespace AutoLoop
         };
 
         const int lo = juce::jmax (regionStart + W, end - maxLen), hi = end - minLen;
-        if (hi <= lo || end + W / 2 >= len) { r.reason = "nema mesta za loop"; return r; }
+        if (hi <= lo || end + W / 2 >= len) { r.reason = "no room for a loop"; return r; }
 
         // grubo: rastuci prolazi kroz nulu (najvise ~4000 kandidata), pa fino oko najboljeg
         std::vector<int> cands;
@@ -112,7 +112,7 @@ namespace AutoLoop
         const double dropDb = 20.0 * std::log10 (rmsAt (bestStart) / rmsAt (end));
         if (! s.allowDecay && std::abs (dropDb) > s.maxDecayDb)
         {
-            r.reason = "zvuk opada (" + juce::String (dropDb, 1) + " dB), nema sustain";
+            r.reason = "the sound decays (" + juce::String (dropDb, 1) + " dB), no sustain";
             return r;
         }
 

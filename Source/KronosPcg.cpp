@@ -198,14 +198,14 @@ namespace Kronos
         juce::MemoryBlock mb;
         if (! f.loadFileAsData (mb))
         {
-            error = "Ne mogu da procitam fajl";
+            error = "Cannot read the file";
             return false;
         }
         auto* d = (const juce::uint8*) mb.getData();
         const size_t len = mb.getSize();
         if (len < 32 || std::memcmp (d, "KORG", 4) != 0)
         {
-            error = "Nije Korg PCG fajl";
+            error = "Not a Korg PCG file";
             return false;
         }
 
@@ -329,7 +329,7 @@ namespace Kronos
         walk (16, len);
         if (programs.empty() && combis.empty())
         {
-            error = "U fajlu nema programa ni kombija";
+            error = "The file has no programs or combis";
             return false;
         }
         return true;
