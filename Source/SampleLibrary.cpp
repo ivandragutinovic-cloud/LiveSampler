@@ -259,7 +259,7 @@ void SampleLibrary::scanRoot (const juce::File& root)
                 for (auto& l : juce::StringArray::fromLines (tag.loadFileAsString()))
                 {
                     const auto t = l.trim();
-                    if (t.startsWith ("rom:") || t.startsWith ("exi:"))
+                    if (t.startsWith ("rom:") || t.startsWith ("exi:") || t.startsWith ("drum:"))
                     {
                         key = t.toLowerCase();
                         kronosMs[key] = names[names.size() - 1];
