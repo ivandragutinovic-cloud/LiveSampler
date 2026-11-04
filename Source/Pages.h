@@ -78,6 +78,44 @@ private:
 };
 
 //==============================================================================
+//  FM editor (user sa FM sintezom umesto MS1-MS8): algoritam, 6 operatora, envelope
+//==============================================================================
+class FmEditor : public juce::Component
+{
+public:
+    FmEditor (LiveSamplerProcessor&, std::function<int()> userIndex);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+private:
+    Fm::Patch current() const;
+    void edit (std::function<void (Fm::Patch&)> fn);
+    void selectEg (int which);              // 0-5 = EG operatora (DX OP1-6), 6 = Amp EG
+
+    LiveSamplerProcessor& proc;
+    std::function<int()> userIndex;
+    bool updating = false;
+    int egSel = 0;
+
+    juce::Label algLabel, egTitle;
+    LearnCombo algorithm;
+    LearnSlider transpose;
+    std::unique_ptr<ValueKnob> level, velocity;
+    struct OpRow
+    {
+        LearnButton on, egButton;
+        LearnCombo wave;
+        LearnSlider coarse, fine, fixedHz, volume, vel, feedback;
+    };
+    OpRow ops[6];
+    juce::Label colLabels[8];
+    LearnButton ampEgButton;
+    juce::OwnedArray<ValueKnob> egKnobs;
+    juce::Rectangle<int> diagram;
+};
+
+//==============================================================================
 //  USER: 8 oscilatora + zajednicki parametri
 //==============================================================================
 class OscRow : public juce::Component
@@ -211,6 +249,7 @@ private:
     void askNumber();
     juce::Label nameEdit, headerLabels[10];
     juce::OwnedArray<OscRow> rows;
+    FmEditor fm;
     SoundEditor sound;
 };
 

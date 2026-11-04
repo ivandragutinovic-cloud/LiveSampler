@@ -921,8 +921,15 @@ Fm::Patch LiveSamplerProcessor::kronosFmPatch (const Kronos::Program& p)
 
 std::shared_ptr<const Fm::Patch> LiveSamplerProcessor::fmPatchFor (const UserProgram& u)
 {
-    const auto key = u.fmProgram.hashCode64() ^ (juce::int64) u.fmSlot;
+    const auto key = u.fmPatch.isNotEmpty() ? u.fmPatch.hashCode64() : u.fmProgram.hashCode64() ^ (juce::int64) u.fmSlot;
     if (auto it = fmCache.find (key); it != fmCache.end()) return it->second;
+    if (fmCache.size() > 300) fmCache.clear();   // editovanje pravi nove verzije
+    if (u.fmPatch.isNotEmpty())
+    {
+        auto patch = std::make_shared<const Fm::Patch> (Fm::Patch::fromString (u.fmPatch));
+        fmCache[key] = patch;
+        return patch;
+    }
     juce::MemoryBlock mb;
     mb.loadFromHexString (u.fmProgram);
     std::shared_ptr<const Fm::Patch> patch;
@@ -939,8 +946,7 @@ int LiveSamplerProcessor::createUserFromKronosFm (const Kronos::Program& prog)
 {
     if (! kronosFmCapable (prog)) return -1;
     UserProgram u;
-    u.fmProgram = juce::String::toHexString (prog.raw.data(), (int) prog.raw.size(), 0);
-    u.fmSlot = prog.exiAlg[0] == 7 ? 0 : 1;
+    u.fmPatch = kronosFmPatch (prog).toString();
     auto& sb = u.block[0];
     sb.ampEg = EnvSettings();          // jacinu i release vodi Amp EG MOD-7 programa
     sb.ampEg.attackTime = 0.001f;
@@ -960,6 +966,24 @@ int LiveSamplerProcessor::createUserFromKronosFm (const Kronos::Program& prog)
     u.kronosPcg = kronosFile.getFileName();
     u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
     return createUser ((prog.name.isNotEmpty() ? prog.name : prog.id()) + " [FM]", &u);
+}
+
+int LiveSamplerProcessor::createFmUser()
+{
+    UserProgram u;
+    u.fmPatch = Fm::Patch::makeInit().toString();
+    auto& sb = u.block[0];
+    sb.ampEg = EnvSettings();
+    sb.ampEg.attackTime = 0.001f;
+    sb.ampEg.sustain = 1.0f;
+    sb.ampEg.releaseTime = 30.0f;
+    sb.filterType = FilterType::Off;
+    sb.velSens = 0.0f;
+    u.osc[0].on = true;
+    u.osc[0].instrument = Fm::instrumentName;
+    u.osc[0].block = 0;
+    u.category = "Synth Lead";
+    return createUser ("FM User", &u);
 }
 
 juce::StringArray LiveSamplerProcessor::userUsage (const juce::String& name) const

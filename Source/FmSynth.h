@@ -41,10 +41,21 @@ namespace Fm
 
         // block = 1052 bajta EXi bloka (od 2908 za EXi1, 3960 za EXi2) MOD-7 programa
         static Patch fromMod7 (const juce::uint8* block, const juce::uint8* program, int exiSlot);
+        static Patch makeInit();                       // novi FM user: jednostavan DX patch (2 operatora)
+        void applyDxAlgorithm (int n);                 // veze i nosioci po DX7 algoritmu 1-32
+        std::unique_ptr<juce::XmlElement> toXml() const;
+        static Patch fromXml (const juce::XmlElement&);
+        juce::String toString() const;                 // za cuvanje u useru
+        static Patch fromString (const juce::String&);
         juce::String describe() const;
     };
 
     // izvori signala (Input Jack): 0 nista, 1 PCM, 2 sum, 3 audio ulaz, 4-9 OSC1-6, 10-12 Mixer1-3, 13-14 Filter A/B
+    // DX7 operator n (1-6) = OSC (7-n) = indeks 6-n
+    inline int opIndex (int dxOp) { return 6 - dxOp; }
+    std::vector<int> dxCarriers (int algorithm);
+    std::vector<std::pair<int, int>> dxModulations (int algorithm);   // (operator, njegov modulator)
+
     enum Src { None = 0, Pcm = 1, Noise = 2, AudioIn = 3, Osc1 = 4, Mixer1 = 10, FilterA = 13, FilterB = 14, NumSrc = 15 };
 
     class Env

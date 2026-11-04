@@ -116,7 +116,8 @@ struct UserProgram
     // FM sinteza: ceo MOD-7 program (hex, 4960 bajtova) i koji EXi slot (0/1) je MOD-7; prazno = semplovi
     juce::String fmProgram;
     int fmSlot = 0;
-    bool isFm() const { return fmProgram.isNotEmpty(); }
+    juce::String fmPatch;               // FM parametri (Fm::Patch kao XML); ima prednost nad fmProgram (posle editovanja)
+    bool isFm() const { return fmPatch.isNotEmpty() || fmProgram.isNotEmpty(); }
 
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;

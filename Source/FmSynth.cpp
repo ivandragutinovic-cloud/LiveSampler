@@ -192,19 +192,7 @@ namespace Fm
             p.dxAlgorithm = best;
         }
         if (p.dxAlgorithm > 0)
-        {
-            const auto& t = dxAlg (p.dxAlgorithm);
-            auto osc = [] (int opNum) { return 6 - opNum; };   // OP1 = OSC6 ... OP6 = OSC1
-            for (auto& o : p.op) o.inputs.erase (std::remove_if (o.inputs.begin(), o.inputs.end(),
-                                                                  [] (const std::pair<int, float>& x) { return x.first >= Osc1 && x.first < Osc1 + 6; }), o.inputs.end());
-            for (auto& m : t.mods)
-                p.op[osc (m.first)].inputs.push_back ({ Osc1 + osc (m.second), 1.0f });
-            // nosioci idu na izlaz; postojeci kablovi ka izlazu (npr. filteri) ostaju
-            std::vector<Out> outs;
-            for (int c : t.carriers) outs.push_back ({ Osc1 + osc (c), 1.0f, 0.0f });
-            for (auto& o : p.out) if (o.in > 0 && (o.in < Osc1 || o.in >= Osc1 + 6)) outs.push_back (o);
-            for (int c = 0; c < 6; ++c) p.out[c] = c < (int) outs.size() ? outs[(size_t) c] : Out { 0, 0.0f, 0.0f };
-        }
+            p.applyDxAlgorithm (p.dxAlgorithm);
 
         if (program != nullptr)
         {
@@ -216,6 +204,178 @@ namespace Fm
         for (auto& o : p.out) anyOut = anyOut || (o.in > 0 && std::abs (o.level) > 0.0f);
         p.valid = anyOut;
         return p;
+    }
+
+    std::vector<int> dxCarriers (int a) { return dxAlg (a).carriers; }
+    std::vector<std::pair<int, int>> dxModulations (int a) { return dxAlg (a).mods; }
+
+    void Patch::applyDxAlgorithm (int n)
+    {
+        dxAlgorithm = juce::jlimit (1, 32, n);
+        const auto& t = dxAlg (dxAlgorithm);
+        auto osc = [] (int opNum) { return 6 - opNum; };   // OP1 = OSC6 ... OP6 = OSC1
+        for (auto& o : op) o.inputs.erase (std::remove_if (o.inputs.begin(), o.inputs.end(),
+                                                           [] (const std::pair<int, float>& x) { return x.first >= Osc1 && x.first < Osc1 + 6; }), o.inputs.end());
+        for (auto& m : t.mods)
+            op[osc (m.first)].inputs.push_back ({ Osc1 + osc (m.second), 1.0f });
+        // nosioci idu na izlaz; postojeci kablovi ka izlazu (npr. filteri) ostaju
+        std::vector<Out> outs;
+        for (int c : t.carriers) outs.push_back ({ Osc1 + osc (c), 1.0f, 0.0f });
+        for (auto& o : out) if (o.in > 0 && (o.in < Osc1 || o.in >= Osc1 + 6)) outs.push_back (o);
+        for (int c = 0; c < 6; ++c) out[c] = c < (int) outs.size() ? outs[(size_t) c] : Out { 0, 0.0f, 0.0f };
+        valid = true;
+    }
+
+    Patch Patch::makeInit()
+    {
+        Patch p;
+        for (int k = 0; k < 6; ++k)
+        {
+            auto& o = p.op[k];
+            o.on = true;
+            o.mode = 1;
+            o.ratio = 1.0;
+            o.volume = 0.0f;
+            o.eg = k + 1;
+        }
+        for (auto& e : p.eg) { e = EnvSettings(); e.start = 0.0f; e.attackTime = 0.003f; e.attackLevel = 1.0f; e.decayTime = 1.5f; e.breakLevel = 0.7f; e.slopeTime = 3.0f; e.sustain = 0.5f; e.releaseTime = 0.4f; e.releaseLevel = 0.0f; }
+        p.ampEg = EnvSettings();
+        p.ampEg.start = 0.0f; p.ampEg.attackTime = 0.002f; p.ampEg.attackLevel = 1.0f; p.ampEg.decayTime = 0.5f; p.ampEg.breakLevel = 1.0f;
+        p.ampEg.slopeTime = 0.5f; p.ampEg.sustain = 1.0f; p.ampEg.releaseTime = 0.4f;
+        p.op[opIndex (1)].volume = 0.9f;    // OP1 nosilac
+        p.op[opIndex (2)].volume = 0.35f;   // OP2 modulator (malo svetliji ton)
+        p.op[opIndex (2)].velSens = 0.5f;
+        p.ampVel = 0.6f;
+        p.applyDxAlgorithm (1);
+        return p;
+    }
+
+    std::unique_ptr<juce::XmlElement> Patch::toXml() const
+    {
+        auto x = std::make_unique<juce::XmlElement> ("FmPatch");
+        x->setAttribute ("dx", dxAlgorithm);
+        x->setAttribute ("transpose", transpose);
+        x->setAttribute ("gain", (double) patchGain);
+        x->setAttribute ("ampLevel", (double) ampLevel);
+        x->setAttribute ("ampVel", (double) ampVel);
+        x->setAttribute ("noise", (double) noiseVol);
+        x->setAttribute ("noiseEg", noiseEg);
+        auto envXml = [] (juce::XmlElement& e, const EnvSettings& s)
+        {
+            e.setAttribute ("s", (double) s.start); e.setAttribute ("al", (double) s.attackLevel); e.setAttribute ("bl", (double) s.breakLevel);
+            e.setAttribute ("sl", (double) s.sustain); e.setAttribute ("rl", (double) s.releaseLevel);
+            e.setAttribute ("at", (double) s.attackTime); e.setAttribute ("dt", (double) s.decayTime);
+            e.setAttribute ("st", (double) s.slopeTime); e.setAttribute ("rt", (double) s.releaseTime);
+        };
+        for (int k = 0; k < 6; ++k)
+        {
+            const auto& o = op[k];
+            auto* e = x->createNewChildElement ("Op");
+            e->setAttribute ("on", o.on); e->setAttribute ("mode", o.mode);
+            e->setAttribute ("ratio", o.ratio); e->setAttribute ("hz", o.offsetHz);
+            e->setAttribute ("fb", (double) o.feedback); e->setAttribute ("vol", (double) o.volume);
+            e->setAttribute ("eg", o.eg); e->setAttribute ("vel", (double) o.velSens);
+            e->setAttribute ("ktLo", o.ktLow); e->setAttribute ("ktC", o.ktCenter); e->setAttribute ("ktHi", o.ktHigh);
+            juce::StringArray kr, in;
+            for (auto v : o.ktRamp) kr.add (juce::String (v, 3));
+            for (auto& i : o.inputs) in.add (juce::String (i.first) + ":" + juce::String (i.second, 3));
+            e->setAttribute ("ktRamp", kr.joinIntoString (" "));
+            e->setAttribute ("in", in.joinIntoString (" "));
+            e->setAttribute ("drive", (double) o.drive);
+        }
+        for (int i = 0; i < 9; ++i) { auto* e = x->createNewChildElement ("Eg"); e->setAttribute ("i", i); envXml (*e, eg[i]); }
+        { auto* e = x->createNewChildElement ("AmpEg"); envXml (*e, ampEg); }
+        for (int m = 0; m < 3; ++m)
+        {
+            auto* e = x->createNewChildElement ("Mix");
+            e->setAttribute ("in1", mix[m].in[0]); e->setAttribute ("in2", mix[m].in[1]);
+            e->setAttribute ("l1", (double) mix[m].level[0]); e->setAttribute ("l2", (double) mix[m].level[1]);
+        }
+        for (auto& o : out) { auto* e = x->createNewChildElement ("Out"); e->setAttribute ("in", o.in); e->setAttribute ("level", (double) o.level); e->setAttribute ("pan", (double) o.pan); }
+        for (auto& f : flt)
+        {
+            auto* e = x->createNewChildElement ("Filter");
+            e->setAttribute ("bypass", f.bypass); e->setAttribute ("type", f.type); e->setAttribute ("hz", (double) f.cutoffHz);
+            e->setAttribute ("reso", (double) f.reso); e->setAttribute ("in", f.in); e->setAttribute ("eg", f.eg); e->setAttribute ("egInt", (double) f.egInt);
+        }
+        return x;
+    }
+
+    Patch Patch::fromXml (const juce::XmlElement& x)
+    {
+        Patch p;
+        p.dxAlgorithm = x.getIntAttribute ("dx", 0);
+        p.transpose = x.getIntAttribute ("transpose", 0);
+        p.patchGain = (float) x.getDoubleAttribute ("gain", 1.0);
+        p.ampLevel = (float) x.getDoubleAttribute ("ampLevel", 1.0);
+        p.ampVel = (float) x.getDoubleAttribute ("ampVel", 0.0);
+        p.noiseVol = (float) x.getDoubleAttribute ("noise", 0.0);
+        p.noiseEg = x.getIntAttribute ("noiseEg", 0);
+        auto env = [] (const juce::XmlElement& e)
+        {
+            EnvSettings s;
+            s.start = (float) e.getDoubleAttribute ("s"); s.attackLevel = (float) e.getDoubleAttribute ("al", 1.0); s.breakLevel = (float) e.getDoubleAttribute ("bl", 1.0);
+            s.sustain = (float) e.getDoubleAttribute ("sl", 1.0); s.releaseLevel = (float) e.getDoubleAttribute ("rl");
+            s.attackTime = (float) e.getDoubleAttribute ("at", 0.001); s.decayTime = (float) e.getDoubleAttribute ("dt", 0.3);
+            s.slopeTime = (float) e.getDoubleAttribute ("st", 0.3); s.releaseTime = (float) e.getDoubleAttribute ("rt", 0.3);
+            return s;
+        };
+        int k = 0;
+        for (auto* e : x.getChildWithTagNameIterator ("Op"))
+        {
+            if (k >= 6) break;
+            auto& o = p.op[k++];
+            o.on = e->getBoolAttribute ("on"); o.mode = e->getIntAttribute ("mode", 1);
+            o.ratio = e->getDoubleAttribute ("ratio", 1.0); o.offsetHz = e->getDoubleAttribute ("hz");
+            o.feedback = (float) e->getDoubleAttribute ("fb"); o.volume = (float) e->getDoubleAttribute ("vol");
+            o.eg = e->getIntAttribute ("eg"); o.velSens = (float) e->getDoubleAttribute ("vel");
+            o.ktLow = e->getIntAttribute ("ktLo", 0); o.ktCenter = e->getIntAttribute ("ktC", 60); o.ktHigh = e->getIntAttribute ("ktHi", 127);
+            const auto kr = juce::StringArray::fromTokens (e->getStringAttribute ("ktRamp"), " ", "");
+            for (int r = 0; r < 4 && r < kr.size(); ++r) o.ktRamp[r] = kr[r].getFloatValue();
+            for (auto& t : juce::StringArray::fromTokens (e->getStringAttribute ("in"), " ", ""))
+                if (t.containsChar (':')) o.inputs.push_back ({ t.upToFirstOccurrenceOf (":", false, false).getIntValue(), t.fromFirstOccurrenceOf (":", false, false).getFloatValue() });
+            o.drive = (float) e->getDoubleAttribute ("drive");
+        }
+        for (auto* e : x.getChildWithTagNameIterator ("Eg"))
+        {
+            const int i = e->getIntAttribute ("i", -1);
+            if (i >= 0 && i < 9) p.eg[i] = env (*e);
+        }
+        if (auto* e = x.getChildByName ("AmpEg")) p.ampEg = env (*e);
+        int m = 0;
+        for (auto* e : x.getChildWithTagNameIterator ("Mix"))
+        {
+            if (m >= 3) break;
+            p.mix[m].in[0] = e->getIntAttribute ("in1"); p.mix[m].in[1] = e->getIntAttribute ("in2");
+            p.mix[m].level[0] = (float) e->getDoubleAttribute ("l1", 1.0); p.mix[m].level[1] = (float) e->getDoubleAttribute ("l2", 1.0);
+            ++m;
+        }
+        int c = 0;
+        for (auto* e : x.getChildWithTagNameIterator ("Out"))
+        {
+            if (c >= 6) break;
+            p.out[c++] = { e->getIntAttribute ("in"), (float) e->getDoubleAttribute ("level", 1.0), (float) e->getDoubleAttribute ("pan") };
+        }
+        int f = 0;
+        for (auto* e : x.getChildWithTagNameIterator ("Filter"))
+        {
+            if (f >= 2) break;
+            auto& fl = p.flt[f++];
+            fl.bypass = e->getBoolAttribute ("bypass", true); fl.type = e->getIntAttribute ("type"); fl.cutoffHz = (float) e->getDoubleAttribute ("hz", 20000.0);
+            fl.reso = (float) e->getDoubleAttribute ("reso"); fl.in = e->getIntAttribute ("in"); fl.eg = e->getIntAttribute ("eg"); fl.egInt = (float) e->getDoubleAttribute ("egInt");
+        }
+        bool anyOut = false;
+        for (auto& o : p.out) anyOut = anyOut || (o.in > 0 && std::abs (o.level) > 0.0f);
+        p.valid = anyOut;
+        return p;
+    }
+
+    juce::String Patch::toString() const { return toXml()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()); }
+
+    Patch Patch::fromString (const juce::String& s)
+    {
+        if (auto x = juce::parseXML (s)) return fromXml (*x);
+        return {};
     }
 
     juce::String Patch::describe() const

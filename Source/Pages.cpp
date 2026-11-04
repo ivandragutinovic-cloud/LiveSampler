@@ -1959,10 +1959,320 @@ void SoundEditor::resized()
 }
 
 //==============================================================================
+//  FmEditor
+//==============================================================================
+FmEditor::FmEditor (LiveSamplerProcessor& p, std::function<int()> ui) : proc (p), userIndex (std::move (ui))
+{
+    algLabel.setText ("ALGORITHM", juce::dontSendNotification);
+    algLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    algLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (algLabel);
+    algorithm.addItem (T ("Kronos patch (cables)"), 100);
+    for (int n = 1; n <= 32; ++n) algorithm.addItem ("DX " + juce::String (n), n);
+    algorithm.setTooltip (T ("DX7 algorithm: which operators modulate which (carriers are heard). 'Kronos patch' = the cables of the MOD-7 program."));
+    algorithm.onChange = [this]
+    {
+        if (updating) return;
+        const int id = algorithm.getSelectedId();
+        if (id >= 1 && id <= 32) edit ([id] (Fm::Patch& pt) { pt.applyDxAlgorithm (id); });
+        else refresh();   // kablovi se ne mogu napraviti iz menija
+    };
+    addAndMakeVisible (algorithm);
+
+    UI::setupIncDec (transpose, -48, 48, 1, [] (double v) { return (v > 0 ? "+" : "") + juce::String ((int) v) + " st"; });
+    transpose.setTooltip (T ("Transpose of the FM sound (semitones)"));
+    transpose.onValueChange = [this] { if (! updating) { const int v = (int) transpose.getValue(); edit ([v] (Fm::Patch& pt) { pt.transpose = v; }); } };
+    addAndMakeVisible (transpose);
+    level = std::make_unique<ValueKnob> ("Level", Pal::accent, 0.0, 1.0, 0.5, UI::pctText, 1.0);
+    level->onChange = [this] (double v) { if (! updating) edit ([v] (Fm::Patch& pt) { pt.ampLevel = (float) v; }); };
+    velocity = std::make_unique<ValueKnob> ("Velocity", Pal::accent, -1.0, 1.0, 0.0, UI::pctText, 0.6);
+    velocity->onChange = [this] (double v) { if (! updating) edit ([v] (Fm::Patch& pt) { pt.ampVel = (float) v; }); };
+    addAndMakeVisible (*level);
+    addAndMakeVisible (*velocity);
+
+    const char* cols[] = { "OP", "WAVE", "RATIO", "FINE", "FIXED Hz", "LEVEL", "VEL", "FEEDBACK" };
+    for (int i = 0; i < 8; ++i)
+    {
+        colLabels[i].setText (cols[i], juce::dontSendNotification);
+        colLabels[i].setFont (juce::FontOptions (11.5f, juce::Font::bold));
+        colLabels[i].setColour (juce::Label::textColourId, Pal::dim);
+        colLabels[i].setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (colLabels[i]);
+    }
+    for (int r = 0; r < 6; ++r)
+    {
+        auto& o = ops[r];
+        const int k = Fm::opIndex (r + 1);   // red r = DX operator r+1
+        o.on.setButtonText ("OP" + juce::String (r + 1));
+        o.on.setClickingTogglesState (true);
+        o.on.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+        o.on.onClick = [this, k, r] { const bool b = ops[r].on.getToggleState(); edit ([k, b] (Fm::Patch& pt) { pt.op[k].on = b; }); };
+        o.wave.addItemList ({ "Sine", "Triangle", "Square", "Saw", "Sine + shaper", "Shaper (input)", "Ring mod" }, 1);
+        o.wave.onChange = [this, k, r] { if (! updating) { const int m = ops[r].wave.getSelectedId(); edit ([k, m] (Fm::Patch& pt) { pt.op[k].mode = m; }); } };
+        UI::setupIncDec (o.coarse, 0, 32, 1, [] (double v) { return v < 0.5 ? juce::String ("0.5") : juce::String ((int) v); });
+        o.coarse.setTooltip (T ("Frequency ratio (multiple of the note frequency), 0 = 0.5"));
+        o.coarse.onValueChange = [this, k, r]
+        {
+            if (updating) return;
+            const double c = ops[r].coarse.getValue();
+            edit ([k, c] (Fm::Patch& pt)
+            {
+                const double old = pt.op[k].ratio;
+                const double fine = old - (old < 1.0 ? 0.5 : std::floor (old));
+                pt.op[k].ratio = (c < 0.5 ? 0.5 : c) + juce::jlimit (0.0, 0.999, fine);
+            });
+        };
+        UI::setupIncDec (o.fine, 0, 0.99, 0.01, [] (double v) { return "+" + juce::String (v, 2); });
+        o.fine.onValueChange = [this, k, r]
+        {
+            if (updating) return;
+            const double f = ops[r].fine.getValue();
+            edit ([k, f] (Fm::Patch& pt) { const double old = pt.op[k].ratio; pt.op[k].ratio = (old < 1.0 ? 0.5 : std::floor (old)) + f; });
+        };
+        UI::setupIncDec (o.fixedHz, 0, 9999, 1, [] (double v) { return v < 0.5 ? juce::String ("off") : juce::String ((int) v) + " Hz"; });
+        o.fixedHz.setTooltip (T ("Fixed frequency added to the ratio (Hz). With ratio 0.5 and fine 0 it is almost a fixed pitch (bells, noise)."));
+        o.fixedHz.onValueChange = [this, k, r] { if (! updating) { const double v = ops[r].fixedHz.getValue(); edit ([k, v] (Fm::Patch& pt) { pt.op[k].offsetHz = v; }); } };
+        UI::setupIncDec (o.volume, 0, 100, 1, [] (double v) { return juce::String ((int) v) + "%"; });
+        o.volume.setTooltip (T ("Operator level. For a carrier it is volume, for a modulator it is brightness (modulation depth)."));
+        o.volume.onValueChange = [this, k, r] { if (! updating) { const float v = (float) ops[r].volume.getValue() / 100.0f; edit ([k, v] (Fm::Patch& pt) { pt.op[k].volume = v; }); } };
+        UI::setupIncDec (o.vel, -100, 100, 1, [] (double v) { return juce::String ((int) v); });
+        o.vel.setTooltip (T ("Velocity sensitivity of this operator"));
+        o.vel.onValueChange = [this, k, r] { if (! updating) { const float v = (float) ops[r].vel.getValue() / 100.0f; edit ([k, v] (Fm::Patch& pt) { pt.op[k].velSens = v; }); } };
+        UI::setupIncDec (o.feedback, 0, 100, 1, [] (double v) { return juce::String ((int) v); });
+        o.feedback.setTooltip (T ("Self feedback (the operator modulates itself: brighter, saw-like, noisy at the top)"));
+        o.feedback.onValueChange = [this, k, r] { if (! updating) { const float v = (float) ops[r].feedback.getValue() / 100.0f; edit ([k, v] (Fm::Patch& pt) { pt.op[k].feedback = v; }); } };
+        o.egButton.setButtonText ("EG");
+        o.egButton.setTooltip (T ("Edit the envelope of this operator below"));
+        o.egButton.onClick = [this, r] { selectEg (r); };
+        const juce::String lid = "user.fm.op" + juce::String (r + 1) + ".";
+        o.volume.setLearnId (lid + "level");
+        o.feedback.setLearnId (lid + "feedback");
+        o.coarse.setLearnId (lid + "ratio");
+        for (juce::Component* c : { (juce::Component*) &o.on, (juce::Component*) &o.wave, (juce::Component*) &o.coarse, (juce::Component*) &o.fine,
+                                    (juce::Component*) &o.fixedHz, (juce::Component*) &o.volume, (juce::Component*) &o.vel, (juce::Component*) &o.feedback,
+                                    (juce::Component*) &o.egButton })
+            addAndMakeVisible (c);
+    }
+    ampEgButton.setButtonText ("AMP EG");
+    ampEgButton.setTooltip (T ("Edit the amplitude envelope (volume of the whole sound)"));
+    ampEgButton.onClick = [this] { selectEg (6); };
+    addAndMakeVisible (ampEgButton);
+
+    egTitle.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+    egTitle.setColour (juce::Label::textColourId, Pal::accent);
+    addAndMakeVisible (egTitle);
+    struct K { const char* n; double lo, hi, c, def; bool time; };
+    const K ks[] = { { "Start", -1, 1, 0, 0, false }, { "Attack lvl", -1, 1, 0, 1, false }, { "Break lvl", -1, 1, 0, 1, false },
+                     { "Sustain", -1, 1, 0, 1, false }, { "Release lvl", -1, 1, 0, 0, false },
+                     { "Attack", 0.001, 30, 1.0, 0.003, true }, { "Decay", 0.001, 30, 1.0, 0.3, true },
+                     { "Slope", 0.001, 30, 1.0, 0.3, true }, { "Release", 0.001, 30, 1.0, 0.3, true } };
+    for (int i = 0; i < 9; ++i)
+    {
+        auto* kn = egKnobs.add (new ValueKnob (T (ks[i].n), Pal::accent, ks[i].lo, ks[i].hi, ks[i].c,
+                                               ks[i].time ? std::function<juce::String (double)> (UI::timeText) : std::function<juce::String (double)> ([] (double v) { return juce::String (juce::roundToInt (v * 99.0)); }),
+                                               ks[i].def));
+        kn->onChange = [this, i] (double v)
+        {
+            if (updating) return;
+            const int which = egSel;
+            edit ([which, i, v] (Fm::Patch& pt)
+            {
+                EnvSettings* e = nullptr;
+                if (which == 6) e = &pt.ampEg;
+                else { const int egi = pt.op[Fm::opIndex (which + 1)].eg; if (egi >= 1 && egi <= 9) e = &pt.eg[egi - 1]; else if (egi == 10) e = &pt.ampEg; }
+                if (e == nullptr) return;
+                float* f[] = { &e->start, &e->attackLevel, &e->breakLevel, &e->sustain, &e->releaseLevel, &e->attackTime, &e->decayTime, &e->slopeTime, &e->releaseTime };
+                *f[i] = (float) v;
+            });
+        };
+        addAndMakeVisible (kn);
+    }
+}
+
+Fm::Patch FmEditor::current() const
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers() || ! proc.getUser (u).isFm()) return {};
+    if (auto p = const_cast<LiveSamplerProcessor&> (proc).fmPatchFor (proc.getUser (u))) return *p;
+    return {};
+}
+
+void FmEditor::edit (std::function<void (Fm::Patch&)> fn)
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    auto p = current();
+    fn (p);
+    auto user = proc.getUser (u);
+    user.fmPatch = p.toString();
+    user.fmProgram = {};            // od sada se cuvaju parametri (editovani)
+    proc.updateUser (u, user);
+    repaint();
+}
+
+void FmEditor::selectEg (int which)
+{
+    egSel = which;
+    refresh();
+}
+
+void FmEditor::refresh()
+{
+    const juce::ScopedValueSetter<bool> svs (updating, true);
+    const auto p = current();
+    algorithm.setSelectedId (p.dxAlgorithm >= 1 ? p.dxAlgorithm : 100, juce::dontSendNotification);
+    transpose.setValue (p.transpose, juce::dontSendNotification);
+    level->setValue (p.ampLevel);
+    velocity->setValue (p.ampVel);
+    const auto carriers = Fm::dxCarriers (p.dxAlgorithm);
+    for (int r = 0; r < 6; ++r)
+    {
+        const auto& o = p.op[Fm::opIndex (r + 1)];
+        auto& row = ops[r];
+        row.on.setToggleState (o.on, juce::dontSendNotification);
+        row.wave.setSelectedId (juce::jlimit (1, 7, o.mode), juce::dontSendNotification);
+        const double base = o.ratio < 1.0 ? 0.0 : std::floor (o.ratio);
+        row.coarse.setValue (base, juce::dontSendNotification);
+        row.fine.setValue (o.ratio - (o.ratio < 1.0 ? 0.5 : base), juce::dontSendNotification);
+        row.fixedHz.setValue (o.offsetHz, juce::dontSendNotification);
+        row.volume.setValue (o.volume * 100.0, juce::dontSendNotification);
+        row.vel.setValue (o.velSens * 100.0, juce::dontSendNotification);
+        row.feedback.setValue (o.feedback * 100.0, juce::dontSendNotification);
+        const bool carrier = std::find (carriers.begin(), carriers.end(), r + 1) != carriers.end();
+        row.on.setColour (juce::TextButton::buttonOnColourId, carrier ? Pal::accent : juce::Colour (0xff3dc5ff));
+        row.on.setTooltip (carrier ? T ("Carrier (heard)") : T ("Modulator (changes the tone of the operator below it)"));
+        row.egButton.setToggleState (egSel == r, juce::dontSendNotification);
+        row.egButton.setColour (juce::TextButton::buttonColourId, egSel == r ? Pal::accent.withAlpha (0.6f) : Pal::panelHi);
+    }
+    ampEgButton.setColour (juce::TextButton::buttonColourId, egSel == 6 ? Pal::accent.withAlpha (0.6f) : Pal::panelHi);
+
+    const EnvSettings* e = nullptr;
+    juce::String title;
+    if (egSel == 6) { e = &p.ampEg; title = T ("AMP EG (volume of the whole sound)"); }
+    else
+    {
+        const int egi = p.op[Fm::opIndex (egSel + 1)].eg;
+        if (egi >= 1 && egi <= 9) { e = &p.eg[egi - 1]; title = "OP" + juce::String (egSel + 1) + " EG  (EG" + juce::String (egi) + ")"; }
+        else if (egi == 10) { e = &p.ampEg; title = "OP" + juce::String (egSel + 1) + T (" uses the AMP EG"); }
+        else title = "OP" + juce::String (egSel + 1) + T (": no envelope (constant level)");
+    }
+    egTitle.setText (title, juce::dontSendNotification);
+    const float vals[] = { e ? e->start : 0, e ? e->attackLevel : 0, e ? e->breakLevel : 0, e ? e->sustain : 0, e ? e->releaseLevel : 0,
+                           e ? e->attackTime : 0.001f, e ? e->decayTime : 0.001f, e ? e->slopeTime : 0.001f, e ? e->releaseTime : 0.001f };
+    for (int i = 0; i < 9; ++i)
+    {
+        egKnobs[i]->setValue (vals[i]);
+        egKnobs[i]->setEnabled (e != nullptr);
+    }
+    repaint();
+}
+
+void FmEditor::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::bg);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+    // sema algoritma: nosioci dole, modulatori iznad onoga koga moduliraju
+    const auto p = current();
+    auto area = diagram.toFloat();
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (area, 6.0f);
+    if (p.dxAlgorithm < 1)
+    {
+        g.setColour (Pal::dim);
+        g.setFont (juce::FontOptions (12.5f));
+        g.drawFittedText (T ("Kronos MOD-7 patch:\nconnections made with cables\non the Kronos (not editable here)"), diagram.reduced (8), juce::Justification::centred, 4);
+        return;
+    }
+    const auto mods = Fm::dxModulations (p.dxAlgorithm);
+    const auto carriers = Fm::dxCarriers (p.dxAlgorithm);
+    int depth[7] {};
+    std::function<void (int, int)> place = [&] (int op, int d)
+    {
+        if (depth[op] >= d && depth[op] > 0) return;
+        depth[op] = d;
+        for (auto& m : mods) if (m.first == op && m.second != op) place (m.second, d + 1);
+    };
+    for (int c : carriers) place (c, 1);
+    int maxD = 1;
+    for (int op = 1; op <= 6; ++op) { if (depth[op] == 0) depth[op] = 1; maxD = juce::jmax (maxD, depth[op]); }
+    // x: redom po dubini
+    juce::Point<float> pos[7];
+    for (int d = 1; d <= maxD; ++d)
+    {
+        std::vector<int> row;
+        for (int op = 1; op <= 6; ++op) if (depth[op] == d) row.push_back (op);
+        for (size_t i = 0; i < row.size(); ++i)
+            pos[row[i]] = { area.getX() + area.getWidth() * ((float) i + 0.5f) / (float) row.size(),
+                            area.getBottom() - 18.0f - (float) (d - 1) * (area.getHeight() - 36.0f) / (float) juce::jmax (1, maxD - 1) * (maxD > 1 ? 1.0f : 0.0f) };
+    }
+    g.setColour (Pal::dim);
+    for (auto& m : mods)
+        g.drawLine (juce::Line<float> (pos[m.second], pos[m.first]), 1.6f);
+    for (int op = 1; op <= 6; ++op)
+    {
+        const bool carrier = std::find (carriers.begin(), carriers.end(), op) != carriers.end();
+        const bool on = p.op[Fm::opIndex (op)].on;
+        auto r = juce::Rectangle<float> (26.0f, 20.0f).withCentre (pos[op]);
+        g.setColour ((carrier ? Pal::accent : juce::Colour (0xff3dc5ff)).withAlpha (on ? 0.9f : 0.3f));
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawText (juce::String (op), r, juce::Justification::centred);
+        if (p.op[Fm::opIndex (op)].feedback > 0.0f)
+        {
+            g.setColour (Pal::text);
+            g.drawEllipse (r.getRight() - 2.0f, r.getY() - 6.0f, 8.0f, 8.0f, 1.2f);
+        }
+    }
+}
+
+void FmEditor::resized()
+{
+    auto r = getLocalBounds().reduced (6, 4);
+    diagram = r.removeFromRight (180).withTrimmedBottom (r.getHeight() > 190 ? r.getHeight() - 190 : 0);
+    r.removeFromRight (8);
+    auto top = r.removeFromTop (26);
+    algLabel.setBounds (top.removeFromLeft (76));
+    algorithm.setBounds (top.removeFromLeft (190).reduced (0, 1));
+    top.removeFromLeft (10);
+    transpose.setBounds (top.removeFromLeft (120));
+    transpose.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 64, top.getHeight());
+    top.removeFromLeft (10);
+    ampEgButton.setBounds (top.removeFromLeft (80).reduced (0, 1));
+    r.removeFromTop (2);
+    const int w[] = { 52, 104, 84, 88, 96, 84, 80, 80, 36 };
+    {
+        auto h = r.removeFromTop (14);
+        for (int i = 0; i < 8; ++i) colLabels[i].setBounds (h.removeFromLeft (w[i]));
+    }
+    for (int row = 0; row < 6; ++row)
+    {
+        auto line = r.removeFromTop (24);
+        r.removeFromTop (1);
+        auto& o = ops[row];
+        juce::Component* cs[] = { &o.on, &o.wave, &o.coarse, &o.fine, &o.fixedHz, &o.volume, &o.vel, &o.feedback, &o.egButton };
+        for (int i = 0; i < 9; ++i)
+        {
+            auto cell = line.removeFromLeft (w[i]).reduced (1, 0);
+            cs[i]->setBounds (cell);
+            if (auto* s = dynamic_cast<juce::Slider*> (cs[i])) s->setTextBoxStyle (juce::Slider::TextBoxLeft, false, cell.getWidth() - 34, cell.getHeight());
+        }
+    }
+    r.removeFromTop (2);
+    // donji red: envelope + jacina / velocity celog zvuka
+    egTitle.setBounds (r.removeFromTop (16));
+    auto knobs = r;
+    level->setBounds (knobs.removeFromRight (74));
+    velocity->setBounds (knobs.removeFromRight (74));
+    const int kw = juce::jmin (78, knobs.getWidth() / 9);
+    for (auto* k : egKnobs) k->setBounds (knobs.removeFromLeft (kw));
+}
+
+//==============================================================================
 //  UserPage
 //==============================================================================
 UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
-    : proc (p), editor (e), sound (p, [this] { return userIndex; })
+    : proc (p), editor (e), fm (p, [this] { return userIndex; }), sound (p, [this] { return userIndex; })
 {
     list.setModel (this);
     list.setRowHeight (26);
@@ -1974,13 +2284,22 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     newButton.onClick = [this]
     {
         juce::Component::SafePointer<UserPage> safe (this);
-        UI::showInstrumentMenu (&newButton, proc.getInstrumentList(), {}, true, [safe] (const juce::String& inst)
+        juce::PopupMenu m;
+        m.addItem (1, T ("New user (samples)..."));
+        m.addItem (2, T ("New FM user (FM synthesis, DX style)"));
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&newButton), [safe] (int r)
         {
-            if (safe == nullptr) return;
-            const int u = inst.isEmpty() ? safe->proc.createUser ("User") : safe->proc.createUserFromInstrument (inst);
-            safe->selectUser (u);
+            if (safe == nullptr || r == 0) return;
+            if (r == 2) { safe->selectUser (safe->proc.createFmUser()); return; }
+            UI::showInstrumentMenu (&safe->newButton, safe->proc.getInstrumentList(), {}, true, [safe] (const juce::String& inst)
+            {
+                if (safe == nullptr) return;
+                const int u = inst.isEmpty() ? safe->proc.createUser ("User") : safe->proc.createUserFromInstrument (inst);
+                safe->selectUser (u);
+            });
         });
     };
+    addChildComponent (fm);
     copyButton.setButtonText ("Copy");
     copyButton.onClick = [this]
     {
@@ -2267,8 +2586,15 @@ void UserPage::refresh()
     numButton.setButtonText (userIndex < proc.getNumUsers() ? "No. " + juce::String (userIndex + 1) : juce::String ("No."));
 
     const bool valid = userIndex >= 0 && userIndex < proc.getNumUsers();
+    const bool isFm = valid && proc.getUser (userIndex).isFm();
     for (auto* r : rows)
-        r->refresh();
+    {
+        r->setVisible (! isFm);
+        if (! isFm) r->refresh();
+    }
+    for (auto& l : headerLabels) l.setVisible (! isFm);
+    if (fm.isVisible() != isFm) { fm.setVisible (isFm); resized(); }
+    if (isFm) fm.refresh();
     sound.refresh();
 
     for (auto* c : std::initializer_list<juce::Component*> { &nameEdit, &copyButton, &deleteButton, &catButton, &numButton, &upButton, &downButton })
@@ -2324,6 +2650,15 @@ void UserPage::resized()
     nameEdit.setBounds (r.removeFromTop (30).removeFromLeft (420));
     r.removeFromTop (4);
 
+    // FM user: umesto MS1-MS8 FM editor na istom mestu (malo visi: envelope ima knobove)
+    const bool fmUser = userIndex >= 0 && userIndex < proc.getNumUsers() && proc.getUser (userIndex).isFm();
+    if (fmUser)
+    {
+        fm.setBounds (r.removeFromTop (318));
+        r.removeFromTop (6);
+        sound.setBounds (r);
+        return;
+    }
     // zaglavlje kolona (prati raspored u OscRow)
     auto header = r.removeFromTop (16).reduced (4, 0);
     header.removeFromLeft (70);

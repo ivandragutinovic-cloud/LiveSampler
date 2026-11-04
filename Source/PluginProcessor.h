@@ -216,7 +216,8 @@ public:
     bool takeVectorUiDirty() { return vectorUiDirty.exchange (false); }
     int userForKronosProgram (const Kronos::Program& p);
     int createUserFromKronosFm (const Kronos::Program& p);   // FM sinteza (MOD-7) umesto semplova
-    std::shared_ptr<const Fm::Patch> fmPatchFor (const UserProgram& u);   // postojeci user istog imena ili novi
+    std::shared_ptr<const Fm::Patch> fmPatchFor (const UserProgram& u);
+    int createFmUser();                                        // novi FM user (jednostavan DX patch)   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)
     juce::StringArray loadKronosCombi (const Kronos::Combi& c, bool keepChannels, std::vector<KronosMissing>* missing = nullptr);

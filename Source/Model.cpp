@@ -44,6 +44,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     if (category.isNotEmpty()) e->setAttribute ("category", category);
     if (kronosSource.isNotEmpty()) { e->setAttribute ("kronosPcg", kronosPcg); e->setAttribute ("kronosSource", kronosSource); }
     if (fmProgram.isNotEmpty()) { e->setAttribute ("fmProgram", fmProgram); e->setAttribute ("fmSlot", fmSlot); }
+    if (fmPatch.isNotEmpty()) e->setAttribute ("fmPatch", fmPatch);
     e->setAttribute ("voiceMode", voiceMode);
     e->setAttribute ("legatoXfade", (double) legatoXfade);
     e->setAttribute ("legatoStart", (double) legatoStart);
@@ -128,6 +129,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     u.kronosSource = e.getStringAttribute ("kronosSource");
     u.fmProgram = e.getStringAttribute ("fmProgram");
     u.fmSlot = juce::jlimit (0, 1, e.getIntAttribute ("fmSlot", 0));
+    u.fmPatch = e.getStringAttribute ("fmPatch");
     u.fxType = e.getIntAttribute ("fxType", 0);
     u.fxRate = f ("fxRate", u.fxRate);
     u.fxDepth = f ("fxDepth", u.fxDepth);

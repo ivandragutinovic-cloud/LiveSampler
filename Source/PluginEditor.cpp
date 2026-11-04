@@ -455,6 +455,13 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
 
     proc.addChangeListener (this);
     showTab (TabPerformance);
+    // test / dijagnostika: PIKASO_TAB=3 otvara odmah zadati tab
+    if (const auto t = juce::SystemStats::getEnvironmentVariable ("PIKASO_TAB", {}); t.isNotEmpty())
+    {
+        juce::Component::SafePointer<LiveSamplerEditor> safe (this);
+        const int tab = t.getIntValue();
+        juce::Timer::callAfterDelay (1500, [safe, tab] { if (safe != nullptr) safe->showTab ((Tab) juce::jlimit (0, (int) NumTabs - 1, tab)); });
+    }
     refreshAll();
     startTimerHz (10);
 }
