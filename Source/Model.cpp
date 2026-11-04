@@ -105,6 +105,8 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
         x->setAttribute ("fadeCurve", o.fadeCurve);
         x->setAttribute ("block", o.block);
         x->setAttribute ("keyOff", o.keyOff);
+        if (std::abs (o.keySlope - 1.0f) > 0.001f) x->setAttribute ("slope", (double) o.keySlope);
+        if (o.zoneKey >= 0) x->setAttribute ("zoneKey", o.zoneKey);
         x->setAttribute ("eqLow", (double) o.eqLowDb);
         x->setAttribute ("eqMid", (double) o.eqMidDb);
         x->setAttribute ("eqMidFreq", (double) o.eqMidFreq);
@@ -215,6 +217,8 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         o.fadeOut = juce::jlimit (0, 127, x->getIntAttribute ("fadeOut", 0));
         o.fadeCurve = x->getIntAttribute ("fadeCurve", 0);
         o.keyOff = x->getBoolAttribute ("keyOff", false);
+        o.keySlope = (float) juce::jlimit (-1.0, 2.0, x->getDoubleAttribute ("slope", 1.0));
+        o.zoneKey = juce::jlimit (-1, 127, x->getIntAttribute ("zoneKey", -1));
         o.eqLowDb = (float) x->getDoubleAttribute ("eqLow", 0.0);
         o.eqMidDb = (float) x->getDoubleAttribute ("eqMid", 0.0);
         o.eqMidFreq = (float) x->getDoubleAttribute ("eqMidFreq", 1000.0);

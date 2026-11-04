@@ -114,6 +114,7 @@ private:
         double pitch = 60.0, pitchTarget = 60.0, glideCoef16 = 0.0;
         double rootKey = 60.0, tune = 0.0;     // tune u polutonovima
         bool fixedPitch = false, loop = false;
+        double keySlope = 1.0;
         int loopStart = 0, loopEnd = 0, endPos = 0, loopXfade = 0;
         float vel01 = 1.0f, velGain = 1.0f, gainL = 1.0f, gainR = 1.0f, ampMod = 1.0f;
         bool fadingOut = false;

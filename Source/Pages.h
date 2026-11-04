@@ -100,6 +100,7 @@ private:
 
     void showMenu();
     void showEq();
+    void showKeyFollow();
     LearnButton onButton, menuButton, instButton, mapButton, keyOffButton, eqButton, instPrev, instNext;
     void stepInstrument (int dir);
     void pickInstrument();

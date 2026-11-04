@@ -29,6 +29,10 @@ struct OscSettings
     int fadeCurve = 0;                  // 0 linearno, 1 power
     float velRampDb = 0.0f;             // izjednacena dinamika slojeva: jacina na donjoj granici MS-a (dB, gornja = 0)
     bool keyOff = false;                // svira kad se pusti taster (release / keyoff sempl)
+    // Key follow (Kronos Pitch Slope): 1 = normalno, 0 = ista visina na svim tasterima, 0.5 = pola tona po tasteru...
+    float keySlope = 1.0f;
+    // jedan sempl na svim tasterima: zona sa ovog tastera svira na celom rasponu MS-a (-1 = iskljuceno, svaki taster svoju zonu)
+    int zoneKey = -1;
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;   // EQ ovog MS-a
 
     bool hasEq() const { return std::abs (eqLowDb) > 0.05f || std::abs (eqMidDb) > 0.05f || std::abs (eqHighDb) > 0.05f; }

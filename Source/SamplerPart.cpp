@@ -315,7 +315,8 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             continue;
 
         const int oscPitch = pitch + o.transpose;
-        auto* zone = inst->findZone (juce::jlimit (0, 127, oscPitch), velocity);
+        // "jedan sempl na sve tastere": zona se uzima sa izabranog tastera, visina i dalje prati taster (key follow)
+        auto* zone = inst->findZone (o.zoneKey >= 0 ? o.zoneKey : juce::jlimit (0, 127, oscPitch), velocity);
         if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) inst->samples.size())
             continue;
         auto* smp = inst->samples[(size_t) zone->sample].get();
@@ -344,6 +345,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.rootKey = zone->rootKey;
         v.tune = (zone->tuneCents + o.fineCents) / 100.0;
         v.fixedPitch = zone->fixedPitch;
+        v.keySlope = o.keySlope;
 
         const int len = smp->buffer.getNumSamples();
         v.endPos = zone->sampleEnd > 16 ? juce::jmin (zone->sampleEnd, len) : (smp->endPoint > 0 ? juce::jmin (smp->endPoint, len) : len);
@@ -457,7 +459,8 @@ void SamplerPart::updateModulation (Voice& v)
     const double pitchMod = pEg * sb.pitchEgInt + (std::sin (v.vibPhase) * (1.0 - std::abs ((double) sb.vibOffset)) + (double) sb.vibOffset) * vibCents / 100.0 + bendSemis + v.tune;
 
     const double rateRatio = v.sample->sampleRate / sampleRate;
-    const double played = v.fixedPitch ? v.rootKey : v.pitch;
+    // key follow (pitch slope) oko root tastera zone
+    const double played = v.fixedPitch ? v.rootKey : v.rootKey + (v.pitch - v.rootKey) * v.keySlope;
     v.inc = std::exp2 ((played + pitchMod - v.rootKey) / 12.0) * rateRatio;
 
     // filter

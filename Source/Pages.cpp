@@ -1047,6 +1047,13 @@ void OscRow::showMenu()
     m.addItem (2, T ("Paste MS"), Clip::ms.has_value());
     m.addSeparator();
     m.addItem (3, T ("Delete MS"));
+    m.addSeparator();
+    {
+        const auto& cur = proc.getUser (u).osc[(size_t) oscIndex()];
+        juce::String state = cur.zoneKey >= 0 ? T ("one sample") : juce::String();
+        if (std::abs (cur.keySlope - 1.0f) > 0.001f) state << (state.isEmpty() ? "" : ", ") << (std::abs (cur.keySlope) < 0.005f ? T ("fixed pitch") : juce::String (cur.keySlope, 2) + "x");
+        m.addItem (6, T ("Key follow / one sample on all keys...") + (state.isEmpty() ? juce::String() : "   [" + state + "]"));
+    }
     {
         const auto& cur = proc.getUser (u).osc[(size_t) oscIndex()];
         const auto layers = cur.on ? proc.velocityLayersOf (cur.instrument) : std::vector<int>();
@@ -1062,6 +1069,7 @@ void OscRow::showMenu()
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&menuButton), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
+        if (r == 6) { safe->showKeyFollow(); return; }
         auto info = [] (const juce::String& t) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, T ("Velocity layers"), t); };
         if (r == 4)
         {
@@ -1134,6 +1142,98 @@ namespace
     };
 }
 
+namespace
+{
+    // Key follow (Pitch Slope) i "jedan sempl na sve tastere" za jedan MS
+    struct MsKeyFollowPanel : public juce::Component
+    {
+        MsKeyFollowPanel (LiveSamplerProcessor& p, int user, int osc, juce::Colour c)
+            : proc (p), u (user), o (osc),
+              slope (T ("Key follow"), c, -1.0, 2.0, 1.0, [] (double v) { return std::abs (v) < 0.005 ? juce::String ("Fixed") : juce::String (v, 2) + "x"; }, 1.0)
+        {
+            const auto& s = proc.getUser (u).osc[(size_t) o];
+            slope.setValue (s.keySlope);
+            slope.slider.setLearnId ("user.ms" + juce::String (o % kMsPerOsc + 1) + ".keyfollow");
+            slope.onChange = [this] (double v) { edit ([v] (OscSettings& x) { x.keySlope = (float) (std::abs (v) < 0.02 ? 0.0 : v); }); };
+            addAndMakeVisible (slope);
+
+            one.setButtonText (T ("One sample on all keys, taken from key:"));
+            one.setToggleState (s.zoneKey >= 0, juce::dontSendNotification);
+            one.onClick = [this] { const bool b = one.getToggleState(); const int k = (int) key.getValue(); edit ([b, k] (OscSettings& x) { x.zoneKey = b ? k : -1; }); };
+            addAndMakeVisible (one);
+
+            UI::setupNoteBox (key, [this] { return proc.getC3Is60(); });
+            key.setValue (s.zoneKey >= 0 ? s.zoneKey : juce::jlimit (0, 127, (s.keyLow + s.keyHigh) / 2), juce::dontSendNotification);
+            key.onValueChange = [this] { if (! one.getToggleState()) return; const int k = (int) key.getValue(); edit ([k] (OscSettings& x) { x.zoneKey = k; }); };
+            addAndMakeVisible (key);
+
+            drum.setButtonText (T ("Drum hit: same sample, same pitch on all keys"));
+            drum.onClick = [this]
+            {
+                const int k = (int) key.getValue();
+                one.setToggleState (true, juce::dontSendNotification);
+                slope.setValue (0.0);
+                edit ([k] (OscSettings& x) { x.zoneKey = k; x.keySlope = 0.0f; });
+            };
+            addAndMakeVisible (drum);
+            normal.setButtonText (T ("Normal (each key its own zone, full key follow)"));
+            normal.onClick = [this]
+            {
+                one.setToggleState (false, juce::dontSendNotification);
+                slope.setValue (1.0);
+                edit ([] (OscSettings& x) { x.zoneKey = -1; x.keySlope = 1.0f; });
+            };
+            addAndMakeVisible (normal);
+
+            help.setText (T ("Key follow 1.00x = normal pitch, 0 = Fixed (the same pitch on every key, e.g. a drum hit), 0.50x = a semitone every 2 keys, "
+                             "negative = pitch goes down. The pivot is the root key of the sample. The MS key range (Key low / high) decides on which keys it plays."),
+                          juce::dontSendNotification);
+            help.setFont (juce::FontOptions (12.0f));
+            help.setColour (juce::Label::textColourId, Pal::dim);
+            addAndMakeVisible (help);
+            setSize (430, 250);
+        }
+        void edit (std::function<void (OscSettings&)> fn)
+        {
+            auto user = proc.getUser (u);
+            fn (user.osc[(size_t) o]);
+            proc.updateUser (u, user);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            auto top = r.removeFromTop (100);
+            slope.setBounds (top.removeFromLeft (100));
+            top.removeFromLeft (8);
+            one.setBounds (top.removeFromTop (28));
+            key.setBounds (top.removeFromTop (30).removeFromLeft (120).withX (one.getX() + 24));
+            key.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 30);
+            r.removeFromTop (4);
+            drum.setBounds (r.removeFromTop (30));
+            r.removeFromTop (4);
+            normal.setBounds (r.removeFromTop (30));
+            r.removeFromTop (4);
+            help.setBounds (r);
+        }
+        LiveSamplerProcessor& proc;
+        const int u, o;
+        ValueKnob slope;
+        juce::ToggleButton one;
+        LearnSlider key;
+        juce::TextButton drum, normal;
+        juce::Label help;
+    };
+}
+
+void OscRow::showKeyFollow()
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    auto* top = getTopLevelComponent();
+    juce::CallOutBox::launchAsynchronously (std::make_unique<MsKeyFollowPanel> (proc, u, oscIndex(), Pal::part[blockFn()]),
+                                            top->getLocalArea (this, menuButton.getBounds()), top);
+}
+
 void OscRow::showEq()
 {
     const int u = userIndex();
@@ -1168,6 +1268,15 @@ void OscRow::refresh()
     mapButton.setEnabled (s.instrument.isNotEmpty());
     onButton.setColour (juce::TextButton::buttonOnColourId, Pal::part[blockFn()]);
     keyOffButton.setToggleState (s.keyOff, juce::dontSendNotification);
+    {
+        // key follow / jedan sempl: narandzasta strelica na meniju MS-a
+        const bool kf = s.zoneKey >= 0 || std::abs (s.keySlope - 1.0f) > 0.001f;
+        if (kf) menuButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xffff8a3d));
+        else menuButton.removeColour (juce::TextButton::buttonColourId);
+        menuButton.setTooltip (kf ? T ("Key follow: ") + (std::abs (s.keySlope) < 0.005f ? T ("Fixed") : juce::String (s.keySlope, 2) + "x")
+                                        + (s.zoneKey >= 0 ? T (", one sample from key ") + juce::MidiMessage::getMidiNoteName (s.zoneKey, true, true, proc.getC3Is60() ? 3 : 4) : juce::String())
+                                  : T ("Copy / paste / delete this MS, key follow"));
+    }
     eqButton.setColour (juce::TextButton::buttonColourId, s.hasEq() ? juce::Colour (0xff2f7d4a) : Pal::panelHi);
     setSliderValue (level, s.levelDb);
     setSliderValue (pan, s.pan);

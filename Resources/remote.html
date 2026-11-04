@@ -601,6 +601,14 @@ function msRange(oi, r) {
       const d = el("div", "", "", k); d.style.width = "150px";
       rowStep(d, { label: x[0], target: "user", path: O + "@" + x[1], lo: x[2], hi: x[3], fmt: x[4], big: x[5], def: x[6] });
     });
+    el("h3", "", "KEY FOLLOW (1.00x = normal, 0 = fixed pitch on every key)", g).style.margin = "10px 0 4px";
+    const kf = el("div", "row", "", g);
+    knob(kf, { label: "Key follow", target: "user", path: O + "@slope", lo: -1, hi: 2, c: 1, def: 1, fmt: v => Math.abs(v) < 0.02 ? "Fixed" : v.toFixed(2) + "x", col });
+    toggle(kf, { label: "One sample on all keys", get: () => +getV("user", O + "@zoneKey", -1) >= 0, set: v => setP("user", O + "@zoneKey", v ? Math.round(((+getV("user", O + "@keyLow", 0)) + (+getV("user", O + "@keyHigh", 127))) / 2) : -1) });
+    const zk = el("div", "", "", kf); zk.style.width = "170px";
+    rowStep(zk, { label: "From key", lo: -1, hi: 127, big: 12, fmt: v => v < 0 ? "Off" : noteName(v), get: () => +getV("user", O + "@zoneKey", -1), set: v => setP("user", O + "@zoneKey", v) });
+    el("button", "", "Drum hit (fixed)", kf).onclick = () => { const k = +getV("user", O + "@zoneKey", -1); setMany("user", [[O + "@slope", 0], [O + "@zoneKey", k >= 0 ? k : Math.round(((+getV("user", O + "@keyLow", 0)) + (+getV("user", O + "@keyHigh", 127))) / 2)]]); };
+    el("button", "", "Normal", kf).onclick = () => setMany("user", [[O + "@slope", 1], [O + "@zoneKey", -1]]);
     el("h3", "", "VELOCITY CROSSFADE CURVE", g).style.margin = "10px 0 4px";
     seg(g, { target: "user", path: O + "@fadeCurve", items: ["Linear", "Power"] });
     const r2 = el("div", "row", "", g); r2.style.marginTop = "10px";
