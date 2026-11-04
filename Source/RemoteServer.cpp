@@ -225,6 +225,11 @@ void RemoteServer::handleConnection (std::unique_ptr<juce::StreamingSocket> s)
             if (! sendResponse (*s, 200, "text/html; charset=utf-8", page, keep)) break;
             continue;
         }
+        if (method == "GET" && path == "/ws" && headers["upgrade"].equalsIgnoreCase ("websocket") && headers["sec-websocket-key"].isNotEmpty())
+        {
+            serveWebSocket (*s, headers["sec-websocket-key"]);
+            break;
+        }
         if (method == "GET" && path == "/events")
         {
             serveEvents (*s);
@@ -290,6 +295,143 @@ void RemoteServer::serveEvents (juce::StreamingSocket& s)
             lastWrite = juce::Time::getMillisecondCounter();
         }
         if (! ok) break;
+    }
+    const juce::ScopedLock sl (clientsLock);
+    clients.erase (std::remove (clients.begin(), clients.end(), c), clients.end());
+}
+
+
+//==============================================================================
+//  WebSocket (RFC 6455): handshake treba SHA-1 + base64
+namespace
+{
+    std::array<juce::uint8, 20> sha1 (const std::string& msg)
+    {
+        juce::uint32 h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+        std::vector<juce::uint8> d (msg.begin(), msg.end());
+        const juce::uint64 bits = (juce::uint64) d.size() * 8;
+        d.push_back (0x80);
+        while (d.size() % 64 != 56) d.push_back (0);
+        for (int i = 7; i >= 0; --i) d.push_back ((juce::uint8) (bits >> (i * 8)));
+        auto rol = [] (juce::uint32 x, int n) { return (x << n) | (x >> (32 - n)); };
+        for (size_t c = 0; c < d.size(); c += 64)
+        {
+            juce::uint32 w[80];
+            for (int i = 0; i < 16; ++i)
+                w[i] = (juce::uint32) d[c + (size_t) i * 4] << 24 | (juce::uint32) d[c + (size_t) i * 4 + 1] << 16 | (juce::uint32) d[c + (size_t) i * 4 + 2] << 8 | d[c + (size_t) i * 4 + 3];
+            for (int i = 16; i < 80; ++i) w[i] = rol (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+            juce::uint32 a = h0, b = h1, cc = h2, dd = h3, e = h4;
+            for (int i = 0; i < 80; ++i)
+            {
+                juce::uint32 f, k;
+                if (i < 20)      { f = (b & cc) | (~b & dd); k = 0x5A827999; }
+                else if (i < 40) { f = b ^ cc ^ dd; k = 0x6ED9EBA1; }
+                else if (i < 60) { f = (b & cc) | (b & dd) | (cc & dd); k = 0x8F1BBCDC; }
+                else             { f = b ^ cc ^ dd; k = 0xCA62C1D6; }
+                const juce::uint32 t = rol (a, 5) + f + e + k + w[i];
+                e = dd; dd = cc; cc = rol (b, 30); b = a; a = t;
+            }
+            h0 += a; h1 += b; h2 += cc; h3 += dd; h4 += e;
+        }
+        std::array<juce::uint8, 20> out {};
+        const juce::uint32 hs[] = { h0, h1, h2, h3, h4 };
+        for (int i = 0; i < 5; ++i) for (int j = 0; j < 4; ++j) out[(size_t) (i * 4 + j)] = (juce::uint8) (hs[i] >> (24 - j * 8));
+        return out;
+    }
+
+    std::string wsFrame (const std::string& payload, int opcode = 1)
+    {
+        std::string f;
+        f.push_back ((char) (0x80 | opcode));
+        const auto n = payload.size();
+        if (n < 126) f.push_back ((char) n);
+        else if (n < 65536) { f.push_back ((char) 126); f.push_back ((char) (n >> 8)); f.push_back ((char) (n & 0xff)); }
+        else { f.push_back ((char) 127); for (int i = 7; i >= 0; --i) f.push_back ((char) ((juce::uint64) n >> (i * 8))); }
+        return f + payload;
+    }
+}
+
+juce::String RemoteServer::webSocketAccept (const juce::String& key)
+{
+    const auto h = sha1 ((key.trim() + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").toStdString());
+    return juce::Base64::toBase64 (h.data(), h.size());
+}
+
+void RemoteServer::serveWebSocket (juce::StreamingSocket& s, const juce::String& key)
+{
+    const std::string h = ("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
+                           + webSocketAccept (key) + "\r\n\r\n").toStdString();
+    if (! writeAll (s, h.data(), (int) h.size())) return;
+    auto c = std::make_shared<Client>();
+    c->socket = &s;
+    {
+        const juce::ScopedLock sl (clientsLock);
+        clients.push_back (c);
+    }
+    std::string in;            // primljeni bajtovi koji jos nisu ceo frame
+    std::string message;       // tekst iz vise delova (fragmentacija)
+    auto lastWrite = juce::Time::getMillisecondCounter();
+    bool ok = true;
+    while (ok && ! stopping.load())
+    {
+        // 1) poslati stanje (isti red kao za /events)
+        juce::StringArray q;
+        {
+            const juce::ScopedLock sl (c->lock);
+            q.swapWith (c->queue);
+        }
+        for (auto& m : q)
+        {
+            const auto f = wsFrame (m.toStdString());
+            if (! writeAll (s, f.data(), (int) f.size())) { ok = false; break; }
+            lastWrite = juce::Time::getMillisecondCounter();
+        }
+        if (! ok) break;
+        if (juce::Time::getMillisecondCounter() - lastWrite > 10000)
+        {
+            const auto f = wsFrame ({}, 9);   // ping: veza ostaje otvorena (WiFi, ruter)
+            if (! writeAll (s, f.data(), (int) f.size())) break;
+            lastWrite = juce::Time::getMillisecondCounter();
+        }
+
+        // 2) primiti komande sa iPad-a (ceka najvise 15 ms da bi slanje ostalo brzo)
+        const int r = s.waitUntilReady (true, 15);
+        if (r < 0) break;
+        if (r == 0) continue;
+        char tmp[8192];
+        const int n = s.read (tmp, (int) sizeof (tmp), false);
+        if (n <= 0) break;
+        in.append (tmp, (size_t) n);
+        if (in.size() > 8 * 1024 * 1024) break;
+        while (in.size() >= 2)
+        {
+            const auto b0 = (juce::uint8) in[0], b1 = (juce::uint8) in[1];
+            const int opcode = b0 & 0x0f;
+            const bool fin = (b0 & 0x80) != 0, masked = (b1 & 0x80) != 0;
+            size_t len = b1 & 0x7f, pos = 2;
+            if (len == 126) { if (in.size() < 4) break; len = (size_t) ((juce::uint8) in[2] << 8 | (juce::uint8) in[3]); pos = 4; }
+            else if (len == 127)
+            {
+                if (in.size() < 10) break;
+                len = 0; for (int i = 0; i < 8; ++i) len = len << 8 | (juce::uint8) in[(size_t) (2 + i)];
+                pos = 10;
+            }
+            if (len > 4 * 1024 * 1024) { ok = false; break; }
+            const size_t maskPos = pos;
+            if (masked) pos += 4;
+            if (in.size() < pos + len) break;
+            std::string payload = in.substr (pos, len);
+            if (masked) for (size_t i = 0; i < len; ++i) payload[i] = (char) (payload[i] ^ in[maskPos + (i & 3)]);
+            in.erase (0, pos + len);
+            if (opcode == 8) { const auto f = wsFrame ({}, 8); writeAll (s, f.data(), (int) f.size()); ok = false; break; }
+            if (opcode == 9) { const auto f = wsFrame (payload, 10); if (! writeAll (s, f.data(), (int) f.size())) { ok = false; break; } continue; }
+            if (opcode == 10) continue;
+            if (opcode == 1 || opcode == 0)
+            {
+                message += payload;
+                if (fin) { handleApi (juce::String::fromUTF8 (message.data(), (int) message.size())); message.clear(); }
+            }
+        }
     }
     const juce::ScopedLock sl (clientsLock);
     clients.erase (std::remove (clients.begin(), clients.end(), c), clients.end());

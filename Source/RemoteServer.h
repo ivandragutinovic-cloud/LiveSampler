@@ -9,6 +9,7 @@ class LiveSamplerProcessor;
 //    GET  /events      live state (Server-Sent Events): performance, users, the edited user, status
 //    GET  /instruments list of multisamples (for the search)
 //    POST /api         changes from the iPad (JSON)
+//    GET  /ws          WebSocket: the same state as /events and the same commands as /api, on one connection (faster)
 //  Default port 8091. Works without the editor window (state comes from the processor).
 //==============================================================================
 class RemoteServer : private juce::Thread,
@@ -41,7 +42,9 @@ private:
     static bool writeAll (juce::StreamingSocket& s, const void* data, int size);
     static bool sendResponse (juce::StreamingSocket& s, int code, const juce::String& type, const juce::MemoryBlock& body, bool keepAlive);
     void serveEvents (juce::StreamingSocket& s);
+    void serveWebSocket (juce::StreamingSocket& s, const juce::String& key);   // GET /ws: stanje i komande preko jedne veze
     juce::String handleApi (const juce::String& json);
+    static juce::String webSocketAccept (const juce::String& key);
 
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override { dirty = true; }

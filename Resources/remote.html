@@ -183,8 +183,23 @@ function setLocal(target, path, v) {
 
 // ---------- server ----------
 let es = null, connected = false;
+// veza: WebSocket (brze - stanje i komande na istoj vezi); ako ne uspe, Server-Sent Events + POST
+let ws = null, wsOk = false, wsFails = 0, wsTimer = 0;
 function connect() {
-  try { es && es.close(); } catch (e) {}
+  try { es && es.close(); } catch (e) {} es = null;
+  try { ws && ws.close(); } catch (e) {} ws = null; wsOk = false;
+  if (wsFails < 3 && "WebSocket" in window) {
+    let opened = false;
+    try { ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"); } catch (e) { ws = null; }
+    if (ws) {
+      const me = ws;
+      ws.onopen = () => { if (ws !== me) return; opened = true; wsOk = true; wsFails = 0; setConn(true); };
+      ws.onmessage = e => { if (ws !== me) return; try { onState(JSON.parse(e.data)); } catch (x) {} };
+      ws.onclose = () => { if (ws !== me) return; wsOk = false; setConn(false); if (!opened) wsFails++; clearTimeout(wsTimer); wsTimer = setTimeout(connect, opened ? 800 : 300); };
+      ws.onerror = () => {};
+      return;
+    }
+  }
   es = new EventSource("/events");
   es.onopen = () => setConn(true);
   es.onerror = () => { setConn(false); };
@@ -206,6 +221,7 @@ function flush() {
     if (q.op === "set" && q.sets.length === 1) { const k = q.target + q.sets[0][0] + (q.index ?? ""); if (seen[k] !== undefined) { merged[seen[k]] = q; continue; } seen[k] = merged.length; }
     merged.push(q);
   }
+  if (wsOk && ws && ws.readyState === 1 && ws.bufferedAmount < 65536) { ws.send(JSON.stringify(merged)); setTimeout(flush, 15); return; }
   fetch("/api", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(merged) })
     .catch(() => {}).finally(() => setTimeout(flush, 30));
 }
@@ -1231,7 +1247,7 @@ $("panic").onclick = () => api({ op: "panic" });
 $("back").onclick = () => { try { window.parent.postMessage("pikaso-close", "*"); } catch (e) {} };
 if (window.parent === window) $("back").style.display = "none";
 connect();
-setInterval(() => { if (!connected) connect(); }, 4000);
+setInterval(() => { if (!connected && !(ws && ws.readyState === 0)) connect(); }, 4000);
 setConn(false);
 </script>
 </body>
