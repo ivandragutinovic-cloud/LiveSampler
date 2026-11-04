@@ -4,7 +4,12 @@
 // Jedan sempl ucitan u memoriju (deli se izmedju verzija instrumenta)
 struct SampleData
 {
-    juce::AudioBuffer<float> buffer;   // uvek 2 kanala
+    // Dok se ucitava: float bafer (2 kanala). Posle compact() zvuk je u 16-bit PCM (mono kad su kanali isti),
+    // pa zauzima 2-4 puta manje RAM-a. Alati (MAPPING, auto loop) dobijaju float kopiju preko audio().
+    juce::AudioBuffer<float> buffer;
+    std::shared_ptr<const std::vector<juce::int16>> pcmL, pcmR;   // pcmR prazan = mono
+    int numFrames = 0;
+    float pcmScale = 1.0f / 32768.0f;                             // vrednost = pcm * pcmScale
     double sampleRate = 44100.0;
     int startOffset = 0;               // preskace tisinu na pocetku
     bool hasLoop = false;
@@ -14,7 +19,17 @@ struct SampleData
     juce::String id;                   // relativna putanja, koristi se u fajlu mape
     juce::String displayName;
 
-    double lengthSeconds() const { return buffer.getNumSamples() / sampleRate; }
+    void compact();                                   // float -> 16-bit (posle ucitavanja)
+    bool isCompact() const { return pcmL != nullptr; }
+    bool isMono() const { return pcmL != nullptr && pcmR == nullptr; }
+    int length() const { return pcmL != nullptr ? numFrames : buffer.getNumSamples(); }
+    const juce::AudioBuffer<float>& audio() const;   // float kopija za alate (samo message nit)
+    size_t memoryBytes() const;
+    double lengthSeconds() const { return length() / sampleRate; }
+
+private:
+    struct FloatCache { juce::CriticalSection lock; std::unique_ptr<juce::AudioBuffer<float>> buf; };
+    std::shared_ptr<FloatCache> cache { std::make_shared<FloatCache>() };
 };
 
 using SamplePtr = std::shared_ptr<const SampleData>;

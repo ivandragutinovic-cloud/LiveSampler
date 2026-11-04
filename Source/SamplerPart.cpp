@@ -337,6 +337,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) inst->samples.size())
                 continue;
             smp = inst->samples[(size_t) zone->sample].get();
+            if (smp == nullptr || ! smp->isCompact()) continue;
         }
 
         auto* vp = findFreeVoice();
@@ -379,7 +380,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         }
         else
         {
-        const int len = smp->buffer.getNumSamples();
+        const int len = smp->length();
         v.endPos = zone->sampleEnd > 16 ? juce::jmin (zone->sampleEnd, len) : (smp->endPoint > 0 ? juce::jmin (smp->endPoint, len) : len);
         if (zone->hasOwnLoop() && zone->loopEnd <= len)
         {
@@ -951,9 +952,11 @@ void SamplerPart::renderVoices (int start, int num)
             continue;
         }
         const auto* smp = v.sample;
-        const float* L = smp->buffer.getReadPointer (0);
-        const float* R = smp->buffer.getReadPointer (1);
-        const int len = smp->buffer.getNumSamples();
+        // 16-bit PCM (mono: oba kanala isti niz)
+        const juce::int16* L = smp->pcmL->data();
+        const juce::int16* R = smp->pcmR != nullptr ? smp->pcmR->data() : L;
+        const float pcmScale = smp->pcmScale;
+        const int len = smp->numFrames;
         const bool loop = v.loop;
         const int loopStart = v.loopStart, loopEnd = v.loopEnd;
         const int loopLen = loopEnd - loopStart;
@@ -961,7 +964,7 @@ void SamplerPart::renderVoices (int start, int num)
 
         const int xf = loop ? v.loopXfade : 0;
         const int xfStart = loopEnd - xf;
-        auto fetch = [&] (const float* d, int idx) -> float
+        auto fetch = [&] (const juce::int16* d, int idx) -> float
         {
             if (loop && idx >= loopEnd) idx -= loopLen;
             if (idx < 0) idx = 0;
@@ -969,9 +972,9 @@ void SamplerPart::renderVoices (int start, int num)
             {
                 // crossfade loop: kraj se pretapa u ono sto je pred pocetkom loop-a
                 const float w = (float) (idx - xfStart) / (float) xf;
-                return d[idx] * (1.0f - w) + d[idx - loopLen] * w;
+                return ((float) d[idx] * (1.0f - w) + (float) d[idx - loopLen] * w) * pcmScale;
             }
-            return idx < endPos ? d[idx] : 0.0f;
+            return idx < endPos ? (float) d[idx] * pcmScale : 0.0f;
         };
 
         for (int i = 0; i < num; ++i)

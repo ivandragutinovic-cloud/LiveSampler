@@ -2515,21 +2515,22 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         const juce::SpinLock::ScopedTryLockType tl (previewLock);
         if (tl.isLocked() && previewSmp != nullptr && previewPos >= 0.0 && buffer.getNumChannels() > 0)
         {
-            const auto& b = previewSmp->buffer;
-            const int len = b.getNumSamples();
+            const int len = previewSmp->numFrames;
             const double inc = previewSmp->sampleRate / juce::jmax (1.0, getSampleRate());
-            const float* L = b.getReadPointer (0);
-            const float* R = b.getReadPointer (b.getNumChannels() > 1 ? 1 : 0);
+            const float k = previewSmp->pcmScale;
+            const juce::int16* L = previewSmp->pcmL != nullptr ? previewSmp->pcmL->data() : nullptr;
+            const juce::int16* R = previewSmp->pcmR != nullptr ? previewSmp->pcmR->data() : L;
+            if (L == nullptr) previewPos = -1.0;
             auto* o0 = buffer.getWritePointer (0);
             auto* o1 = buffer.getWritePointer (buffer.getNumChannels() > 1 ? 1 : 0);
-            for (int i = 0; i < n; ++i)
+            for (int i = 0; i < n && previewPos >= 0.0; ++i)
             {
                 if (previewPos >= (double) (len - 1)) { previewPos = -1.0; break; }   // kraj: vise se ne svira
                 const int ip = juce::jmax (0, (int) previewPos);
                 const float t = (float) (previewPos - ip);
                 const float g = 0.8f * juce::Decibels::decibelsToGain (globalDb);
-                o0[i] += (L[ip] + (L[ip + 1] - L[ip]) * t) * g;
-                if (o1 != o0) o1[i] += (R[ip] + (R[ip + 1] - R[ip]) * t) * g;
+                o0[i] += ((float) L[ip] + (float) (L[ip + 1] - L[ip]) * t) * k * g;
+                if (o1 != o0) o1[i] += ((float) R[ip] + (float) (R[ip + 1] - R[ip]) * t) * k * g;
                 previewPos += inc;
             }
         }
@@ -2716,10 +2717,10 @@ private:
             const auto f = folder.getChildFile (fileName);
             if (! f.existsAsFile())
             {
-                const int len = sp->buffer.getNumSamples();
-                const bool mono = sp->buffer.getNumChannels() < 2
-                               || juce::FloatVectorOperations::findMaximum (sp->buffer.getReadPointer (0), len) == juce::FloatVectorOperations::findMaximum (sp->buffer.getReadPointer (1), len)
-                                  && std::memcmp (sp->buffer.getReadPointer (0), sp->buffer.getReadPointer (1), sizeof (float) * (size_t) len) == 0;
+                const int len = sp->length();
+                const bool mono = sp->audio().getNumChannels() < 2
+                               || juce::FloatVectorOperations::findMaximum (sp->audio().getReadPointer (0), len) == juce::FloatVectorOperations::findMaximum (sp->audio().getReadPointer (1), len)
+                                  && std::memcmp (sp->audio().getReadPointer (0), sp->audio().getReadPointer (1), sizeof (float) * (size_t) len) == 0;
                 std::unordered_map<juce::String, juce::String> meta;
                 if (sp->fileRootKey >= 0) meta["MidiUnityNote"] = juce::String (sp->fileRootKey);
                 if (sp->hasLoop && sp->loopEnd > sp->loopStart + 16)
@@ -2733,7 +2734,7 @@ private:
                 auto w = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sp->sampleRate).withNumChannels (mono ? 1 : 2)
                                                       .withBitsPerSample (24).withMetadataValues (meta));
                 if (w == nullptr) return false;
-                w->writeFromAudioSampleBuffer (sp->buffer, 0, len);
+                w->writeFromAudioSampleBuffer (sp->audio(), 0, len);
             }
         }
         // presemplovan Kronos zvuk: oznaka (release, slojevi) ide uz semplove

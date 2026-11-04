@@ -28,7 +28,7 @@ size_t Instrument::memoryBytes() const
 {
     size_t total = 0;
     for (auto& s : samples)
-        total += (size_t) s->buffer.getNumSamples() * (size_t) s->buffer.getNumChannels() * sizeof (float);
+        total += s->memoryBytes();
     return total;
 }
 
@@ -94,6 +94,66 @@ juce::String sourceTypeName (SourceType t)
         case SourceType::WavFolder: break;
     }
     return "WAV folder";
+}
+
+
+//==============================================================================
+//  SampleData: kompaktno cuvanje (16-bit, mono kad je moguce)
+//==============================================================================
+void SampleData::compact()
+{
+    const int len = buffer.getNumSamples();
+    if (pcmL != nullptr || len <= 0) return;
+    const int chans = buffer.getNumChannels();
+    const float* l = buffer.getReadPointer (0);
+    const float* r = buffer.getReadPointer (chans > 1 ? 1 : 0);
+    float peak = 0.0f;
+    bool mono = true;
+    for (int i = 0; i < len; ++i)
+    {
+        peak = juce::jmax (peak, std::abs (l[i]), std::abs (r[i]));
+        if (mono && std::abs (l[i] - r[i]) > 1.0e-5f) mono = false;
+    }
+    const float scale = peak > 1.0f ? peak : 1.0f;           // float WAV preko 0 dB: cuva se sa skalom
+    pcmScale = scale / 32767.0f;
+    auto conv = [len, scale] (const float* src)
+    {
+        auto v = std::make_shared<std::vector<juce::int16>> ((size_t) len);
+        auto* d = v->data();
+        for (int i = 0; i < len; ++i)
+            d[i] = (juce::int16) juce::jlimit (-32767, 32767, (int) std::lround (src[i] / scale * 32767.0f));
+        return std::shared_ptr<const std::vector<juce::int16>> (v);
+    };
+    pcmL = conv (l);
+    if (! mono) pcmR = conv (r);
+    numFrames = len;
+    buffer.setSize (0, 0, false, true, false);   // float vise ne treba (oslobadja memoriju)
+}
+
+const juce::AudioBuffer<float>& SampleData::audio() const
+{
+    if (pcmL == nullptr) return buffer;
+    const juce::ScopedLock sl (cache->lock);
+    if (cache->buf == nullptr)
+    {
+        auto b = std::make_unique<juce::AudioBuffer<float>> (2, numFrames);
+        for (int c = 0; c < 2; ++c)
+        {
+            const auto& src = (c == 1 && pcmR != nullptr) ? *pcmR : *pcmL;
+            auto* d = b->getWritePointer (c);
+            for (int i = 0; i < numFrames; ++i) d[i] = (float) src[(size_t) i] * pcmScale;
+        }
+        cache->buf = std::move (b);
+    }
+    return *cache->buf;
+}
+
+size_t SampleData::memoryBytes() const
+{
+    size_t t = (size_t) buffer.getNumSamples() * (size_t) buffer.getNumChannels() * sizeof (float);
+    if (pcmL != nullptr) t += pcmL->size() * sizeof (juce::int16);
+    if (pcmR != nullptr) t += pcmR->size() * sizeof (juce::int16);
+    return t;
 }
 
 //==============================================================================
@@ -456,6 +516,7 @@ SamplePtr SampleLibrary::loadAudioFile (const juce::File& f, const juce::String&
     }
 
     trimLeadingSilence (*sd);
+    sd->compact();
     return sd;
 }
 
@@ -683,7 +744,7 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
                 if (smp != nullptr && smp->size >= 16)
                     if (auto n = r.text (smp->offset, 16); n.isNotEmpty()) sd->displayName = n;
                 const juce::uint8 attributes = smd != nullptr && smd->size >= 5 ? r.d[smd->offset + 4] : (juce::uint8) (base->hasLoop ? 0x00 : 0x80);
-                applyPoints (*sd, sd->buffer.getNumSamples(), attributes);
+                applyPoints (*sd, sd->length(), attributes);
                 return sd;
             }
         }
@@ -769,9 +830,13 @@ SamplePtr SampleLibrary::loadKsf (const juce::File& f, const juce::String& id, j
     }
 
     if (applyPoints (*sd, frames, attributes))
+    {
+        sd->compact();
         return sd;
+    }
 
     trimLeadingSilence (*sd);
+    sd->compact();
     return sd;
 }
 
@@ -1297,7 +1362,7 @@ void SampleLibrary::loadKontakt (Instrument& inst, bool c3Is60)
             z.tuneCents = nz.tune;
             z.gainDb = juce::jlimit (-60.0f, 24.0f, nz.gainDb + g.gainDb);
             z.pan = nz.pan;
-            const int len = smp.buffer.getNumSamples();
+            const int len = smp.length();
             if (nz.sampleStart > 0 && nz.sampleStart < len - 64)
                 z.sampleStart = nz.sampleStart;
             if (nz.loopStart >= 0 && nz.loopEnd <= len && nz.loopEnd > nz.loopStart + 16)

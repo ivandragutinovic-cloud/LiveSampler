@@ -371,7 +371,7 @@ WaveEditor::WaveEditor()
     {
         if (sample == nullptr) return;
         auto np = pts;
-        np.start = AutoLoop::findOnset (sample->buffer, sample->buffer.getNumSamples(), sample->sampleRate);
+        np.start = AutoLoop::findOnset (sample->audio(), sample->length(), sample->sampleRate);
         if (np.loop && np.start >= np.loopStart) np.start = 0;
         apply (np, true);
     };
@@ -451,7 +451,7 @@ AutoLoop::Settings WaveEditor::autoSettings() const
 void WaveEditor::runAutoLoop()
 {
     if (sample == nullptr) return;
-    const auto r = AutoLoop::find (sample->buffer, pts.end > 0 ? juce::jmax (pts.end, sample->buffer.getNumSamples()) : sample->buffer.getNumSamples(),
+    const auto r = AutoLoop::find (sample->audio(), pts.end > 0 ? juce::jmax (pts.end, sample->length()) : sample->length(),
                                    sample->sampleRate, autoSettings());
     if (! r.found)
     {
@@ -495,7 +495,7 @@ void WaveEditor::setSample (SamplePtr s, const Points& p)
 void WaveEditor::updateBoxes()
 {
     const juce::ScopedValueSetter<bool> svs (updating, true);
-    const int len = sample != nullptr ? sample->buffer.getNumSamples() : 1;
+    const int len = sample != nullptr ? sample->length() : 1;
     for (auto& b : boxes) b.setRange (0, juce::jmax (1, len), 1);
     boxes[0].setValue (pts.start, juce::dontSendNotification);
     boxes[1].setValue (pts.loopStart, juce::dontSendNotification);
@@ -510,14 +510,14 @@ void WaveEditor::updateBoxes()
 void WaveEditor::zoomToFit()
 {
     viewStart = 0.0;
-    viewLen = sample != nullptr ? juce::jmax (16.0, (double) sample->buffer.getNumSamples()) : 1.0;
+    viewLen = sample != nullptr ? juce::jmax (16.0, (double) sample->length()) : 1.0;
 }
 
 int WaveEditor::snap (int pos) const
 {
     if (sample == nullptr || ! zeroToggle.getToggleState()) return pos;
-    const auto* d = sample->buffer.getReadPointer (0);
-    const int len = sample->buffer.getNumSamples();
+    const auto* d = sample->audio().getReadPointer (0);
+    const int len = sample->length();
     for (int r = 0; r < 2000; ++r)
         for (int sgn : { 1, -1 })
         {
@@ -531,7 +531,7 @@ int WaveEditor::snap (int pos) const
 void WaveEditor::apply (Points np, bool finished)
 {
     if (sample == nullptr) return;
-    const int len = sample->buffer.getNumSamples();
+    const int len = sample->length();
     np.end = juce::jlimit (32, len, np.end);
     np.start = juce::jlimit (0, np.end - 16, np.start);
     np.loopStart = juce::jlimit (np.start, np.end - 16, np.loopStart);
@@ -601,8 +601,8 @@ void WaveEditor::paint (juce::Graphics& g)
         return;
     }
 
-    const auto* d = sample->buffer.getReadPointer (0);
-    const int len = sample->buffer.getNumSamples();
+    const auto* d = sample->audio().getReadPointer (0);
+    const int len = sample->length();
     const float cy = (float) a.getCentreY(), hh = a.getHeight() * 0.46f * vZoom;
 
     // oblik talasa (min/max po pikselu)
@@ -731,7 +731,7 @@ void WaveEditor::mouseDrag (const juce::MouseEvent& e)
     if (panning)
     {
         const double perPx = viewLen / juce::jmax (1, waveArea().getWidth());
-        const double len = sample->buffer.getNumSamples();
+        const double len = sample->length();
         viewStart = juce::jlimit (0.0, juce::jmax (0.0, len - viewLen), panStartView - (e.x - panStartX) * perPx);
         repaint();
         return;
@@ -769,11 +769,11 @@ void WaveEditor::mouseMove (const juce::MouseEvent& e)
 void WaveEditor::fitHeight()
 {
     if (sample == nullptr) return;
-    const int len = sample->buffer.getNumSamples();
+    const int len = sample->length();
     const int i0 = juce::jlimit (0, len, (int) viewStart), i1 = juce::jlimit (i0, len, (int) (viewStart + viewLen));
     float pk = 0;
-    for (int c = 0; c < juce::jmin (2, sample->buffer.getNumChannels()); ++c)
-        if (i1 > i0) pk = juce::jmax (pk, sample->buffer.getMagnitude (c, i0, i1 - i0));
+    for (int c = 0; c < juce::jmin (2, sample->audio().getNumChannels()); ++c)
+        if (i1 > i0) pk = juce::jmax (pk, sample->audio().getMagnitude (c, i0, i1 - i0));
     vZoom = pk > 1.0e-6f ? juce::jlimit (1.0f, 1000.0f, 0.95f / pk) : 1.0f;
 }
 
@@ -793,7 +793,7 @@ void WaveEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWhe
         repaint();
         return;
     }
-    const double len = sample->buffer.getNumSamples();
+    const double len = sample->length();
     const double at = xToSample ((float) e.x);
     const double newLen = juce::jlimit (64.0, juce::jmax (64.0, len), viewLen * factor);
     const double rel = (at - viewStart) / viewLen;
@@ -828,7 +828,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
             if (zz.sample < 0 || zz.sample >= (int) inst->samples.size()) continue;
             ++total;
             const auto& s = *inst->samples[(size_t) zz.sample];
-            const auto r = AutoLoop::find (s.buffer, s.buffer.getNumSamples(), s.sampleRate, waveEditor.autoSettings());
+            const auto r = AutoLoop::find (s.audio(), s.length(), s.sampleRate, waveEditor.autoSettings());
             if (! r.found) continue;
             zz.loop = true;
             zz.loopStart = r.start;
@@ -850,7 +850,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         {
             if (zz.sample < 0 || zz.sample >= (int) inst->samples.size()) continue;
             const auto& s = *inst->samples[(size_t) zz.sample];
-            int st = AutoLoop::findOnset (s.buffer, s.buffer.getNumSamples(), s.sampleRate);
+            int st = AutoLoop::findOnset (s.audio(), s.length(), s.sampleRate);
             if (zz.loop && st >= zz.loopStart) st = 0;
             if (st != zz.sampleStart) { zz.sampleStart = juce::jmax (1, st); ++changed; }
         }
@@ -1084,7 +1084,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
             {
                 const auto& s = *inst->samples[(size_t) z.sample];
                 z.loopStart = z.sampleStart > 0 ? z.sampleStart : s.startOffset;
-                z.loopEnd = s.endPoint > 0 ? s.endPoint : s.buffer.getNumSamples();
+                z.loopEnd = s.endPoint > 0 ? s.endPoint : s.length();
             }
         }, false);
     };
@@ -1436,7 +1436,7 @@ void MappingEditor::updateWave()
         return;
     }
     auto s = inst->samples[(size_t) z.sample];
-    const int len = s->buffer.getNumSamples();
+    const int len = s->length();
     WaveEditor::Points p;
     p.start = z.sampleStart > 0 ? z.sampleStart : s->startOffset;
     const int endDefault = s->endPoint > 0 ? s->endPoint : len;
@@ -1884,13 +1884,13 @@ bool MappingEditor::rewriteWav (const juce::File& f, const SampleData& s, int fr
         if (r->usesFloatingPointData) bits = 32;
         sr = r->sampleRate;
     }
-    const int len = s.buffer.getNumSamples();
+    const int len = s.length();
     from = juce::jlimit (0, len, from);
     to = juce::jlimit (from + 1, len, to);
     juce::AudioBuffer<float> out (chans, to - from);
     for (int c = 0; c < chans; ++c)
     {
-        out.copyFrom (c, 0, s.buffer, juce::jmin (c, s.buffer.getNumChannels() - 1), from, to - from);
+        out.copyFrom (c, 0, s.audio(), juce::jmin (c, s.audio().getNumChannels() - 1), from, to - from);
         if (std::abs (gain - 1.0f) > 1.0e-6f) out.applyGain (c, 0, to - from, gain);
     }
     std::unordered_map<juce::String, juce::String> meta;
@@ -1928,7 +1928,7 @@ void MappingEditor::trimToDisk (bool onlySelected)
         const auto& z = zones[(size_t) i];
         if (z.sample < 0 || z.sample >= (int) inst->samples.size()) continue;
         const auto& smp = *inst->samples[(size_t) z.sample];
-        const int len = smp.buffer.getNumSamples();
+        const int len = smp.length();
         int ls = -1, le = -1;
         if (z.loop && z.hasOwnLoop()) { ls = z.loopStart; le = z.loopEnd; }
         else if (z.loop && smp.hasLoop) { ls = smp.loopStart; le = smp.loopEnd; }
@@ -1946,10 +1946,10 @@ void MappingEditor::trimToDisk (bool onlySelected)
     for (auto& [si, c] : cuts)
     {
         const auto& smp = *inst->samples[(size_t) si];
-        const double perSample = (double) inst->source.getChildFile (smp.id).getSize() / juce::jmax (1, smp.buffer.getNumSamples());
+        const double perSample = (double) inst->source.getChildFile (smp.id).getSize() / juce::jmax (1, smp.length());
         total += (double) inst->source.getChildFile (smp.id).getSize();
         const int keep = juce::jmax (0, c.to - c.from);
-        if (keep < smp.buffer.getNumSamples() - 32) { saved += perSample * (smp.buffer.getNumSamples() - keep); ++files; }
+        if (keep < smp.length() - 32) { saved += perSample * (smp.length() - keep); ++files; }
     }
     if (files == 0)
     {
@@ -1971,7 +1971,7 @@ void MappingEditor::trimToDisk (bool onlySelected)
             for (auto& [si, c] : cuts)
             {
                 const auto& smp = *me.inst->samples[(size_t) si];
-                if (c.to - c.from >= smp.buffer.getNumSamples() - 32) continue;
+                if (c.to - c.from >= smp.length() - 32) continue;
                 juce::String err;
                 if (! me.rewriteWav (me.inst->source.getChildFile (smp.id), smp, c.from, c.to, 1.0f, c.loopStart, c.loopEnd, err)) { errors.add (err); continue; }
                 // zone tog sempla: tacke se pomeraju za odseceni pocetak
@@ -1998,8 +1998,8 @@ void MappingEditor::normalizeFiles()
     if (inst == nullptr || inst->type != SourceType::WavFolder || inst->samples.empty()) return;
     float peak = 0.0f;
     for (auto& sp : inst->samples)
-        for (int c = 0; c < sp->buffer.getNumChannels(); ++c)
-            peak = juce::jmax (peak, sp->buffer.getMagnitude (c, 0, sp->buffer.getNumSamples()));
+        for (int c = 0; c < sp->audio().getNumChannels(); ++c)
+            peak = juce::jmax (peak, sp->audio().getMagnitude (c, 0, sp->length()));
     if (peak < 1.0e-6f) return;
     const float gain = juce::Decibels::decibelsToGain (-0.3f) / peak;
     const float gainDb = juce::Decibels::gainToDecibels (gain);
@@ -2021,7 +2021,7 @@ void MappingEditor::normalizeFiles()
             for (auto& sp : me.inst->samples)
             {
                 juce::String err;
-                if (! me.rewriteWav (me.inst->source.getChildFile (sp->id), *sp, 0, sp->buffer.getNumSamples(), gain,
+                if (! me.rewriteWav (me.inst->source.getChildFile (sp->id), *sp, 0, sp->length(), gain,
                                      sp->hasLoop ? sp->loopStart : -1, sp->hasLoop ? sp->loopEnd : -1, err))
                     errors.add (err);
             }
@@ -2041,12 +2041,12 @@ void MappingEditor::equalizeZones()
     {
         if (z[i].sample < 0 || z[i].sample >= (int) inst->samples.size()) continue;
         const auto& smp = *inst->samples[(size_t) z[i].sample];
-        const int len = smp.buffer.getNumSamples();
-        const int on = z[i].sampleStart > 0 ? z[i].sampleStart : AutoLoop::findOnset (smp.buffer, len, smp.sampleRate);
+        const int len = smp.length();
+        const int on = z[i].sampleStart > 0 ? z[i].sampleStart : AutoLoop::findOnset (smp.audio(), len, smp.sampleRate);
         const int n = juce::jmin (len - on, (int) (smp.sampleRate * 0.3));
         if (n <= 0) continue;
         float rms = 0;
-        for (int c = 0; c < juce::jmin (2, smp.buffer.getNumChannels()); ++c) rms += smp.buffer.getRMSLevel (c, on, n) * 0.5f;
+        for (int c = 0; c < juce::jmin (2, smp.audio().getNumChannels()); ++c) rms += smp.audio().getRMSLevel (c, on, n) * 0.5f;
         if (rms > 1.0e-6f) groups[{ z[i].lowVel, z[i].highVel }].push_back ({ i, juce::Decibels::gainToDecibels (rms) });
     }
     int changed = 0;
