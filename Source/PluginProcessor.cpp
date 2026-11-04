@@ -534,6 +534,7 @@ void LiveSamplerProcessor::rebuildConfig()
     cfg->master = perf.master;
     cfg->globalDb = globalDb;
     cfg->globalTranspose = globalTranspose;
+    cfg->perfSerial = perfSerial;
     cfg->terca = terca;
 
     ConfigPtr old;
@@ -1305,6 +1306,7 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     perf = slots[(size_t) slot];
     currentSlot = slot;
     currentBank = slot / kPerfPerBank;
+    ++perfSerial;     // zvuci prethodnog performansa izdisu prirodno (SST)
     vectorX = 0.0f; vectorY = 0.0f;     // joystick krece iz centra, kao na Kronosu
     vectorUiDirty = true;
     perfDirty = false;
@@ -2133,8 +2135,9 @@ juce::String LiveSamplerProcessor::getTercaText() const
 void LiveSamplerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     maxBlock = juce::jmax (64, samplesPerBlock);
-    for (auto& p : parts)
-        p.prepare (sampleRate, maxBlock);
+    for (auto& bank : partBanks)
+        for (auto& p : bank)
+            p.prepare (sampleRate, maxBlock);
     master.prepare (sampleRate, maxBlock);
     mainBuf.setSize (2, maxBlock);
     reverbBuf.setSize (2, maxBlock);
@@ -2266,6 +2269,11 @@ void LiveSamplerProcessor::routeNoteOff (int ch, int note)
             parts[p].noteOff (note);
         if (harmonized[ch][note] & (1 << p))
             parts[p].noteOff (128 + note);
+        if (tailConfig != nullptr)
+        {
+            tails[p].noteOff (note);        // ton odsviran u prethodnom performansu
+            tails[p].noteOff (128 + note);
+        }
     }
     routed[ch][note] = 0;
     harmonized[ch][note] = 0;
@@ -2324,8 +2332,11 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
     }
     else if (m.isSustainPedalOn() || m.isSustainPedalOff())
     {
+        sustainHeld = m.isSustainPedalOn();
         for (auto& p : parts)
-            p.setSustain (m.isSustainPedalOn());
+            p.setSustain (sustainHeld);
+        for (auto& p : tails)
+            p.setSustain (sustainHeld);
     }
     else if (m.isController() && learnVector.load() != 0)
     {
@@ -2368,6 +2379,8 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
     {
         for (auto& p : parts)
             p.allNotesOff (m.isAllSoundOff());
+        for (auto& p : tails)
+            p.allNotesOff (m.isAllSoundOff());
         std::memset (routed, 0, sizeof (routed));
         std::memset (harmonized, 0, sizeof (harmonized));
         std::memset (heldCount, 0, sizeof (heldCount));
@@ -2393,7 +2406,17 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     {
         const juce::SpinLock::ScopedLockType sl (configLock);
         if (audioConfig != pendingConfig)
+        {
+            // drugi performans: trenutni delovi postaju "repovi" (dok drzis tastere / sustain zvuk ostaje), novi delovi primaju note
+            if (audioConfig != nullptr && pendingConfig != nullptr && pendingConfig->perfSerial != audioConfig->perfSerial)
+            {
+                for (auto& p : tails) p.allNotesOff (true);
+                std::swap (parts.d, tails.d);
+                tailConfig = audioConfig;
+                for (auto& p : parts) { p.allNotesOff (true); p.setSustain (sustainHeld); }
+            }
             audioConfig = pendingConfig;
+        }
     }
     if (audioConfig == nullptr)
         return;
@@ -2404,6 +2427,8 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (panicRequested.exchange (false))
     {
         for (auto& p : parts)
+            p.allNotesOff (true);
+        for (auto& p : tails)
             p.allNotesOff (true);
         std::memset (routed, 0, sizeof (routed));
         std::memset (harmonized, 0, sizeof (harmonized));
@@ -2452,6 +2477,22 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         for (auto& p : parts)
             p.endBlock (mainBuf, reverbBuf, delayBuf, len);
 
+        // repovi prethodnog performansa (svaki sa svojim podesavanjima: jacina, EQ, efekat)
+        if (tailConfig != nullptr)
+        {
+            int alive = 0;
+            for (int p = 0; p < kNumParts; ++p)
+            {
+                auto& t = tails[p];
+                if (t.getNumActiveVoices() == 0) continue;
+                ++alive;
+                t.beginBlock (&tailConfig->parts[(size_t) p], len);
+                t.renderVoices (0, len);
+                t.endBlock (mainBuf, reverbBuf, delayBuf, len);
+            }
+            if (alive == 0) tailConfig.reset();   // nije poslednja kopija (cuva je configGraveyard), oslobadja se na message niti
+        }
+
         auto ms = c.master;
         ms.masterDb += c.globalDb;
         master.process (mainBuf, reverbBuf, delayBuf, len, ms);
@@ -2499,6 +2540,8 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     int voicesNow = 0;
     for (auto& p : parts)
+        voicesNow += p.getNumActiveVoices();
+    for (auto& p : tails)
         voicesNow += p.getNumActiveVoices();
     activeVoices = voicesNow;
 }

@@ -250,6 +250,7 @@ private:
         MasterSettings master;
         float globalDb = 0.0f;
         int globalTranspose = 0;
+        juce::uint32 perfSerial = 0;    // menja se kad se pozove drugi performans (SST)
         TercaSettings terca;
     };
     using ConfigPtr = std::shared_ptr<const EngineConfig>;
@@ -278,7 +279,19 @@ private:
     int heldMask() const;
 
     // audio
-    SamplerPart parts[kNumParts];
+    // dva kompleta delova: "parts" svira, "tails" pusta da izdisu zvuci prethodnog performansa (Smooth Sound Transition)
+    SamplerPart partBanks[2][kNumParts];
+    struct PartSpan
+    {
+        SamplerPart* d;
+        SamplerPart* begin() const { return d; }
+        SamplerPart* end() const { return d + kNumParts; }
+        SamplerPart& operator[] (int i) const { return d[i]; }
+    };
+    PartSpan parts { partBanks[0] }, tails { partBanks[1] };
+    ConfigPtr tailConfig;               // konfiguracija prethodnog performansa dok mu zvuci izdisu
+    juce::uint32 perfSerial = 0;
+    bool sustainHeld = false;           // audio nit
     MasterEffects master;
     juce::AudioBuffer<float> mainBuf, reverbBuf, delayBuf;
     int maxBlock = 512;
