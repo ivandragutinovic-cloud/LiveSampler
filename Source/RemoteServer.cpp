@@ -13,7 +13,7 @@ namespace
     // XML (kao u podacima) -> JSON: atributi su polja, deca su nizovi po imenu taga
     juce::var xmlToVar (const juce::XmlElement& x)
     {
-        static const juce::StringArray textKeys { "name", "user", "instrument", "category", "categoryName", "kronosSource", "kronosPcg", "missingName", "missingSource", "missingPcg" };
+        static const juce::StringArray textKeys { "fmPatch", "name", "user", "instrument", "category", "categoryName", "kronosSource", "kronosPcg", "missingName", "missingSource", "missingPcg" };
         auto* o = new juce::DynamicObject();
         for (int i = 0; i < x.getNumAttributes(); ++i)
         {
@@ -477,6 +477,25 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "mapSave")    { if (mapInst.isNotEmpty() && proc.saveMap (mapInst)) mapDirty = false; dirty = true; }
     else if (op == "mapRevert")  { if (mapInst.isNotEmpty()) proc.reloadInstrument (mapInst, false); mapDirty = false; dirty = true; }
     else if (op == "mapDelete")  deleteMapZones (v);
+    else if (op == "newFmUser")
+    {
+        remoteUser = proc.createFmUser();
+        dirty = true;
+    }
+    else if (op == "fmAlg")
+    {
+        // DX algoritam menja i veze operatora (to radi Workstation, ne iPad)
+        const int u = v.hasProperty ("index") ? (int) v["index"] : remoteUser;
+        if (u < 0 || u >= proc.getNumUsers() || ! proc.getUser (u).isFm()) return;
+        auto user = proc.getUser (u);
+        auto pt = proc.fmPatchFor (user);
+        if (pt == nullptr) return;
+        auto p = *pt;
+        p.applyDxAlgorithm (juce::jlimit (1, 32, (int) v["alg"]));
+        user.fmPatch = p.toString();
+        user.fmProgram = {};
+        proc.updateUser (u, user);
+    }
     else if (op == "newUser")
     {
         const auto inst = v["instrument"].toString();
@@ -591,7 +610,14 @@ juce::StringPairArray RemoteServer::buildSections()
         ud->setProperty ("index", ru);
         if (ru >= 0 && ru < proc.getNumUsers())
             if (auto xml = proc.getUser (ru).toXml())
+            {
+                // FM user uvezen pre editora (samo MOD-7 bajtovi): iPad dobija parametre kao fmPatch
+                const auto& us = proc.getUser (ru);
+                if (us.isFm() && us.fmPatch.isEmpty())
+                    if (auto pt = proc.fmPatchFor (us)) xml->setAttribute ("fmPatch", pt->toString());
+                xml->removeAttribute ("fmProgram");   // veliki hex, iPadu ne treba
                 ud->setProperty ("data", xmlToVar (*xml));
+            }
         out.set ("user", json (juce::var (ud)));
 
         const auto& inst = proc.getInstrumentList();

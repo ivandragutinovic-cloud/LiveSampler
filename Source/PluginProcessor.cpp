@@ -13,9 +13,19 @@ juce::Colour LiveSamplerProcessor::partColour (int i)
 }
 
 //==============================================================================
+// pad programa: zapis u %APPDATA%\LiveSampler\crash-log.txt (gde je puklo), da moze da se nadje uzrok
+static void pikasoCrashHandler (void*)
+{
+    const auto f = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                       .getChildFile ("LiveSampler").getChildFile ("crash-log.txt");
+    f.appendText ("\n==== " + juce::Time::getCurrentTime().toString (true, true) + "  " + juce::String (ProjectInfo::versionString) + "\n"
+                  + juce::SystemStats::getStackBacktrace() + "\n");
+}
+
 LiveSamplerProcessor::LiveSamplerProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true))
 {
+    juce::SystemStats::setApplicationCrashHandler (pikasoCrashHandler);
     MidiLearn::get();     // napravi na glavnoj niti (audio nit ga samo cita)
     terca = TercaSettings::makeDefault();
     loadData();
@@ -2372,7 +2382,7 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     // presluskivanje sempla iz MAPPING-a
     {
         const juce::SpinLock::ScopedTryLockType tl (previewLock);
-        if (tl.isLocked() && previewSmp != nullptr && buffer.getNumChannels() > 0)
+        if (tl.isLocked() && previewSmp != nullptr && previewPos >= 0.0 && buffer.getNumChannels() > 0)
         {
             const auto& b = previewSmp->buffer;
             const int len = b.getNumSamples();
@@ -2383,15 +2393,14 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             auto* o1 = buffer.getWritePointer (buffer.getNumChannels() > 1 ? 1 : 0);
             for (int i = 0; i < n; ++i)
             {
-                const int ip = (int) previewPos;
-                if (ip >= len - 1) { previewPos = -1.0; break; }
+                if (previewPos >= (double) (len - 1)) { previewPos = -1.0; break; }   // kraj: vise se ne svira
+                const int ip = juce::jmax (0, (int) previewPos);
                 const float t = (float) (previewPos - ip);
                 const float g = 0.8f * juce::Decibels::decibelsToGain (globalDb);
                 o0[i] += (L[ip] + (L[ip + 1] - L[ip]) * t) * g;
                 if (o1 != o0) o1[i] += (R[ip] + (R[ip + 1] - R[ip]) * t) * g;
                 previewPos += inc;
             }
-            if (previewPos < 0.0) previewPos = 1.0e12;   // gotovo (sempl se oslobadja na message niti)
         }
     }
 
