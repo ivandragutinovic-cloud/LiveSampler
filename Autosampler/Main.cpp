@@ -235,6 +235,8 @@ public:
         neededModel.owner = this;
         addAndMakeVisible (neededList);
         info.setColour (juce::Label::textColourId, dim);
+        info.setFont (juce::FontOptions (12.5f));
+        info.setMinimumHorizontalScale (1.0f);
         addAndMakeVisible (info);
 
         // 2. PCG
@@ -339,6 +341,10 @@ public:
         zoneToggle.setToggleState (true, juce::dontSendNotification);
         zoneToggle.onClick = [this] { updateInfo(); };
         addAndMakeVisible (zoneToggle);
+        bits16Toggle.setButtonText (juce::String::fromUTF8 ("16-bit WAV (half the disk)"));
+        bits16Toggle.setTooltip (juce::String::fromUTF8 ("Pikaso Workstation keeps samples in RAM as 16-bit anyway, so 16-bit files sound the same live and take half the disk. Off = 24-bit."));
+        bits16Toggle.onClick = [this] { updateInfo(); };
+        addAndMakeVisible (bits16Toggle);
         for (auto [s, l, name, lo, hi, def] : { std::tuple<juce::Slider*, juce::Label*, const char*, double, double, double> { &xfadeMs, &xfadeLabel, "Crossfade (ms)", 0, 1000, 80 },
                                                 { &minLoopMs, &minLoopLabel, "Min loop (ms)", 30, 5000, 300 } })
         {
@@ -495,6 +501,7 @@ public:
         props->setValue ("hold", hold.getValue());
         props->setValue ("release", release.getValue());
         props->setValue ("zones", zoneToggle.getToggleState());
+        props->setValue ("bits16", bits16Toggle.getToggleState());
         props->saveIfNeeded();
     }
 
@@ -507,6 +514,7 @@ public:
         hold.setValue (props->getDoubleValue ("hold", hold.getValue()), juce::dontSendNotification);
         release.setValue (props->getDoubleValue ("release", release.getValue()), juce::dontSendNotification);
         zoneToggle.setToggleState (props->getBoolValue ("zones", true), juce::dontSendNotification);
+        bits16Toggle.setToggleState (props->getBoolValue ("bits16", false), juce::dontSendNotification);
         const auto f = props->getValue ("folder");
         if (f.isNotEmpty()) { outFolder = juce::File (f); folderLabel.setText (outFolder.getFullPathName(), juce::dontSendNotification); }
         auto pick = [] (juce::ComboBox& b, const juce::String& name)
@@ -633,6 +641,8 @@ public:
         exiIfxToggle.setBounds (re.removeFromLeft (300));
         exiVelLabel.setBounds (re.removeFromLeft (80));
         exiVelBox.setBounds (re.removeFromLeft (360).reduced (0, 2));
+        re.removeFromLeft (20);
+        bits16Toggle.setBounds (re.removeFromLeft (240));
         c.removeFromTop (4);
         auto r3 = c.removeFromTop (32);
         folderButton.setBounds (r3.removeFromLeft (180));
@@ -1074,6 +1084,20 @@ private:
         updateInfo();
     }
 
+    // procena: vreme (s) i disk (bajtovi) za ono sto nije snimljeno
+    juce::int64 estimateBytes (int seconds) const
+    {
+        double sr = 48000.0;
+        if (auto* d = deviceManager.getCurrentAudioDevice()) sr = d->getCurrentSampleRate();
+        // snima se oko 70% vremena (ostalo je biranje zvuka, cekanje tisine)
+        return (juce::int64) (seconds * 0.7 * sr * 2.0 * (bits16Toggle.getToggleState() ? 2 : 3));
+    }
+
+    static juce::String fmtTime (int s) { return s >= 3600 ? juce::String (s / 3600) + " h " + juce::String ((s % 3600) / 60) + " min" : juce::String (juce::jmax (1, s / 60)) + " min"; }
+    static juce::String fmtBytes (juce::int64 b) { return b >= (juce::int64) 1 << 30 ? juce::String (b / 1073741824.0, 1) + " GB" : juce::String ((int) (b / 1048576)) + " MB"; }
+
+    int lastEstimateSec = 0;
+
     void updateInfo()
     {
         int done = 0, exi = 0, seconds = 0;
@@ -1088,8 +1112,9 @@ private:
             else
                 seconds += estimateSecondsPerMs() * (n.exi || n.external ? (n.analyzed && n.anVelFlat ? 1 : (int) exiVelocities (n).size()) : 1);
         }
-        info.setText (juce::String ((int) needed.size() - exi) + " multisamples + " + juce::String (exi) + " EXi/other sounds, done " + juce::String (done)
-                      + juce::String::fromUTF8 ("  (remaining: ~") + juce::String (seconds / 60) + " min)",
+        lastEstimateSec = seconds;
+        info.setText (juce::String ((int) needed.size() - exi) + " MS + " + juce::String (exi) + " EXi/other, done " + juce::String (done)
+                      + juce::String::fromUTF8 ("\nleft: ~") + fmtTime (seconds) + ", ~" + fmtBytes (estimateBytes (seconds)) + " disk",
                       juce::dontSendNotification);
     }
 
@@ -1560,10 +1585,25 @@ private:
         }
         outFolder.createDirectory();
         saveSettings();
-        analyzeOnly = false;
-        autoAnalyze = autoAnalyzeToggle.getToggleState();
-        startButton.setButtonText ("STOP");
-        startThread();
+        updateInfo();
+        const auto need = estimateBytes (lastEstimateSec);
+        const auto freeB = outFolder.getBytesFreeOnVolume();
+        juce::String msg = juce::String::fromUTF8 ("Estimate: ~") + fmtTime (lastEstimateSec) + ", ~" + fmtBytes (need) + (bits16Toggle.getToggleState() ? " (16-bit)" : " (24-bit)")
+                         + "\n" + juce::String::fromUTF8 ("Free on the disk: ") + fmtBytes (freeB)
+                         + (freeB > 0 && freeB < need + ((juce::int64) 1 << 30) ? juce::String::fromUTF8 ("\n\nWARNING: probably NOT enough disk space. Free some space or choose 16-bit.") : juce::String())
+                         + juce::String::fromUTF8 ("\n\nYou can add more sounds to the list while it records.");
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Autosampler", msg, "START", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([safe] (int r)
+            {
+                if (safe == nullptr || r == 0 || safe->isThreadRunning()) return;
+                safe->analyzeOnly = false;
+                safe->autoAnalyze = safe->autoAnalyzeToggle.getToggleState();
+                safe->bitsPerSample = safe->bits16Toggle.getToggleState() ? 16 : 24;
+                safe->report.clear();
+                safe->startButton.setButtonText ("STOP");
+                safe->startThread();
+            }));
     }
 
     // procena izabranih zvukova (ili svih ako nista nije izabrano)
@@ -1811,7 +1851,16 @@ private:
             if (isDone (n)) continue;
             setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  (" + n.usedBy + ")");
             juce::String err; bool fatal = false;
-            if (! selectJob (n, err, fatal)) { setStatus (err); if (fatal) break; continue; }
+            const int files0 = repFiles.load(); const auto bytes0 = repBytes.load();
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            const auto addReport = [&] (const juce::String& result)
+            {
+                ReportLine L; L.label = n.label(); L.usedBy = n.usedBy; L.result = result;
+                L.files = repFiles.load() - files0; L.mb = (repBytes.load() - bytes0) / 1048576.0;
+                L.seconds = (juce::Time::getMillisecondCounterHiRes() - t0) * 0.001;
+                report.push_back (L);
+            };
+            if (! selectJob (n, err, fatal)) { addReport ("ERROR: " + err); setStatus (err); if (fatal) break; continue; }
             if (n.drum) { drumAnalysis (n); storeAnalysis (i, n); }
             else if (autoAnalyze && ! n.analyzed)
             {
@@ -1900,11 +1949,37 @@ private:
                 }
             }
             settings = saved;
+            addReport (threadShouldExit() ? juce::String ("stopped") : repFiles.load() > files0 ? juce::String ("OK") : juce::String::fromUTF8 ("NOTHING HEARD (silent / not installed) - not saved"));
             if (threadShouldExit()) break;
             juce::MessageManager::callAsync ([this] { neededList.repaint(); updateInfo(); });
         }
         send (juce::MidiMessage::allNotesOff (settings.channel));
-        setStatus (threadShouldExit() ? "Stopped." : juce::String::fromUTF8 ("Done. In Pikaso Workstation click Refresh (SETTINGS), then create the users from the Kronos programs again."));
+        const auto rep = writeReport (threadShouldExit());
+        setStatus ((threadShouldExit() ? juce::String ("Stopped. ") : juce::String::fromUTF8 ("Done. In Pikaso Workstation click Refresh (SETTINGS), then create the users from the Kronos programs again. ")) + rep);
+    }
+
+    // izvestaj: tekst fajl u folderu semplova + kratak rezime
+    juce::String writeReport (bool stopped)
+    {
+        if (report.empty()) return {};
+        int ok = 0, bad = 0, files = 0; double mb = 0, secs = 0;
+        juce::String txt;
+        txt << "Pikaso Autosampler - " << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M") << (stopped ? "  (STOPPED)" : "") << "\n"
+            << (bitsPerSample == 16 ? "16-bit" : "24-bit") << " WAV, folder: " << outFolder.getFullPathName() << "\n\n";
+        for (auto& L : report)
+        {
+            const bool good = L.result == "OK";
+            ok += good ? 1 : 0; bad += good || L.result == "stopped" ? 0 : 1;
+            files += L.files; mb += L.mb; secs += L.seconds;
+            txt << (good ? "  OK   " : "  !!   ") << L.label.paddedRight (' ', 34) << juce::String (L.files).paddedLeft (' ', 4) << " files "
+                << juce::String (L.mb, 1).paddedLeft (' ', 8) << " MB " << fmtTime ((int) L.seconds).paddedLeft (' ', 10)
+                << (good ? juce::String() : "   " + L.result) << (L.usedBy.isNotEmpty() ? "   [" + L.usedBy + "]" : juce::String()) << "\n";
+        }
+        txt << "\nTotal: " << ok << " OK, " << bad << " with problems, " << files << " files, " << fmtBytes ((juce::int64) (mb * 1048576.0)) << ", " << fmtTime ((int) secs) << "\n";
+        const auto f = outFolder.getChildFile ("Autosampler report " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M") + ".txt");
+        f.replaceWithText (txt);
+        return juce::String (ok) + " OK, " + juce::String (bad) + " problems, " + juce::String (files) + " files, " + fmtBytes ((juce::int64) (mb * 1048576.0))
+             + ". Report: " + f.getFileName();
     }
 
     void storeAnalysis (int i, const NeededMs& n)
@@ -2429,10 +2504,12 @@ private:
                 meta["Loop0End"] = juce::String (lr.end - 1);
             }
         }
-        auto writer = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (2).withBitsPerSample (24)
+        auto writer = wav.createWriterFor (os, juce::AudioFormatWriterOptions().withSampleRate (sr).withNumChannels (2).withBitsPerSample (bitsPerSample)
                                                    .withMetadataValues (meta));
         if (writer == nullptr) return false;
         writer->writeFromAudioSampleBuffer (outBuf, 0, outLen);
+        repFiles.fetch_add (1);
+        repBytes.fetch_add ((juce::int64) outLen * 2 * (bitsPerSample / 8));
         return true;
     }
 
@@ -2475,7 +2552,13 @@ private:
     juce::TextEditor search;
     juce::ListBox sourceList, neededList;
     juce::ComboBox templateBox, bankBox, midiOut, midiInBox;
-    juce::ToggleButton sysexMode, autoLoopToggle, exiIfxToggle, zoneToggle;
+    juce::ToggleButton sysexMode, autoLoopToggle, exiIfxToggle, zoneToggle, bits16Toggle;
+    // izvestaj snimanja
+    struct ReportLine { juce::String label, usedBy, result; int files = 0; double mb = 0, seconds = 0; };
+    std::vector<ReportLine> report;
+    std::atomic<int> repFiles { 0 };
+    std::atomic<juce::int64> repBytes { 0 };
+    int bitsPerSample = 24;
     juce::Label exiVelLabel;
     juce::ComboBox exiVelBox;
     std::vector<std::vector<int>> exiVels;

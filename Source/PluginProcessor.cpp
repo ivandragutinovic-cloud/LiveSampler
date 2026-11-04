@@ -876,6 +876,11 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             os.on = true;
             os.instrument = inst;
             os.block = o;
+            {
+                // key off sempl (klik klapne harmonike, otpustanje zice...): svira kad se pusti taster (KO)
+                const auto nm = inst.fromLastOccurrenceOf ("/", false, false).toLowerCase().removeCharacters (" _-");
+                os.keyOff = nm.contains ("keyoff") || nm.contains ("releasenoise") || nm.contains ("relnoise") || nm.contains ("keyrelease");
+            }
             os.velLow = lo;
             os.velHigh = hi;
             os.fadeIn = fadeIn;
