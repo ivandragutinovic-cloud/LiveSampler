@@ -722,7 +722,6 @@ function buildFx(m) {
     ["Width", "revWidth", 0, 1, 0, 1, "pct"], ["Level", "revLevel", 0, 1, 0, 0.8, "pct"]]);
   sec("DELAY", [["Time", "dlyTime", 20, 1500, 350, 350, "ms"], ["Feedback", "dlyFb", 0, 0.95, 0, 0.35, "pct"], ["Level", "dlyLevel", 0, 1, 0, 0.6, "pct"]]);
   sec("EQ", [["Low", "eqLow", -12, 12, 0, 0, "dbs"], ["Mid", "eqMid", -12, 12, 0, 0, "dbs"], ["High", "eqHigh", -12, 12, 0, 0, "dbs"]]);
-  sec("COMPRESSOR", [["Threshold", "compThr", -40, 0, 0, -12, "dbs"], ["Ratio (1 = off)", "compRatio", 1, 10, 3, 1, "ratio"]]);
   const g = sec("VOLUME", [["Performance", "volume", -60, 6, -12, 0, "db"]]);
   knob(g, { label: "MASTER (all)", target: "status", path: "gvol", lo: -60, hi: 6, c: -12, def: 0, fmt: F.db, col: "#ffffff", get: () => +S.status.gvol || 0, set: v => { S.status.gvol = v; api({ op: "gvol", db: v }); } });
   el("div", "hint", "Effects are saved in the performance (SAVE). The master volume is for all performances.", m).style.marginTop = "8px";

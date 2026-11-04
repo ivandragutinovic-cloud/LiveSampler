@@ -2772,7 +2772,6 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     add ("DELAY", { { "Time", 20, 1500, 350, 350, [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; } },
                     { "Feedback", 0, 0.95, 0, 0.35, UI::pctText }, { "Level", 0, 1, 0, 0.6, UI::pctText } });
     add ("EQ", { { "Low", -12, 12, 0, 0, db }, { "Mid", -12, 12, 0, 0, db }, { "High", -12, 12, 0, 0, db } });
-    add ("COMPRESSOR", { { "Threshold", -40, 0, 0, -12, db }, { "Ratio (1 = off)", 1, 10, 3, 1, [] (double v) { return juce::String (v, 1) + ":1"; } } });
     add ("PERFORMANCE", { { "Volume", -60, 6, -12, 0, UI::dbText } });
 
     auto setter = [this] (int i, std::function<void (MasterSettings&, float)> fn)
@@ -2796,8 +2795,6 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     setter (k++, [] (MasterSettings& m, float v) { m.eqLowDb = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.eqMidDb = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.eqHighDb = v; });
-    setter (k++, [] (MasterSettings& m, float v) { m.compThresholdDb = v; });
-    setter (k++, [] (MasterSettings& m, float v) { m.compRatio = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.masterDb = v; });
 
     globalVolume = std::make_unique<ValueKnob> ("MASTER", juce::Colours::white, -60.0, 6.0, -12.0, UI::dbText, 0.0);
@@ -2807,8 +2804,8 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     // MIDI Learn
     const char* ids[] = { "reverb.size", "reverb.decay", "reverb.predelay", "reverb.damping", "reverb.lowcut", "reverb.highcut",
                           "reverb.density", "reverb.mod", "reverb.width", "reverb.level", "delay.time", "delay.feedback", "delay.level",
-                          "eq.low", "eq.mid", "eq.high", "comp.threshold", "comp.ratio", "perf.volume" };
-    for (int i = 0; i < knobs.size() && i < 19; ++i)
+                          "eq.low", "eq.mid", "eq.high", "perf.volume" };
+    for (int i = 0; i < knobs.size() && i < 17; ++i)
         MidiLearn::get().bindSlider (knobs[i]->slider, juce::String ("fx.") + ids[i]);
     MidiLearn::get().bindSlider (globalVolume->slider, "master.volume");
 }
@@ -2825,7 +2822,7 @@ void EffectsPage::refresh()
     const auto& m = proc.getPerformance().master;
     const float vals[] = { m.reverbSize, m.reverbDecay, m.reverbPreDelayMs, m.reverbDamping, m.reverbLowCut, m.reverbHighCut,
                            m.reverbDiffusion, m.reverbMod, m.reverbWidth, m.reverbLevel, m.delayTimeMs, m.delayFeedback, m.delayLevel,
-                           m.eqLowDb, m.eqMidDb, m.eqHighDb, m.compThresholdDb, m.compRatio, m.masterDb };
+                           m.eqLowDb, m.eqMidDb, m.eqHighDb, m.masterDb };
     for (int i = 0; i < knobs.size(); ++i)
         knobs[i]->setValue (vals[i]);
     globalVolume->setValue (proc.getGlobalVolume());
@@ -2856,11 +2853,11 @@ void EffectsPage::resized()
     const int rowH = r.getHeight() / 3;
     const int kw = juce::jmin (110, r.getWidth() / 10), kh = juce::jmin (110, rowH - 40), gap = 30;
     // red 1: reverb, red 2: delay + EQ, red 3: kompresor + performans + master
-    const int rowOf[] = { 0, 1, 1, 2, 2 };
+    const int rowOf[] = { 0, 1, 1, 2 };   // red 3: performans + master
     int x = 0, lastRow = -1, y = 0;
     for (int si = 0; si < sections.size(); ++si)
     {
-        const int row = rowOf[juce::jmin (si, 4)];
+        const int row = rowOf[juce::jmin (si, 3)];
         if (row != lastRow) { x = r.getX(); y = r.getY() + row * rowH + 36; lastRow = row; }
         auto& s = sections.getReference (si);
         for (int k = 0; k < s.count; ++k, x += kw)

@@ -242,8 +242,8 @@ void MasterEffects::process (juce::AudioBuffer<float>& main,
     auto block = juce::dsp::AudioBlock<float> (main).getSubBlock (0, (size_t) n);
     juce::dsp::ProcessContextReplacing<float> ctx (block);
 
-    // --- Kompresor ---
-    if (s.compRatio > 1.01f)
+    // --- Kompresor: iskljucen (uklonjen iz EFFECTS), stari performansi ga vise ne ukljucuju ---
+    if (false && s.compRatio > 1.01f)
     {
         compressor.setThreshold (s.compThresholdDb);
         compressor.setRatio (s.compRatio);
