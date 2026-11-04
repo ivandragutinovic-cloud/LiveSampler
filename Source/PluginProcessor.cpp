@@ -431,6 +431,16 @@ void LiveSamplerProcessor::applyZones (const juce::String& name, std::vector<Zon
         installInstrument (name, cur->withZones (std::move (zones)));
 }
 
+void LiveSamplerProcessor::setRoundRobinRandom (const juce::String& name, bool random)
+{
+    if (auto cur = getLoadedInstrument (name))
+    {
+        auto n = cur->withZones (cur->zones);
+        n->rrRandom = random;
+        installInstrument (name, n);
+    }
+}
+
 bool LiveSamplerProcessor::saveMap (const juce::String& name)
 {
     auto cur = getLoadedInstrument (name);

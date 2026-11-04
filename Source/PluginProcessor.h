@@ -140,6 +140,7 @@ public:
     void stopPreview();
     InstrumentPtr getLoadedInstrument (const juce::String& name) const;
     void applyZones (const juce::String& name, std::vector<Zone> zones);
+    void setRoundRobinRandom (const juce::String& name, bool random);
     bool saveMap (const juce::String& name);
     void reloadInstrument (const juce::String& name, bool ignoreMapFile);
     void ensureLoaded (const juce::String& name) { if (instrumentList.contains (name) && cache.count (name) == 0) requestInstrument (name, nullptr); }

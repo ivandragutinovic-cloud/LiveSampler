@@ -72,8 +72,12 @@ public:
     std::vector<Zone> zones;
     juce::StringArray warnings;
     bool fromMapFile = false;
+    // round robin: vise ukljucenih zona na istom tasteru i jacini sviraju naizmenicno
+    // false = redom (1, 2, 3, 1...), true = nasumicno (nikad isti dvaput zaredom)
+    bool rrRandom = false;
 
     const Zone* findZone (int key, int velocity) const;
+    int roundRobinCount (int key, int velocity) const;   // koliko zona deli ovo mesto (1 = nema round robin)
     size_t memoryBytes() const;
     juce::File getMapFile() const;
 
@@ -84,6 +88,8 @@ public:
 
 private:
     mutable std::atomic<unsigned> roundRobinCounter { 0 };
+    mutable std::array<std::atomic<unsigned char>, 128> rrNext {};   // po tasteru: sledeci (redom) / poslednji (nasumicno)
+    mutable std::atomic<juce::uint32> rrSeed { 12345u };
 };
 
 using InstrumentPtr = std::shared_ptr<Instrument>;

@@ -1739,6 +1739,24 @@ void MappingEditor::toolsMenu()
     m.addSectionHeader (T ("In the map (files untouched)"));
     m.addItem (4, T ("Equalize zone levels (per velocity layer)"), inst != nullptr);
     m.addItem (5, T ("Reset the level of all zones to 0 dB"), inst != nullptr);
+    {
+        // round robin: zone koje dele isti taster i jacinu sviraju naizmenicno
+        int rrZones = 0;
+        for (size_t a = 0; a < zones.size(); ++a)
+        {
+            const auto& za = zones[a];
+            if (! za.enabled) continue;
+            for (size_t b = 0; b < zones.size(); ++b)
+                if (a != b && zones[b].enabled && zones[b].matches (za.rootKey, za.lowVel) && za.matches (za.rootKey, za.lowVel)
+                    && zones[b].lowKey == za.lowKey && zones[b].highKey == za.highKey && zones[b].lowVel == za.lowVel && zones[b].highVel == za.highVel)
+                { ++rrZones; break; }
+        }
+        m.addSeparator();
+        m.addSectionHeader (T ("Round robin (zones on the same keys and velocities alternate): ") + juce::String (rrZones) + T (" zones"));
+        const bool rnd = inst != nullptr && inst->rrRandom;
+        m.addItem (8, T ("In order (1, 2, 3, 1...)"), inst != nullptr, ! rnd);
+        m.addItem (9, T ("Random (never the same twice in a row)"), inst != nullptr, rnd);
+    }
     if (! wav) m.addItem (99, T ("Disk tools work only for WAV folders"), false);
     juce::Component::SafePointer<MappingEditor> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (toolsButton), [safe] (int r)
@@ -1749,6 +1767,12 @@ void MappingEditor::toolsMenu()
         if (r == 6) safe->deleteZones (safe->selectedList(), true, true);
         if (r == 7) safe->askDeleteRange();
         if (r == 4) safe->equalizeZones();
+        if (r == 8 || r == 9)
+        {
+            safe->proc.setRoundRobinRandom (safe->instName, r == 9);
+            safe->dirtyNames.insert (safe->instName);
+            safe->refresh();
+        }
         if (r == 5)
         {
             auto z = safe->zones;

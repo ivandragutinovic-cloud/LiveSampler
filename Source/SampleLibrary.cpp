@@ -15,13 +15,41 @@ const Zone* Instrument::findZone (int key, int velocity) const
     if (count == 0)
         return nullptr;
 
-    // vise zona na istom mestu = round robin
-    int pick = count == 1 ? 0 : (int) (roundRobinCounter.fetch_add (1) % (unsigned) count);
+    // vise zona na istom mestu = round robin (svaki taster ima svoj brojac, kao Kontakt / Kronos)
+    int pick = 0;
+    if (count > 1)
+    {
+        auto& slot = rrNext[(size_t) juce::jlimit (0, 127, key)];
+        if (rrRandom)
+        {
+            const int last = slot.load() % count;
+            juce::uint32 x = rrSeed.load();
+            x = x * 1664525u + 1013904223u;
+            rrSeed = x;
+            pick = (int) ((x >> 8) % (juce::uint32) (count - 1));
+            if (pick >= last) ++pick;            // nikad isti sempl dvaput zaredom
+            slot = (unsigned char) pick;
+        }
+        else
+        {
+            pick = slot.load() % count;
+            slot = (unsigned char) ((pick + 1) % count);
+        }
+    }
     for (auto& z : zones)
         if (z.matches (key, velocity) && pick-- == 0)
             return &z;
 
     return nullptr;
+}
+
+int Instrument::roundRobinCount (int key, int velocity) const
+{
+    int count = 0;
+    for (auto& z : zones)
+        if (z.matches (key, velocity))
+            ++count;
+    return count;
 }
 
 size_t Instrument::memoryBytes() const
@@ -48,6 +76,7 @@ std::shared_ptr<Instrument> Instrument::withZones (std::vector<Zone> newZones) c
     n->samples = samples;
     n->warnings = warnings;
     n->fromMapFile = fromMapFile;
+    n->rrRandom = rrRandom;
     n->zones = std::move (newZones);
     return n;
 }
@@ -56,6 +85,7 @@ bool Instrument::saveMap() const
 {
     juce::XmlElement root ("LiveSamplerMap");
     root.setAttribute ("version", 1);
+    if (rrRandom) root.setAttribute ("rrRandom", true);
     for (auto& z : zones)
     {
         if (z.sample < 0 || z.sample >= (int) samples.size())
@@ -402,6 +432,12 @@ bool SampleLibrary::parseFileName (const juce::String& fileNameWithoutExt, bool 
     std::string s = fileNameWithoutExt.toLowerCase().toStdString();
     note = -1;
     velocityLayer = 0;
+
+    // 0) round robin oznaka (rr1, rr_2, seq3, roundrobin4, alt2): nije ni nota ni jacina - isti taster, vise semplova
+    {
+        static const std::regex rrRe ("(^|[^a-z])(?:rr|roundrobin|robin|seq|alt)[ _-]?[0-9]{1,2}(?![0-9])");
+        s = std::regex_replace (s, rrRe, "$1 ");
+    }
 
     // 1) velocity sloj: v1, vel2, velocity_3, layer4, ili dinamika pp/p/mp/mf/f/ff
     {
@@ -1442,6 +1478,7 @@ bool SampleLibrary::applyMapFile (Instrument& inst)
     if (xml == nullptr || ! xml->hasTagName ("LiveSamplerMap"))
         return false;
 
+    inst.rrRandom = xml->getBoolAttribute ("rrRandom", false);
     std::map<juce::String, int> byId;
     for (size_t i = 0; i < inst.samples.size(); ++i)
         byId[inst.samples[i]->id.toLowerCase()] = (int) i;
