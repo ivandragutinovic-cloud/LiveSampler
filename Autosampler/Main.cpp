@@ -1752,7 +1752,7 @@ private:
                     if (fatal) break;
                     continue;
                 }
-                analyzeJob (n);
+                if (n.drum) drumAnalysis (n); else analyzeJob (n);
                 storeAnalysis (i, n);
                 if (n.analyzed) ++ok;
             }
@@ -1773,7 +1773,8 @@ private:
             setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  (" + n.usedBy + ")");
             juce::String err; bool fatal = false;
             if (! selectJob (n, err, fatal)) { setStatus (err); if (fatal) break; continue; }
-            if (autoAnalyze && ! n.analyzed)
+            if (n.drum) { drumAnalysis (n); storeAnalysis (i, n); }
+            else if (autoAnalyze && ! n.analyzed)
             {
                 setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  analyzing...");
                 analyzeJob (n);
@@ -1793,7 +1794,10 @@ private:
 
             if (n.drum)
             {
-                settings.autoLoop = false;          // bubnjevi bez loop-a
+                // bubanj: kratak udarac, pa se snima dok zvuk sam ne utihne (do 15 s), bez loop-a
+                settings.autoLoop = false;
+                settings.hold = 0.3;
+                settings.release = 15.0;
                 recordDrum (n, i, total, exiVels[(size_t) i]);
             }
             else if (n.exi || n.external)
@@ -2168,6 +2172,17 @@ private:
                  + (n.anVelFlat ? juce::String::fromUTF8 (", velocity does not change the sound: 1 layer") : juce::String());
     }
 
+    // drum kit se ne procenjuje: svaki taster je jedan udarac (one-shot) koji se snima do kraja, bez loop-a
+    void drumAnalysis (NeededMs& n)
+    {
+        n.analyzed = true;
+        n.anLoop = false;
+        n.anVelFlat = false;
+        n.anHold = 0.3;
+        n.anRelease = 15.0;
+        n.anText = "drum kit: every key one-shot until it fades out, no loop";
+    }
+
     // drum kit: svaki taster posebno (svoja zona, bez pomeranja visine), u vise jacina; tasteri bez zvuka se preskacu
     void recordDrum (const NeededMs& n, int i, int total, const std::vector<int>& velsIn)
     {
@@ -2191,7 +2206,6 @@ private:
             sounding[(size_t) note] = peak > 0.0005f;
         }
         // bubanj: ako procena nije dala drzanje, dovoljno je 1.5 s (zvuk se snima i posle pustanja tastera)
-        if (! n.analyzed) settings.hold = juce::jmin (settings.hold, 1.5);
         for (int note = settings.low; note <= settings.high && ! threadShouldExit(); ++note)
         {
             if (! sounding[(size_t) note]) continue;
