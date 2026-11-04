@@ -1,4 +1,4 @@
-﻿# Pikaso Workstation: automatski skida i raspakuje najnoviju verziju direktno u Desktop\Pikaso Workstation.
+# Pikaso Workstation: automatski skida i raspakuje najnoviju verziju direktno u Desktop\Pikaso Workstation.
 # (ime skripte ostaje LiveSampler-AutoUpdate.ps1 jer ga zakazani zadatak tako poziva)
 # Pokrece ga zakazani zadatak svakih 15 minuta; radi samo kad postoji nova verzija.
 param([switch]$Pokazi)   # -Pokazi: rucna provera (PROVERI NOVU VERZIJU.cmd), ispisuje sta radi
@@ -14,8 +14,10 @@ $ua      = @{ 'User-Agent' = 'LiveSampler-AutoUpdate' }
 # najnovija verzija ove skripte (da ispravke stizu same)
 try {
     $self = Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/$repo/main/tools/LiveSampler-AutoUpdate.ps1" -Headers $ua
-    if ($self.Content -and $self.Content -match 'LiveSampler-AutoUpdate' -and $self.Content -ne (Get-Content $PSCommandPath -Raw)) {
-        Set-Content -Path $PSCommandPath -Value $self.Content -Encoding UTF8
+    # bez BOM znaka na pocetku (inace PowerShell ne prepoznaje prvi red i param)
+    $c = ([string]$self.Content).TrimStart([char]0xFEFF, [char]0xEF, [char]0xBB, [char]0xBF)
+    if ($c.StartsWith('#') -and $c -match 'LiveSampler-AutoUpdate' -and $c -ne (Get-Content $PSCommandPath -Raw)) {
+        [IO.File]::WriteAllText($PSCommandPath, $c)
     }
 } catch { }
 
