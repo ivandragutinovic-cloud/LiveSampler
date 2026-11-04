@@ -80,6 +80,20 @@ namespace Kronos
         return ((juce::uint32) p[0] << 24) | ((juce::uint32) p[1] << 16) | ((juce::uint32) p[2] << 8) | (juce::uint32) p[3];
     }
 
+    // Track EQ: bajt0 bit7 = Bypass, bajt2 = Mid Frequency (00~A5 = 100 Hz~10 kHz, log),
+    // bajtovi 3/4/5 = Low/Mid/High Gain (signed, korak 0.5 dB, -18~+18)
+    template <typename T>
+    static void readTrackEq (T& t, const juce::uint8* e)
+    {
+        auto g = [] (juce::uint8 v) { return juce::jlimit (-18.0f, 18.0f, (float) (juce::int8) v * 0.5f); };
+        t.eqBypass  = (e[0] & 0x80) != 0;
+        t.eqMidFreq = 100.0f * std::pow (10.0f, juce::jlimit (0, 165, (int) e[2]) * 2.0f / 165.0f);
+        t.eqLowDb   = g (e[3]);
+        t.eqMidDb   = g (e[4]);
+        t.eqHighDb  = g (e[5]);
+        if (t.eqBypass) t.eqLowDb = t.eqMidDb = t.eqHighDb = 0.0f;
+    }
+
     // Mesta su utvrdjena test programima (T01-T14) napravljenim na Kronosu.
     // OSC2 parametri su na istim mestima + 466, osim raspona tastera.
     static void readParams (Program& p, const juce::uint8* d)
@@ -91,6 +105,7 @@ namespace Kronos
         p.mono       = (d[2558] & 0x80) != 0;
         p.legato     = (d[2559] & 0x10) != 0;
         p.priority   = (d[2559] >> 2) & 3;
+        readTrackEq (p, d + 2580);
 
         for (int o = 0; o < 2; ++o)
         {
@@ -177,6 +192,7 @@ namespace Kronos
             tm.footPedal = (b[34] & 0x08) != 0;    // (Filter) Foot Pedal
             tm.vectorDir = juce::jlimit (0, 4, (int) (b[52] & 0x07));     // CombiAndSongTimbreSet.txt: VJS Assign
             tm.vectorCenter = juce::jlimit (0, 4, (int) ((b[52] >> 3) & 0x07));
+            readTrackEq (tm, b + 46);
         }
     }
 
@@ -285,6 +301,7 @@ namespace Kronos
                             p.busLR = (item[2565] & 0x1f) == 0;
                             p.exiSend1 = item[2864];
                             p.exiSend2 = item[2865];
+                            readTrackEq (p, item + 2580);
                         }
                         if (p.hd1)
                         {

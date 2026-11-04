@@ -53,6 +53,9 @@ namespace Kronos
         bool drumKit = false;
         bool busLR = false;    // Bus Select L/R (inace ide kroz insert efekat)  // Oscillator Mode: Drums / Double Drums (zona pokazuje na drum kit)
         int priority = 2;      // 0 najniza, 1 najvisa, 2 poslednja
+        // Track EQ programa (Prog_HD-1 / Prog_EXi_Common 2580-2585)
+        bool eqBypass = false;
+        float eqLowDb = 0.0f, eqMidDb = 0.0f, eqHighDb = 0.0f, eqMidFreq = 1000.0f;
 
         bool usesUser() const;
         int firstUserZone (int oscIndex) const;
@@ -74,6 +77,9 @@ namespace Kronos
         bool damper = true, footPedal = true;    // MIDI Filter: Damper (sustain), Foot Pedal (expression)
         int vectorDir = 0;                       // VJS Assign: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y
         int vectorCenter = 4;                    // Volume Center: 0..4 = 0/25/50/75/100%
+        // (Track EQ) timbre-a (CombiAndSongTimbreSet: timbre + 46..51)
+        bool eqBypass = false;
+        float eqLowDb = 0.0f, eqMidDb = 0.0f, eqHighDb = 0.0f, eqMidFreq = 1000.0f;
     };
 
     struct Combi

@@ -1096,6 +1096,7 @@ private:
         for (int k = 0; k < juce::jmin (24, name.length()); ++k) p[k] = (juce::uint8) name[k];
         p[2558] = 0;            // Single, poly
         p[2565] = 0;            // Bus L/R
+        p[2580] |= 0x80;        // Track EQ Bypass: multisempl se snima suv, EQ programa daje Workstation
         p[2684] = 0; p[2685] = 127;
         for (int z = 0; z < 8; ++z)
         {

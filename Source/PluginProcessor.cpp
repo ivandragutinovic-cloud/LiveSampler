@@ -662,6 +662,15 @@ namespace
     }
 }
 
+// Track EQ Kronos programa -> EQ usera (Kronos ima +-18 dB, ovde +-15)
+static void applyKronosProgramEq (UserProgram& u, const Kronos::Program& prog)
+{
+    u.eqLowDb = juce::jlimit (-15.0f, 15.0f, prog.eqLowDb);
+    u.eqMidDb = juce::jlimit (-15.0f, 15.0f, prog.eqMidDb);
+    u.eqHighDb = juce::jlimit (-15.0f, 15.0f, prog.eqHighDb);
+    u.eqMidFreq = juce::jlimit (100.0f, 10000.0f, prog.eqMidFreq);
+}
+
 int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
 {
     if (prog.exi)
@@ -753,6 +762,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
     u.bendUp = juce::jlimit (0, 24, std::abs (q1.bendUp));
     u.bendDown = juce::jlimit (0, 24, std::abs (q1.bendDown));
 
+    applyKronosProgramEq (u, prog);
     u.kronosPcg = kronosFile.getFileName();
     u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
     const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
@@ -799,6 +809,7 @@ int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
     u.send1 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend1) / 127.0f : 1.0f;
     u.send2 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend2) / 127.0f : 1.0f;
 
+    // EQ programa je vec u snimku (autosampler snima ceo program), pa user ostaje bez EQ-a
     u.kronosPcg = kronosFile.getFileName();
     u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
     const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
@@ -825,6 +836,7 @@ int LiveSamplerProcessor::createUserFromKronosDrum (const Kronos::Program& prog)
     u.osc[0].on = true;
     u.osc[0].instrument = inst;
     u.osc[0].block = 0;
+    // EQ programa je vec u snimku (autosampler snima ceo program), pa user ostaje bez EQ-a
     u.kronosPcg = kronosFile.getFileName();
     u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
     const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
@@ -971,6 +983,25 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         part.midiChannel = (! keepChannels && ! drumOwnChannel) || tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
         part.reverbSend = (float) tm.send1 / 127.0f;
         part.delaySend = (float) tm.send2 / 127.0f;
+        // U kombiju svira Track EQ timbre-a umesto EQ-a programa. EQ parta se dodaje na EQ usera,
+        // pa part dobija razliku (timbre - user). Za zvuk koji fali: razlika prema EQ-u programa,
+        // jer ce presemplovan user dobiti bas taj EQ.
+        {
+            float bl = prog != nullptr ? prog->eqLowDb : 0.0f, bm = prog != nullptr ? prog->eqMidDb : 0.0f, bh = prog != nullptr ? prog->eqHighDb : 0.0f;
+            if (u >= 0)
+            {
+                // HD-1: EQ programa je u useru. EXi / drum kit: EQ programa je vec u snimku (+ eventualni EQ usera)
+                const auto& us = users[(size_t) u];
+                const bool recorded = prog->exi || prog->drumKit;
+                bl = us.eqLowDb + (recorded ? prog->eqLowDb : 0.0f);
+                bm = us.eqMidDb + (recorded ? prog->eqMidDb : 0.0f);
+                bh = us.eqHighDb + (recorded ? prog->eqHighDb : 0.0f);
+            }
+            auto d = [] (float a, float b) { const float v = juce::jlimit (-15.0f, 15.0f, a - b); return std::abs (v) < 0.05f ? 0.0f : v; };
+            part.eqLowDb = d (tm.eqLowDb, bl);
+            part.eqMidDb = d (tm.eqMidDb, bm);
+            part.eqHighDb = d (tm.eqHighDb, bh);
+        }
     }
     updatePerformance (p);
     return skipped;
