@@ -354,7 +354,7 @@ private:
 
     LearnButton loadButton, createSelected, createAll, playButton, modeButtons[2];
     bool combiMode = false;
-    juce::ToggleButton onlyUser, keepChannels;
+    juce::ToggleButton onlyUser, keepChannels, fmToggle;
     juce::TextEditor search;
     juce::Label fileLabel, infoLabel, help;
     juce::TableListBox table;

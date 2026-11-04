@@ -43,6 +43,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     e->setAttribute ("name", name);
     if (category.isNotEmpty()) e->setAttribute ("category", category);
     if (kronosSource.isNotEmpty()) { e->setAttribute ("kronosPcg", kronosPcg); e->setAttribute ("kronosSource", kronosSource); }
+    if (fmProgram.isNotEmpty()) { e->setAttribute ("fmProgram", fmProgram); e->setAttribute ("fmSlot", fmSlot); }
     e->setAttribute ("voiceMode", voiceMode);
     e->setAttribute ("legatoXfade", (double) legatoXfade);
     e->setAttribute ("legatoStart", (double) legatoStart);
@@ -125,6 +126,8 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     u.category = e.getStringAttribute ("category");
     u.kronosPcg = e.getStringAttribute ("kronosPcg");
     u.kronosSource = e.getStringAttribute ("kronosSource");
+    u.fmProgram = e.getStringAttribute ("fmProgram");
+    u.fmSlot = juce::jlimit (0, 1, e.getIntAttribute ("fmSlot", 0));
     u.fxType = e.getIntAttribute ("fxType", 0);
     u.fxRate = f ("fxRate", u.fxRate);
     u.fxDepth = f ("fxDepth", u.fxDepth);
@@ -237,7 +240,7 @@ juce::StringArray UserProgram::usedInstruments() const
 {
     juce::StringArray s;
     for (auto& o : osc)
-        if (o.on && o.instrument.isNotEmpty())
+        if (o.on && o.instrument.isNotEmpty() && o.instrument != "FM synth (MOD-7)")   // FM sinteza nema semplove
             s.addIfNotAlreadyThere (o.instrument);
     return s;
 }

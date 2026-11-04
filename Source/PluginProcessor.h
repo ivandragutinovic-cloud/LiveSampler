@@ -153,9 +153,13 @@ public:
     juce::String resolveKronosExi (const Kronos::Program& p) const { return p.exi ? library.findKronosRom (p.exiKey) : juce::String(); }
     // presemplovan drum kit program (svaki taster snimljen posebno)
     juce::String resolveKronosDrum (const Kronos::Program& p) const { return p.drumKit && p.drumKey.isNotEmpty() ? library.findKronosRom (p.drumKey) : juce::String(); }
+    // MOD-7 program koji FM sinteza moze da svira (samo MOD-7, bez drugih EXi motora, i poznate veze)
+    static bool kronosFmCapable (const Kronos::Program& p);
+    static Fm::Patch kronosFmPatch (const Kronos::Program& p);
+    bool preferFm = false;      // Kronos uvoz: MOD-7 programi kao FM sinteza i kad su presemplovani
     bool kronosProgramPlayable (const Kronos::Program& p) const
     {
-        if (p.exi) return resolveKronosExi (p).isNotEmpty();
+        if (p.exi) return resolveKronosExi (p).isNotEmpty() || kronosFmCapable (p);
         if (p.drumKit) return resolveKronosDrum (p).isNotEmpty();
         if (! p.hd1 || p.drumKit) return false;
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
@@ -208,7 +212,9 @@ public:
     void learnVectorCc (int axis) { learnVector = axis + 1; }      // 0 = X, 1 = Y
     bool isLearningVector() const { return learnVector.load() != 0; }
     bool takeVectorUiDirty() { return vectorUiDirty.exchange (false); }
-    int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
+    int userForKronosProgram (const Kronos::Program& p);
+    int createUserFromKronosFm (const Kronos::Program& p);   // FM sinteza (MOD-7) umesto semplova
+    std::shared_ptr<const Fm::Patch> fmPatchFor (const UserProgram& u);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)
     juce::StringArray loadKronosCombi (const Kronos::Combi& c, bool keepChannels, std::vector<KronosMissing>* missing = nullptr);
@@ -292,6 +298,7 @@ private:
     std::atomic<int> scanCounter { 0 };
     int loadEpoch = 0;
     std::map<juce::String, InstrumentPtr> cache;
+    std::map<juce::int64, std::shared_ptr<const Fm::Patch>> fmCache;
     std::map<juce::String, std::vector<LoadCallback>> pendingLoads;
     std::vector<InstrumentPtr> graveyard;
     juce::String lastWarning;

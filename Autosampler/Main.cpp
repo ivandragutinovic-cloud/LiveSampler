@@ -2141,19 +2141,22 @@ private:
                 // posle toga samo mesto za loop (~1 s): cist zvuk 1.2 s, najvise 3 s (manje mesta na disku)
                 hold = juce::jlimit (1.2, 3.0, (settle - onset) * 0.01 + 1.0);
             }
-            else
-            {
-                int end = peakB;
-                while (end < offB && env[(size_t) end] > peak * 0.003) ++end;   // -50 dB
-                hold = end < offB ? (end - onset) * 0.01 + 0.3 : testHold;
-            }
-            // release: od pustanja tastera do -60 dB (ili do suma)
+            // sum ulaza (pre tona): kratak zvuk (klik klapne, key off sum) se zavrsi kad padne do suma, ne do -50 dB
             double floorLvl = 1.0e-5;
             if (onset > 3) floorLvl = juce::jmax (floorLvl, avg (0, onset) * 2.0);
+            bool endedEarly = false;
+            if (! sustained)
+            {
+                int end = peakB;
+                while (end < offB && env[(size_t) end] > juce::jmax (peak * 0.003, floorLvl * 1.5)) ++end;   // -50 dB ili sum
+                endedEarly = end < offB;
+                hold = endedEarly ? (end - onset) * 0.01 + 0.3 : testHold;
+            }
+            // release: od pustanja tastera do -60 dB (ili do suma); zvuk koji je vec utihnuo nema release
             const double startRel = env[(size_t) juce::jmax (0, offB - 1)];
             int r = offB;
-            while (r < nb && env[(size_t) r] > juce::jmax (startRel * 0.001, floorLvl)) ++r;
-            const double rel = startRel > floorLvl * 2.0 ? (r - offB) * 0.01 : 0.0;
+            while (r < nb && env[(size_t) r] > juce::jmax (startRel * 0.001, floorLvl * 1.5)) ++r;
+            const double rel = ! endedEarly && startRel > floorLvl * 2.0 ? (r - offB) * 0.01 : 0.0;
             holdNeed = juce::jmax (holdNeed, hold);
             relNeed = juce::jmax (relNeed, rel);
         }

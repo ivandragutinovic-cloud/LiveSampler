@@ -48,6 +48,7 @@ target_sources(LiveSampler PRIVATE
     Source/Pages.cpp
     Source/MidiLearn.cpp
     Source/RemoteServer.cpp
+    Source/FmSynth.cpp
     Source/KronosPcg.cpp)
 
 # stranica za iPad (Live Kontroler, tab PIKASO) ugradjena u program

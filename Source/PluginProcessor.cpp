@@ -502,8 +502,10 @@ void LiveSamplerProcessor::rebuildConfig()
             for (auto& o : pr.user.osc)
                 o.fineCents += pr.part.detuneCents;
             for (int o = 0; o < kNumOsc; ++o)
-                if (pr.user.osc[(size_t) o].on)
+                if (pr.user.osc[(size_t) o].on && pr.user.osc[(size_t) o].instrument != Fm::instrumentName)
                     pr.inst[(size_t) o] = getLoadedInstrument (pr.user.osc[(size_t) o].instrument);
+            if (pr.user.isFm())
+                pr.fm = fmPatchFor (pr.user);
         }
         pr.active = pr.part.on && u >= 0;
         pr.vectorOn = perf.vectorOn;
@@ -902,6 +904,64 @@ int LiveSamplerProcessor::fillMissingParts()
     return filled;
 }
 
+bool LiveSamplerProcessor::kronosFmCapable (const Kronos::Program& p)
+{
+    if (! p.exi || p.raw.size() < (size_t) Kronos::programSize) return false;
+    const int a = p.exiAlg[0], b = p.exiAlg[1];
+    if (! ((a == 7 && (b == 0 || b == 7)) || (a == 0 && b == 7))) return false;
+    return kronosFmPatch (p).valid;
+}
+
+Fm::Patch LiveSamplerProcessor::kronosFmPatch (const Kronos::Program& p)
+{
+    if (p.raw.size() < (size_t) Kronos::programSize) return {};
+    const int slot = p.exiAlg[0] == 7 ? 0 : 1;
+    return Fm::Patch::fromMod7 (p.raw.data() + (slot == 0 ? 2908 : 3960), p.raw.data(), slot);
+}
+
+std::shared_ptr<const Fm::Patch> LiveSamplerProcessor::fmPatchFor (const UserProgram& u)
+{
+    const auto key = u.fmProgram.hashCode64() ^ (juce::int64) u.fmSlot;
+    if (auto it = fmCache.find (key); it != fmCache.end()) return it->second;
+    juce::MemoryBlock mb;
+    mb.loadFromHexString (u.fmProgram);
+    std::shared_ptr<const Fm::Patch> patch;
+    if (mb.getSize() >= (size_t) Kronos::programSize)
+    {
+        auto* d = (const juce::uint8*) mb.getData();
+        patch = std::make_shared<const Fm::Patch> (Fm::Patch::fromMod7 (d + (u.fmSlot == 0 ? 2908 : 3960), d, u.fmSlot));
+    }
+    fmCache[key] = patch;
+    return patch;
+}
+
+int LiveSamplerProcessor::createUserFromKronosFm (const Kronos::Program& prog)
+{
+    if (! kronosFmCapable (prog)) return -1;
+    UserProgram u;
+    u.fmProgram = juce::String::toHexString (prog.raw.data(), (int) prog.raw.size(), 0);
+    u.fmSlot = prog.exiAlg[0] == 7 ? 0 : 1;
+    auto& sb = u.block[0];
+    sb.ampEg = EnvSettings();          // jacinu i release vodi Amp EG MOD-7 programa
+    sb.ampEg.attackTime = 0.001f;
+    sb.ampEg.sustain = 1.0f;
+    sb.ampEg.releaseTime = 30.0f;
+    sb.filterType = FilterType::Off;
+    sb.velSens = 0.0f;                  // dinamika je u FM programu
+    u.osc[0].on = true;
+    u.osc[0].instrument = Fm::instrumentName;
+    u.osc[0].block = 0;
+    u.voiceMode = ! prog.mono ? VoiceMode::Poly : (prog.legato ? VoiceMode::MonoLegato : VoiceMode::Mono);
+    u.priority = prog.priority == 0 ? Priority::Low : prog.priority == 1 ? Priority::High : Priority::Last;
+    u.send1 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend1) / 127.0f : 1.0f;
+    u.send2 = prog.busLR ? (float) juce::jlimit (0, 127, prog.exiSend2) / 127.0f : 1.0f;
+    applyKronosProgramEq (u, prog);    // EQ nije u snimku: svira ga Workstation
+    u.category = "Synth Lead";
+    u.kronosPcg = kronosFile.getFileName();
+    u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
+    return createUser ((prog.name.isNotEmpty() ? prog.name : prog.id()) + " [FM]", &u);
+}
+
 juce::StringArray LiveSamplerProcessor::userUsage (const juce::String& name) const
 {
     juce::StringArray out;
@@ -925,11 +985,14 @@ juce::StringArray LiveSamplerProcessor::userUsage (const juce::String& name) con
 
 int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
 {
-    // user napravljen od istog programa (i kad je posle preimenovan)
+    // user napravljen od istog programa (i kad je posle preimenovan); FM ili semplovi, sta je izabrano
     const auto src = juce::String (p.bankId) + ":" + juce::String (p.number);
+    const bool fm = kronosFmCapable (p) && (preferFm || (p.exi && resolveKronosExi (p).isEmpty()));
     for (size_t i = 0; i < users.size(); ++i)
-        if (users[i].kronosSource == src && users[i].kronosPcg == kronosFile.getFileName())
+        if (users[i].kronosSource == src && users[i].kronosPcg == kronosFile.getFileName() && users[i].isFm() == fm)
             return (int) i;
+    if (fm)
+        return createUserFromKronosFm (p);
     const int existing = findUser (p.name);
     if (existing >= 0)
         return existing;
@@ -1018,7 +1081,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
             {
                 // HD-1: EQ programa je u useru. EXi / drum kit: EQ programa je vec u snimku (+ eventualni EQ usera)
                 const auto& us = users[(size_t) u];
-                const bool recorded = prog->exi || prog->drumKit;
+                const bool recorded = (prog->exi || prog->drumKit) && ! us.isFm();
                 bl = us.eqLowDb + (recorded ? prog->eqLowDb : 0.0f);
                 bm = us.eqMidDb + (recorded ? prog->eqMidDb : 0.0f);
                 bh = us.eqHighDb + (recorded ? prog->eqHighDb : 0.0f);

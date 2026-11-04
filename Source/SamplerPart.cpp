@@ -319,17 +319,25 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
     {
         const auto& o = u.osc[(size_t) i];
         const auto& inst = cfg->inst[(size_t) i];
-        if (! o.on || ! u.block[(size_t) (i / kMsPerOsc)].on || inst == nullptr || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
+        // FM sinteza (MOD-7 program): MS bez semplova, zvuk pravi Fm::Voice
+        const bool fmOsc = cfg->fm != nullptr && o.instrument == Fm::instrumentName;
+        if (! o.on || ! u.block[(size_t) (i / kMsPerOsc)].on || (inst == nullptr && ! fmOsc) || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
             continue;
         if (pitch < o.keyLow || pitch > o.keyHigh || velocity < o.velLow || velocity > o.velHigh)
             continue;
 
         const int oscPitch = pitch + o.transpose;
-        // "jedan sempl na sve tastere": zona se uzima sa izabranog tastera, visina i dalje prati taster (key follow)
-        auto* zone = inst->findZone (o.zoneKey >= 0 ? o.zoneKey : juce::jlimit (0, 127, oscPitch), velocity);
-        if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) inst->samples.size())
-            continue;
-        auto* smp = inst->samples[(size_t) zone->sample].get();
+        static const Zone fmZone {};
+        const Zone* zone = &fmZone;
+        const SampleData* smp = nullptr;
+        if (! fmOsc)
+        {
+            // "jedan sempl na sve tastere": zona se uzima sa izabranog tastera, visina i dalje prati taster (key follow)
+            zone = inst->findZone (o.zoneKey >= 0 ? o.zoneKey : juce::jlimit (0, 127, oscPitch), velocity);
+            if (zone == nullptr || zone->sample < 0 || zone->sample >= (int) inst->samples.size())
+                continue;
+            smp = inst->samples[(size_t) zone->sample].get();
+        }
 
         auto* vp = findFreeVoice();
         if (vp == nullptr)
@@ -347,9 +355,10 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.held = false;
         v.instrument = inst;
         v.sample = smp;
+        v.fmOn = fmOsc;
         v.block = oscBlock;
         v.oscTranspose = o.transpose;
-        v.pos = (double) smp->startOffset;
+        v.pos = smp != nullptr ? (double) smp->startOffset : 0.0;
         v.pitchTarget = (double) oscPitch;
         setGlide (v, startPitch >= 0.0 ? startPitch + o.transpose : -1.0, glide);
         v.rootKey = zone->rootKey;
@@ -357,6 +366,19 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.fixedPitch = zone->fixedPitch;
         v.keySlope = o.keySlope;
 
+        if (fmOsc)
+        {
+            v.fmPatch = cfg->fm;
+            v.rootKey = 60.0;
+            v.fixedPitch = false;
+            v.pitchTarget += cfg->fm->transpose;
+            v.pitch += cfg->fm->transpose;
+            v.fm.start (*cfg->fm, juce::jlimit (0, 127, oscPitch + cfg->fm->transpose), vel01, sampleRate);
+            v.loop = false;
+            v.endPos = 0;
+        }
+        else
+        {
         const int len = smp->buffer.getNumSamples();
         v.endPos = zone->sampleEnd > 16 ? juce::jmin (zone->sampleEnd, len) : (smp->endPoint > 0 ? juce::jmin (smp->endPoint, len) : len);
         if (zone->hasOwnLoop() && zone->loopEnd <= len)
@@ -377,6 +399,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             v.loop = false;   // keyoff sempl se odsvira jednom
         if (zone->sampleStart > 0 && zone->sampleStart < v.endPos - 16)
             v.pos = v.loop ? juce::jmin ((double) zone->sampleStart, (double) v.loopStart) : (double) zone->sampleStart;
+        }
 
         const float pan = juce::jlimit (-1.0f, 1.0f, zone->pan + o.pan);
         float xfade = 1.0f;
@@ -421,7 +444,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             v.ampEnv.startLegato (amp, sampleRate, juce::jmax (0.05f, legatoLevel));
             v.pitchEnv.startLegato (sb.pitchEg, sampleRate, sb.pitchEg.sustain);
             v.filterEnv.startLegato (sb.filterEg, sampleRate, sb.filterEg.sustain);
-            const double skip = (double) u.legatoStart * smp->sampleRate;
+            const double skip = smp != nullptr ? (double) u.legatoStart * smp->sampleRate : 0.0;
             const double target = v.pos + skip;
             v.pos = v.loop && v.loopEnd > v.loopStart ? juce::jmin (target, (double) v.loopStart) : juce::jmin (target, (double) juce::jmax (0, v.endPos - 64));
             v.fadeIn = 0.0f;
@@ -486,10 +509,11 @@ void SamplerPart::updateModulation (Voice& v)
     const double bendSemis = bend >= 0.0f ? bend * u.bendUp : bend * u.bendDown;
     const double pitchMod = pEg * sb.pitchEgInt + (std::sin (v.vibPhase) * (1.0 - std::abs ((double) sb.vibOffset)) + (double) sb.vibOffset) * vibCents / 100.0 + bendSemis + v.tune;
 
-    const double rateRatio = v.sample->sampleRate / sampleRate;
+    const double rateRatio = v.sample != nullptr ? v.sample->sampleRate / sampleRate : 1.0;
     // key follow (pitch slope) oko root tastera zone
     const double played = v.fixedPitch ? v.rootKey : v.rootKey + (v.pitch - v.rootKey) * v.keySlope;
     v.inc = std::exp2 ((played + pitchMod - v.rootKey) / 12.0) * rateRatio;
+    if (v.fmOn) v.fmHz = 440.0 * std::exp2 ((played + pitchMod - 69.0) / 12.0);
 
     // filter
     const float fEg = v.filterEnv.advance (controlRate);
@@ -526,6 +550,7 @@ void SamplerPart::releaseVoice (Voice& v)
     v.ampEnv.release();
     v.pitchEnv.release();
     v.filterEnv.release();
+    if (v.fmOn) v.fm.release();
 }
 
 int SamplerPart::chooseMonoKey (const MonoLane& L) const
@@ -736,7 +761,8 @@ void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
     // koji OSC-ovi postoje
     juce::uint32 present = 0;
     for (int i = 0; i < kNumOsc; ++i)
-        if (u.osc[(size_t) i].on && u.block[(size_t) (i / kMsPerOsc)].on && cfg->inst[(size_t) i] != nullptr)
+        if (u.osc[(size_t) i].on && u.block[(size_t) (i / kMsPerOsc)].on
+            && (cfg->inst[(size_t) i] != nullptr || (cfg->fm != nullptr && u.osc[(size_t) i].instrument == Fm::instrumentName)))
             present |= 1u << (i / kMsPerOsc);
 
     juce::uint32 polyMask = 0;
@@ -853,6 +879,57 @@ static inline float hermite (float xm1, float x0, float x1, float x2, float t) n
     return ((((a * t) - b) * t + c) * t + x0);
 }
 
+// FM glas: isti put kao sempl (envelope, filter, EQ, pan, fade), samo signal pravi Fm::Voice
+void SamplerPart::renderFmVoice (Voice& v, float* outL, float* outR, int num, float fadeStep)
+{
+    if (v.fmPatch == nullptr) { v.active = false; return; }
+    const auto& patch = *v.fmPatch;
+    for (int i = 0; i < num; ++i)
+    {
+        if (--v.ctrl <= 0)
+        {
+            v.ctrl = controlRate;
+            updateModulation (v);
+        }
+        float l = 0.0f, r = 0.0f;
+        v.fm.tick (patch, v.fmHz, l, r);
+
+        float g = juce::jmax (0.0f, v.ampEnv.advance (1)) * v.velGain * v.ampMod;
+        if (v.fadeInStep > 0.0f)
+        {
+            v.fadeIn += v.fadeInStep;
+            if (v.fadeIn >= 1.0f) { v.fadeIn = 1.0f; v.fadeInStep = 0.0f; }
+            g *= std::sqrt (v.fadeIn);
+        }
+        if (v.fadingOut)
+        {
+            v.fadeGain -= v.fadeOutStep > 0.0f ? v.fadeOutStep : fadeStep;
+            if (v.fadeGain <= 0.0f) { v.active = false; return; }
+            g *= v.fadeOutStep > 0.0f ? std::sqrt (v.fadeGain) : v.fadeGain;
+        }
+        l *= g * v.gainL;
+        r *= g * v.gainR;
+        if (v.filterOn)
+        {
+            l = v.filter.processSample (0, l);
+            r = v.filter.processSample (1, r);
+            if (v.cascade)
+            {
+                l = v.filter2.processSample (0, l);
+                r = v.filter2.processSample (1, r);
+            }
+        }
+        if (v.eqOn)
+        {
+            l = v.eq[2].process (0, v.eq[1].process (0, v.eq[0].process (0, l)));
+            r = v.eq[2].process (1, v.eq[1].process (1, v.eq[0].process (1, r)));
+        }
+        outL[i] += l;
+        outR[i] += r;
+        if (! v.fm.isActive() || ! v.ampEnv.isActive()) { v.active = false; return; }
+    }
+}
+
 void SamplerPart::renderVoices (int start, int num)
 {
     if (num <= 0 || cfg == nullptr)
@@ -867,6 +944,12 @@ void SamplerPart::renderVoices (int start, int num)
         if (! v.active)
             continue;
 
+        if (v.fmOn)
+        {
+            renderFmVoice (v, outL, outR, num, fadeStep);
+            if (! v.active) { v.instrument.reset(); v.fmPatch.reset(); }
+            continue;
+        }
         const auto* smp = v.sample;
         const float* L = smp->buffer.getReadPointer (0);
         const float* R = smp->buffer.getReadPointer (1);

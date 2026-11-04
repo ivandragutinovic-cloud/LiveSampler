@@ -113,6 +113,10 @@ struct UserProgram
     float send1 = 1.0f, send2 = 1.0f;   // koliko ovaj zvuk salje u reverb / delay (mnozi send dela)
     juce::String category;                  // kategorija usera (lista USER)
     juce::String kronosPcg, kronosSource;   // napravljen od Kronos programa: ime PCG fajla i "bankId:broj"
+    // FM sinteza: ceo MOD-7 program (hex, 4960 bajtova) i koji EXi slot (0/1) je MOD-7; prazno = semplovi
+    juce::String fmProgram;
+    int fmSlot = 0;
+    bool isFm() const { return fmProgram.isNotEmpty(); }
 
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;

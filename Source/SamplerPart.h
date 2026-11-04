@@ -3,6 +3,7 @@
 #include "SampleLibrary.h"
 #include "Model.h"
 #include "MasterEffects.h"
+#include "FmSynth.h"
 
 // Sve sto deo performansa treba za sviranje (nepromenljivo dok traje jedan audio blok)
 struct PartRuntime
@@ -10,6 +11,7 @@ struct PartRuntime
     PerfPart part;
     UserProgram user;
     std::array<InstrumentPtr, kNumOsc> inst;
+    std::shared_ptr<const Fm::Patch> fm;   // FM sinteza (user napravljen od MOD-7 programa)
     bool active = false;   // ukljucen i ima usera
     bool vectorOn = false, vectorEqualPower = false;   // iz performansa
 };
@@ -117,6 +119,10 @@ private:
         double rootKey = 60.0, tune = 0.0;     // tune u polutonovima
         bool fixedPitch = false, loop = false;
         double keySlope = 1.0;
+        bool fmOn = false;                   // FM glas (bez sempla)
+        double fmHz = 261.6;
+        Fm::Voice fm;
+        std::shared_ptr<const Fm::Patch> fmPatch;
         int loopStart = 0, loopEnd = 0, endPos = 0, loopXfade = 0;
         float vel01 = 1.0f, velGain = 1.0f, gainL = 1.0f, gainR = 1.0f, ampMod = 1.0f;
         bool fadingOut = false;
@@ -137,6 +143,7 @@ private:
                       juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff = false,
                       float legatoLevel = -1.0f);   // >= 0: legato crossfade (bez attack-a, od ovog nivoa envelope)
     void releaseVoice (Voice& v);
+    void renderFmVoice (Voice& v, float* outL, float* outR, int num, float fadeStep);
     void updateModulation (Voice& v);
     void setGlide (Voice& v, double fromPitch, bool glide);
     struct MonoLane

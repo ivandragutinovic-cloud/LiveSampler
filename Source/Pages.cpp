@@ -3072,6 +3072,13 @@ KronosPage::KronosPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p
     keepChannels.setButtonText (T ("Keep MIDI channels from the combi"));
     keepChannels.setTooltip (T ("Off: all parts play from your keyboard, on any channel. Turn on only if you play from several keyboards on different channels."));
     addChildComponent (keepChannels);
+    fmToggle.setButtonText (T ("MOD-7 as FM synth"));
+    fmToggle.setTooltip (T ("On: MOD-7 programs (DX7 / V50 imports...) play as FM synthesis, live, without samples, even if they are resampled. "
+                            "Off: the resampled sound is used, FM only for MOD-7 programs that are not resampled. "
+                            "MOD-7 programs with a PCM oscillator or a complex patch are close to the Kronos, not identical."));
+    fmToggle.setToggleState (proc.preferFm, juce::dontSendNotification);
+    fmToggle.onClick = [this] { proc.preferFm = fmToggle.getToggleState(); };
+    addAndMakeVisible (fmToggle);
 
     search.setTextToShowWhenEmpty (T ("Search by name..."), Pal::dim);
     search.onTextChange = [this] { rebuildRows(); };
@@ -3727,6 +3734,8 @@ void KronosPage::resized()
     search.setBounds (filt.removeFromLeft (260));
     filt.removeFromLeft (14);
     keepChannels.setBounds (filt.removeFromLeft (260));
+    filt.removeFromLeft (8);
+    fmToggle.setBounds (filt.removeFromLeft (190));
     r.removeFromTop (8);
     help.setBounds (r.removeFromBottom (22));
     r.removeFromBottom (6);
