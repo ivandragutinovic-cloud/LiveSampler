@@ -192,6 +192,11 @@ public:
         externalButton.onClick = [this] { addExternal(); };
         addAndMakeVisible (externalButton);
 
+        romButton.setButtonText ("+ ROM / EXs multisample...");
+        romButton.setTooltip ("Add Kronos ROM or EXs multisamples directly from the list (without a program from the PCG)");
+        romButton.onClick = [this] { showRomPicker(); };
+        addAndMakeVisible (romButton);
+
         addButton.setButtonText (juce::String::fromUTF8 ("Add selected →"));
         addButton.onClick = [this] { addSelected(); };
         addAndMakeVisible (addButton);
@@ -546,6 +551,7 @@ public:
         auto mid = a.removeFromLeft (140).reduced (8, 0);
         addButton.setBounds (mid.removeFromTop (30).translated (0, 60));
         externalButton.setBounds (mid.removeFromBottom (44).withTrimmedBottom (4));
+        romButton.setBounds (mid.removeFromBottom (52).withTrimmedBottom (8));
         auto right = a;
         auto infoRow = right.removeFromBottom (28);
         removeButton.setBounds (infoRow.removeFromRight (130));
@@ -891,6 +897,123 @@ private:
                 n.usedBy = p.name;
                 needed.push_back (n);
             }
+    }
+
+    // ROM / EXs multisempl direktno sa spiska (bez programa iz PCG-a)
+    static juce::String romKeyFor (int bankByte, int index)
+    {
+        std::array<juce::uint8, 20> z {};
+        z[0] = 1; z[1] = 'K'; z[2] = 'O'; z[3] = 'R'; z[4] = 'G'; z[13] = 'M'; z[14] = 'S';
+        z[16] = (juce::uint8) bankByte; z[18] = (juce::uint8) (index & 0xff); z[19] = (juce::uint8) ((index >> 8) & 0xff);
+        return "rom:" + juce::String::toHexString (z.data(), 20, 0);
+    }
+
+    void addRomMultisample (int bankByte, int index)
+    {
+        const auto key = romKeyFor (bankByte, index);
+        for (auto& n : needed) if (n.romKey == key) return;
+        NeededMs n;
+        n.romKey = key;
+        juce::MemoryBlock hex;
+        hex.loadFromHexString (key.fromFirstOccurrenceOf ("rom:", false, false));
+        for (int k = 0; k < 20 && k < (int) hex.getSize(); ++k) n.zone[(size_t) k] = ((const juce::uint8*) hex.getData())[k];
+        n.usedBy = "manual";
+        needed.push_back (n);
+    }
+
+    struct RomPicker : public juce::Component, private juce::ListBoxModel
+    {
+        struct Item { int bankByte, index; juce::String label; };
+        RomPicker (MainComponent& o) : owner (o)
+        {
+            const int banks[] = { 0, 1, 2, 3, 4, 5, 6, 7, 17, 18, 22, 23, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218 };
+            for (int exs : banks)
+                for (int st = 0; st < 2; ++st)
+                {
+                    const int bankByte = ((exs == 0 ? 0 : exs + 1) << 1) | st;
+                    for (int i = 0; i < 1600; ++i)
+                    {
+                        const auto nm = kronosMsName (bankByte, i);
+                        if (nm.isEmpty()) { if (i > 240) break; continue; }
+                        all.push_back ({ bankByte, i, (exs == 0 ? juce::String ("ROM") : "EXs" + juce::String (exs)) + (st ? " St" : "") + " "
+                                                       + juce::String (i).paddedLeft ('0', 4) + "  " + nm });
+                    }
+                }
+            search.setTextToShowWhenEmpty ("Search (e.g. trumpet, sax, guitar)...", juce::Colours::grey);
+            search.onTextChange = [this] { filter(); };
+            addAndMakeVisible (search);
+            list.setModel (this);
+            list.setMultipleSelectionEnabled (true);
+            list.setRowHeight (22);
+            addAndMakeVisible (list);
+            add.setButtonText ("Add selected to the list");
+            add.onClick = [this]
+            {
+                auto sel = list.getSelectedRows();
+                for (int k = 0; k < sel.size(); ++k)
+                    if (sel[k] < (int) shown.size()) owner.addRomMultisample (all[(size_t) shown[(size_t) sel[k]]].bankByte, all[(size_t) shown[(size_t) sel[k]]].index);
+                owner.neededList.updateContent(); owner.neededList.repaint(); owner.updateInfo();
+                info.setText (juce::String (sel.size()) + " added", juce::dontSendNotification);
+            };
+            addAndMakeVisible (add);
+            info.setText ("Ctrl / Shift + click to select several. EXs: only the expansions installed on your Kronos will sound.", juce::dontSendNotification);
+            addAndMakeVisible (info);
+            filter();
+            setSize (620, 640);
+        }
+        void filter()
+        {
+            shown.clear();
+            const auto words = juce::StringArray::fromTokens (search.getText().trim(), " ", "");
+            for (size_t i = 0; i < all.size(); ++i)
+            {
+                bool ok = true;
+                for (auto& w : words) if (w.isNotEmpty() && ! all[i].label.containsIgnoreCase (w)) { ok = false; break; }
+                if (ok) shown.push_back ((int) i);
+            }
+            list.updateContent(); list.deselectAllRows(); list.repaint();
+        }
+        int getNumRows() override { return (int) shown.size(); }
+        void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool sel) override
+        {
+            if (row < 0 || row >= (int) shown.size()) return;
+            if (sel) g.fillAll (juce::Colour (0xff3a5f8a));
+            g.setColour (juce::Colours::white);
+            g.setFont (juce::FontOptions (14.0f));
+            g.drawText (all[(size_t) shown[(size_t) row]].label, 6, 0, w - 8, h, juce::Justification::centredLeft, true);
+        }
+        void listBoxItemDoubleClicked (int, const juce::MouseEvent&) override { add.triggerClick(); }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            search.setBounds (r.removeFromTop (28));
+            r.removeFromTop (6);
+            auto b = r.removeFromBottom (32);
+            add.setBounds (b.removeFromRight (220));
+            info.setBounds (b);
+            r.removeFromBottom (6);
+            list.setBounds (r);
+        }
+        MainComponent& owner;
+        std::vector<Item> all;
+        std::vector<int> shown;
+        juce::TextEditor search;
+        juce::ListBox list;
+        juce::TextButton add;
+        juce::Label info;
+    };
+
+    void showRomPicker()
+    {
+        juce::DialogWindow::LaunchOptions o;
+        o.content.setOwned (new RomPicker (*this));
+        o.dialogTitle = "Kronos ROM / EXs multisamples";
+        o.dialogBackgroundColour = juce::Colour (0xff1a1d24);
+        o.escapeKeyTriggersCloseButton = true;
+        o.useNativeTitleBar = true;
+        o.resizable = true;
+        o.componentToCentreAround = this;
+        o.launchAsync();
     }
 
     void addSelected()
@@ -2159,7 +2282,7 @@ private:
     juce::Label title1, title2, title3, fileLabel, info, templateLabel, bankLabel, startLabel, midiLabel, folderLabel, progress, help;
     juce::Label chLabel, cc0Label, cc32Label, lowLabel, highLabel, stepLabel, velLabel, holdLabel, relLabel;
     juce::Slider channel, cc0, cc32, lowNote, highNote, step, velocity, hold, release, startNum;
-    juce::TextButton externalButton, analyzeButton;
+    juce::TextButton externalButton, analyzeButton, romButton;
     juce::ToggleButton autoAnalyzeToggle;
     bool analyzeOnly = false, autoAnalyze = true;
     std::vector<int> analyzeRows;
