@@ -320,7 +320,11 @@ private:
     void loadCombiRow (int row);
     void loadCombisToList (const juce::SparseSet<int>& rows);   // vise kombija odjednom -> mesta u listi
     void offerAutosample (const juce::String& message, const juce::String& args);
+    void offerMissing (const juce::String& message, const std::vector<LiveSamplerProcessor::KronosMissing>& missing, const juce::String& pcgPath);
+public:
     static juce::File findAutosampler();
+    static void startAutosampler (const juce::String& args);
+private:
     void setMode (bool combis);
     juce::String timbreSummary (const Kronos::Combi& c, int& romCount) const;
     void rebuildRows();

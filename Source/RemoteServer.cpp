@@ -12,7 +12,7 @@ namespace
     // XML (kao u podacima) -> JSON: atributi su polja, deca su nizovi po imenu taga
     juce::var xmlToVar (const juce::XmlElement& x)
     {
-        static const juce::StringArray textKeys { "name", "user", "instrument", "category", "categoryName", "kronosSource", "kronosPcg" };
+        static const juce::StringArray textKeys { "name", "user", "instrument", "category", "categoryName", "kronosSource", "kronosPcg", "missingName", "missingSource", "missingPcg" };
         auto* o = new juce::DynamicObject();
         for (int i = 0; i < x.getNumAttributes(); ++i)
         {

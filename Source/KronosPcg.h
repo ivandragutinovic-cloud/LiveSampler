@@ -45,6 +45,7 @@ namespace Kronos
         bool exi = false;      // EXi program (AL-1, CX-3, STR-1, MS-20EX, PolysixEX, MOD-7, SGX-2, EP-1)
         std::array<int, 2> exiAlg {};   // Algorithm Type EXi1 / EXi2 (0 = Off, vidi exiEngineName)
         juce::String exiKey;   // "exi:" + otisak celog programa: presemplovan EXi program (Kronos Autosampler)
+        juce::String drumKey;  // "drum:" + otisak: presemplovan drum kit program (svaki taster posebno)
         int exiSend1 = 127, exiSend2 = 127;
         std::array<std::array<Zone, 8>, 2> osc;
         std::array<OscParams, 2> params;

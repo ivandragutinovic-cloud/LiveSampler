@@ -382,6 +382,15 @@ void PartStrip::showPartMenu()
     m.addItem (3, T ("Clear part"));
     {
         const auto& pp = proc.getPerformance().parts[(size_t) index];
+        if (pp.isMissing())
+        {
+            m.addSeparator();
+            m.addSectionHeader (pp.missingName);
+            m.addItem (200, "Resample from Kronos (Pikaso Autosampler)...");
+        }
+    }
+    {
+        const auto& pp = proc.getPerformance().parts[(size_t) index];
         juce::PopupMenu vm;
         for (int d = 0; d <= 4; ++d) vm.addItem (100 + d, T ("Direction: ") + Vector::dirName (d), true, pp.vectorDir == d);
         vm.addSeparator();
@@ -394,6 +403,12 @@ void PartStrip::showPartMenu()
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&partMenu), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
+        if (r == 200)
+        {
+            const auto& pp = safe->proc.getPerformance().parts[(size_t) safe->index];
+            KronosPage::startAutosampler ("--pcg \"" + pp.missingPcg + "\" --program " + pp.missingSource);
+            return;
+        }
         if (r >= 100 && r <= 104) { safe->edit ([r] (PerfPart& pp) { pp.vectorDir = r - 100; }); return; }
         if (r >= 110 && r <= 114) { safe->edit ([r] (PerfPart& pp) { pp.vectorCenter = (float) (r - 110) * 0.25f; }); return; }
         if (r == 1) { Clip::part = safe->proc.getPerformance().parts[(size_t) safe->index]; return; }
@@ -470,7 +485,11 @@ void PartStrip::refresh()
 {
     const auto& p = proc.getPerformance().parts[(size_t) index];
     onButton.setToggleState (p.on, juce::dontSendNotification);
-    userButton.setButtonText (p.user.isEmpty() ? T ("— choose user —") : p.user);
+    userButton.setButtonText (p.isMissing() ? juce::String::fromUTF8 ("\xe2\x9a\xa0 ") + p.missingName : p.user.isEmpty() ? T ("— choose user —") : p.user);
+    userButton.setColour (juce::TextButton::buttonColourId, p.isMissing() ? juce::Colour (0xff5a2230) : Pal::bg);
+    userButton.setTooltip (p.isMissing() ? "This Kronos program is not resampled yet, so the part is silent. Right side menu: Resample from Kronos, "
+                                           "or choose another user. When it is resampled, it appears here by itself (after Refresh)."
+                                         : juce::String ("Choose the user (type to search)"));
     editButton.setEnabled (p.user.isNotEmpty());
     volume.setValue (p.volumeDb);
     pan.setValue (p.pan);
@@ -2954,6 +2973,100 @@ juce::File KronosPage::findAutosampler()
     return {};
 }
 
+void KronosPage::startAutosampler (const juce::String& args)
+{
+    const auto exe = findAutosampler();
+    if (! exe.existsAsFile())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Kronos",
+            T ("Cannot find \"Pikaso Autosampler.exe\". Unzip PikasoAutosampler-Windows next to Pikaso Workstation or on the Desktop."));
+        return;
+    }
+    exe.startAsProcess (args);
+}
+
+namespace
+{
+    // spisak zvukova koji fale: kucicom se bira sta da se presempluje
+    struct MissingPanel : public juce::Component
+    {
+        MissingPanel (const juce::String& message, const std::vector<LiveSamplerProcessor::KronosMissing>& m, const juce::String& pcg)
+            : items (m), pcgPath (pcg)
+        {
+            text.setText (message, juce::dontSendNotification);
+            text.setJustificationType (juce::Justification::topLeft);
+            text.setFont (juce::FontOptions (14.0f));
+            addAndMakeVisible (text);
+            for (auto& it : items)
+            {
+                auto* t = toggles.add (new juce::ToggleButton (it.label + "   (" + it.where + ")"));
+                t->setToggleState (it.canResample, juce::dontSendNotification);
+                t->setEnabled (it.canResample);
+                if (! it.canResample) t->setTooltip ("Its samples are your own (KSC) and are missing in the library: they cannot be resampled from ROM.");
+                holder.addAndMakeVisible (t);
+            }
+            view.setViewedComponent (&holder, false);
+            addAndMakeVisible (view);
+            for (auto* b : { &all, &none, &go, &close }) addAndMakeVisible (b);
+            all.setButtonText ("Select all");
+            none.setButtonText ("Select none");
+            go.setButtonText ("Resample selected");
+            close.setButtonText ("Not now");
+            all.onClick = [this] { for (int i = 0; i < toggles.size(); ++i) if (items[(size_t) i].canResample) toggles[i]->setToggleState (true, juce::dontSendNotification); };
+            none.onClick = [this] { for (auto* t : toggles) t->setToggleState (false, juce::dontSendNotification); };
+            go.onClick = [this]
+            {
+                juce::String args = "--pcg \"" + pcgPath + "\"";
+                int n = 0;
+                for (int i = 0; i < toggles.size(); ++i)
+                    if (toggles[i]->getToggleState()) { args << " --program " << juce::String (items[(size_t) i].bank) << ":" << items[(size_t) i].number; ++n; }
+                if (n > 0) KronosPage::startAutosampler (args);
+                dismiss();
+            };
+            close.onClick = [this] { dismiss(); };
+            setSize (720, juce::jlimit (260, 640, 170 + 28 * (int) items.size()));
+        }
+        void dismiss() { if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState (0); }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (10);
+            text.setBounds (r.removeFromTop (70));
+            auto b = r.removeFromBottom (34);
+            close.setBounds (b.removeFromRight (110));
+            b.removeFromRight (8);
+            go.setBounds (b.removeFromRight (170));
+            all.setBounds (b.removeFromLeft (110));
+            b.removeFromLeft (8);
+            none.setBounds (b.removeFromLeft (110));
+            r.removeFromBottom (8);
+            view.setBounds (r);
+            holder.setSize (r.getWidth() - 14, 28 * toggles.size());
+            for (int i = 0; i < toggles.size(); ++i) toggles[i]->setBounds (0, i * 28, holder.getWidth(), 26);
+        }
+        std::vector<LiveSamplerProcessor::KronosMissing> items;
+        juce::String pcgPath;
+        juce::Label text;
+        juce::Viewport view;
+        juce::Component holder;
+        juce::OwnedArray<juce::ToggleButton> toggles;
+        juce::TextButton all, none, go, close;
+    };
+}
+
+void KronosPage::offerMissing (const juce::String& message, const std::vector<LiveSamplerProcessor::KronosMissing>& missing, const juce::String& pcgPath)
+{
+    if (missing.empty()) { if (message.isNotEmpty()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", message); return; }
+    juce::DialogWindow::LaunchOptions o;
+    o.content.setOwned (new MissingPanel (message, missing, pcgPath));
+    o.dialogTitle = "Sounds that are not resampled yet";
+    o.dialogBackgroundColour = Pal::panel;
+    o.escapeKeyTriggersCloseButton = true;
+    o.useNativeTitleBar = true;
+    o.resizable = true;
+    o.componentToCentreAround = this;
+    o.launchAsync();
+}
+
 void KronosPage::offerAutosample (const juce::String& message, const juce::String& args)
 {
     juce::Component::SafePointer<KronosPage> safe (this);
@@ -2979,7 +3092,8 @@ void KronosPage::loadCombiRow (int row)
     if (pcg == nullptr || row < 0 || row >= (int) rows.size())
         return;
     const auto& combi = pcg->combis[(size_t) rows[(size_t) row]];
-    const auto skipped = proc.loadKronosCombi (combi, keepChannels.getToggleState());
+    std::vector<LiveSamplerProcessor::KronosMissing> missing;
+    const auto skipped = proc.loadKronosCombi (combi, keepChannels.getToggleState(), &missing);
     editor.showTab (LiveSamplerEditor::TabPerformance);
 
     // odmah pitaj gde da se sacuva (prvo prazno mesto u trenutnoj listi)
@@ -3020,16 +3134,8 @@ void KronosPage::loadCombiRow (int row)
     }
     if (skipped.isEmpty())
         return;
-    bool rom = false;
-    for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("resampled");
-    const auto msg = T ("These timbres were not transferred:\n\n") + skipped.joinIntoString ("\n");
-    if (! rom)
-    {
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
-        return;
-    }
-    offerAutosample (msg + T ("\n\nResample them from the Kronos (Pikaso Autosampler)? ROM programs are recorded as multisamples, EXi programs (AL-1, CX-3, SGX-2...) as the whole sound."),
-                     "--pcg \"" + pcg->file.getFullPathName() + "\" --combi " + juce::String (combi.bankId) + ":" + juce::String (combi.number));
+    offerMissing ("These sounds of \"" + combi.name + "\" are not resampled yet. Their parts are in the performance anyway (marked with a warning sign) "
+                  "and they get the sound by themselves once it is resampled.\nCheck which ones to resample now:", missing, pcg->file.getFullPathName());
 }
 
 void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
@@ -3065,33 +3171,26 @@ void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
         const int end = (list + 1) * kPerfPerBank;
         int loaded = 0;
         juce::StringArray skippedAll, notPlaced;
-        juce::String args;
-        bool needSampling = false;
+        std::vector<LiveSamplerProcessor::KronosMissing> missing;
         for (int ci : combis)
         {
             const auto& combi = pcg2->combis[(size_t) ci];
             while (onlyEmpty && slot < end && pr.getSlot (slot).used) ++slot;
             if (slot >= end) { notPlaced.add (combi.id() + " " + combi.name); continue; }
-            const auto skipped = pr.loadKronosCombi (combi, safe->keepChannels.getToggleState());
+            const auto skipped = pr.loadKronosCombi (combi, safe->keepChannels.getToggleState(), &missing);
             pr.storePerformance (slot);
             ++slot;
             ++loaded;
-            bool rom = false;
-            for (auto& s : skipped) rom = rom || s.contains ("ROM") || s.contains ("EXi ") || s.contains ("resampled");
             if (! skipped.isEmpty()) skippedAll.add (combi.id() + " " + combi.name + ": " + juce::String (skipped.size()) + " timbre");
-            if (rom) { needSampling = true; args << " --combi " << juce::String (combi.bankId) << ":" << juce::String (combi.number); }
         }
         pr.setCurrentBank (list);
         safe->editor.showTab (LiveSamplerEditor::TabLists);
         juce::String msg = T ("Loaded ") + juce::String (loaded) + T (" combis into list ") + juce::String (list + 1) + ".";
         if (! notPlaced.isEmpty()) msg << T ("\n\nNo room in the list for: ") << notPlaced.joinIntoString (", ");
-        if (! skippedAll.isEmpty()) msg << T ("\n\nNot all timbres were transferred:\n") << skippedAll.joinIntoString ("\n");
-        if (needSampling)
-            safe->offerAutosample (msg + T ("\n\nResample everything missing in these combis from the Kronos at once (Pikaso Autosampler)?"
-                                            " After recording, click Refresh (SETTINGS) and load these combis again."),
-                                   "--pcg \"" + pcg2->file.getFullPathName() + "\"" + args);
-        else
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", msg);
+        if (! missing.empty())
+            msg << "\nSounds that are not resampled yet stay in their parts (warning sign) and get the sound by themselves once resampled. "
+                   "Check which ones to resample now:";
+        safe->offerMissing (msg, missing, pcg2->file.getFullPathName());
     }), true);
 }
 
@@ -3111,7 +3210,9 @@ void KronosPage::playRow (int row)
                              + T (" synthesis) and is not resampled yet.\n\nResample it from the Kronos (Pikaso Autosampler)? The whole sound of the program is recorded, every third note, at several velocities."),
                              "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
         else if (prog.drumKit)
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", T ("This is a drum kit program; drum kits are not supported yet."));
+            offerAutosample ("Program \"" + prog.name + "\" is a drum kit and is not resampled yet.\n\nResample it from the Kronos (Pikaso Autosampler)? "
+                             "Every key is recorded separately (the drum kit must be the same on the Kronos).",
+                             "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));
         else if (rom)
             offerAutosample (T ("Program \"") + prog.name + T ("\" uses factory ROM multisamples that are not resampled yet.\n\nResample them from the Kronos (Pikaso Autosampler)?"),
                              "--pcg \"" + pcg->file.getFullPathName() + "\" --program " + juce::String (prog.bankId) + ":" + juce::String (prog.number));

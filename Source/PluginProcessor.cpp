@@ -309,6 +309,7 @@ void LiveSamplerProcessor::rescanLibrary()
 
             scanning = false;
             instrumentList = names;
+            fillMissingParts();
 
             // izbaci iz memorije instrumente kojih vise nema (npr. izvadjen USB)
             for (auto it = cache.begin(); it != cache.end();)
@@ -665,6 +666,8 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
 {
     if (prog.exi)
         return createUserFromKronosExi (prog);
+    if (prog.drumKit)
+        return createUserFromKronosDrum (prog);
     UserProgram u;
     int n = 0;
     const int numOsc = prog.doubleMode ? 2 : 1;
@@ -804,6 +807,89 @@ int LiveSamplerProcessor::createUserFromKronosExi (const Kronos::Program& prog)
     return idx;
 }
 
+// drum kit: svaki taster je snimljen posebno (svoja zona, bez pomeranja visine), mapa je u folderu
+int LiveSamplerProcessor::createUserFromKronosDrum (const Kronos::Program& prog)
+{
+    const auto inst = resolveKronosDrum (prog);
+    if (inst.isEmpty())
+        return -1;
+    UserProgram u;
+    auto& sb = u.block[0];
+    sb.ampEg = EnvSettings();
+    sb.ampEg.attackTime = 0.001f;
+    sb.ampEg.sustain = 1.0f;
+    sb.ampEg.releaseTime = 0.3f;
+    sb.filterType = FilterType::Off;
+    const int tagLayers = library.kronosTag (prog.drumKey, "layers").getIntValue();
+    sb.velSens = tagLayers > 1 ? 0.25f : 0.7f;
+    u.osc[0].on = true;
+    u.osc[0].instrument = inst;
+    u.osc[0].block = 0;
+    u.kronosPcg = kronosFile.getFileName();
+    u.kronosSource = juce::String (prog.bankId) + ":" + juce::String (prog.number);
+    const int idx = createUser (prog.name.isNotEmpty() ? prog.name : prog.id(), &u);
+    loadNeededInstruments();
+    requestInstrument (inst, nullptr);
+    return idx;
+}
+
+int LiveSamplerProcessor::fillMissingParts()
+{
+    // PCG fajlovi se citaju samo jednom po pozivu
+    std::map<juce::String, std::unique_ptr<Kronos::Pcg>> pcgs;
+    auto programFor = [&] (const PerfPart& pp) -> const Kronos::Program*
+    {
+        const juce::File f (pp.missingPcg);
+        const Kronos::Pcg* pcg = nullptr;
+        if (kronosPcg != nullptr && (kronosFile == f || (! f.existsAsFile() && kronosFile.getFileName() == f.getFileName()))) pcg = kronosPcg.get();
+        else
+        {
+            auto& slot = pcgs[f.getFullPathName()];
+            if (slot == nullptr && f.existsAsFile())
+            {
+                slot = std::make_unique<Kronos::Pcg>();
+                juce::String err;
+                if (! slot->load (f, err)) slot->programs.clear();
+            }
+            pcg = slot.get();
+        }
+        if (pcg == nullptr) return nullptr;
+        const auto bank = (juce::uint32) pp.missingSource.upToFirstOccurrenceOf (":", false, false).getLargeIntValue();
+        return pcg->findProgram (bank, pp.missingSource.fromFirstOccurrenceOf (":", false, false).getIntValue());
+    };
+    std::map<juce::String, juce::String> resolved;   // missingPcg|source -> ime usera ("" = jos nema)
+    auto userFor = [&] (const PerfPart& pp) -> juce::String
+    {
+        const auto key = pp.missingPcg + "|" + pp.missingSource;
+        if (auto it = resolved.find (key); it != resolved.end()) return it->second;
+        juce::String name;
+        if (auto* prog = programFor (pp))
+            if (kronosProgramPlayable (*prog))
+                if (const int u = userForKronosProgram (*prog); u >= 0) name = users[(size_t) u].name;
+        resolved[key] = name;
+        return name;
+    };
+    int filled = 0;
+    for (auto& s : slots)
+    {
+        if (! s.used) continue;
+        for (auto& pp : s.parts)
+            if (pp.isMissing())
+                if (auto nm = userFor (pp); nm.isNotEmpty()) { pp.user = nm; pp.clearMissing(); ++filled; }
+    }
+    bool perfChanged = false;
+    for (auto& pp : perf.parts)
+        if (pp.isMissing())
+            if (auto nm = userFor (pp); nm.isNotEmpty()) { pp.user = nm; pp.clearMissing(); ++filled; perfChanged = true; }
+    if (filled > 0)
+    {
+        markSave();
+        if (perfChanged) { rebuildConfig(); loadNeededInstruments(); }
+        sendChangeMessage();
+    }
+    return filled;
+}
+
 int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
 {
     const int existing = findUser (p.name);
@@ -812,7 +898,7 @@ int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
     return createUserFromKronos (p);
 }
 
-juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c, bool keepChannels)
+juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c, bool keepChannels, std::vector<KronosMissing>* missing)
 {
     juce::StringArray skipped;
     if (kronosPcg == nullptr)
@@ -837,18 +923,36 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
 
         const auto* prog = kronosPcg->findProgram (tm.programBank, tm.programNumber);
         const int u = prog != nullptr && kronosProgramPlayable (*prog) ? userForKronosProgram (*prog) : -1;
+        part.on = true;
         if (u < 0)
         {
+            const auto what = prog != nullptr && prog->exi ? " (EXi " + prog->engineText() + juce::String::fromUTF8 (" synthesis, not resampled)")
+                            : prog != nullptr && prog->drumKit ? T (" (drum kit, not resampled)")
+                            : prog != nullptr && ! prog->usesUser() ? T (" (factory ROM, not resampled)")
+                            : T (" (samples not in the library)");
             skipped.add ("Timbre " + juce::String (t + 1) + ": "
-                         + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber))
-                         + (prog != nullptr && prog->exi ? " (EXi " + prog->engineText() + juce::String::fromUTF8 (" synthesis, not resampled)")
-                            : prog != nullptr && prog->drumKit ? T (" (drum kit, not supported yet)")
-                            : prog != nullptr && ! prog->usesUser() ? T (" (factory ROM, not resampled)") : juce::String()));
-            continue;
+                         + (prog != nullptr ? prog->id() + " " + prog->name : juce::String ("program ") + juce::String (tm.programNumber)) + what);
+            if (prog == nullptr)
+            {
+                part.on = false;
+                continue;
+            }
+            // part ostaje (sa svim podesavanjima), ceka presemplovan zvuk ili zamenu
+            part.missingName = prog->id() + " " + prog->name;
+            part.missingSource = juce::String (prog->bankId) + ":" + juce::String (prog->number);
+            part.missingPcg = kronosFile.getFullPathName();
+            if (missing != nullptr)
+            {
+                bool rom = prog->exi || prog->drumKit;
+                for (auto& o : prog->osc) for (auto& z : o) rom = rom || z.romKey.isNotEmpty();
+                bool have = false;
+                for (auto& m : *missing) if (m.bank == prog->bankId && m.number == prog->number) { have = true; m.where << ", " << c.name << " T" << (t + 1); }
+                if (! have)
+                    missing->push_back ({ prog->bankId, prog->number, prog->id() + " " + prog->name + what, c.name + " T" + juce::String (t + 1), rom });
+            }
         }
-
-        part.on = true;
-        part.user = users[(size_t) u].name;
+        else
+            part.user = users[(size_t) u].name;
         part.volumeDb = tm.volume <= 0 ? -60.0f : juce::jlimit (-60.0f, 6.0f, 40.0f * std::log10 ((float) tm.volume / 127.0f));
         part.pan = juce::jlimit (-1.0f, 1.0f, ((float) tm.pan - 64.0f) / 64.0f);
         part.transpose = tm.transpose;
@@ -861,8 +965,10 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         part.keyHigh = juce::jmax (tm.keyLow, tm.keyHigh);
         part.velLow = juce::jmin (tm.velLow, tm.velHigh);
         part.velHigh = juce::jmax (tm.velLow, tm.velHigh);
-        // timbre na globalnom kanalu Kronosa svira sa klavijature kao Gch -> svi kanali
-        part.midiChannel = ! keepChannels || tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
+        // timbre na globalnom kanalu Kronosa svira sa klavijature kao Gch -> svi kanali.
+        // Drum kit na svom kanalu (npr. 10) ostaje na tom kanalu, da ne svira sa klavijature preko ostalih zvukova.
+        const bool drumOwnChannel = prog != nullptr && prog->drumKit && tm.channel != 0 && tm.channel != kronosPcg->globalChannel;
+        part.midiChannel = (! keepChannels && ! drumOwnChannel) || tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
         part.reverbSend = (float) tm.send1 / 127.0f;
         part.delaySend = (float) tm.send2 / 127.0f;
     }
@@ -1005,6 +1111,8 @@ void LiveSamplerProcessor::editUserCategory (const juce::String& oldName, const 
 void LiveSamplerProcessor::updatePerformance (const Performance& p)
 {
     perf = p;
+    for (auto& pp : perf.parts)
+        if (pp.user.isNotEmpty() && pp.missingSource.isNotEmpty()) pp.clearMissing();   // zamenjen drugim userom
     perfDirty = true;
     markSave();
     rebuildConfig();

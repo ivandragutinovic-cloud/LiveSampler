@@ -135,6 +135,12 @@ struct PerfPart
     bool expression = true;             // prima Expression (CC11)
     int vectorDir = 0;                  // vector joystick: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y (kao VJS Assign na Kronosu)
     float vectorCenter = 1.0f;          // jacina u centru joysticka (0..1, Volume Center)
+    // Kronos program koji jos nije presemplovan: part ceka (cuti) dok se ne presempluje ili ne zameni drugim userom
+    juce::String missingName;           // npr. "USER-A 112 Real Drums Kit"
+    juce::String missingSource;         // "bankId:broj" programa u PCG-u
+    juce::String missingPcg;            // ceo put do PCG fajla
+    bool isMissing() const { return user.isEmpty() && missingSource.isNotEmpty(); }
+    void clearMissing() { missingName = {}; missingSource = {}; missingPcg = {}; }
 };
 
 struct SetListSlot

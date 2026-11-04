@@ -370,7 +370,7 @@ function buildPerf(m) {
       if (a === 2) return setMany("perf", [[P + "@user", ""], [P + "@on", false]]);
       setMany("perf", [[P + "@user", v], [P + "@on", true]]); render();
     }, S.users.cats);
-    ctrls.push(() => { const pp = partOf(i); nm.textContent = pp.user || "— choose user —"; c.classList.toggle("off", !+pp.on); });
+    ctrls.push(() => { const pp = partOf(i); nm.textContent = pp.user || (pp.missingName ? "⚠ " + pp.missingName : "— choose user —"); nm.style.background = !pp.user && pp.missingName ? "#5a2230" : ""; c.classList.toggle("off", !+pp.on); });
     const k = el("div", "knobs", "", c);
     knob(k, { label: "Volume", target: "perf", path: P + "@volume", lo: -60, hi: 6, c: -12, def: 0, fmt: F.db, col });
     knob(k, { label: "Pan", target: "perf", path: P + "@pan", lo: -1, hi: 1, c: 0, def: 0, fmt: F.pan, col });

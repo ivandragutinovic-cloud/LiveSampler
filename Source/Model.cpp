@@ -324,6 +324,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("sustain", p.sustainPedal);
         x->setAttribute ("expression", p.expression);
         if (p.vectorDir != 0) { x->setAttribute ("vjs", p.vectorDir); x->setAttribute ("vjsCenter", (double) p.vectorCenter); }
+        if (p.missingSource.isNotEmpty()) { x->setAttribute ("missingName", p.missingName); x->setAttribute ("missingSource", p.missingSource); x->setAttribute ("missingPcg", p.missingPcg); }
     }
     return e;
 }
@@ -368,6 +369,9 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.expression = x->getBoolAttribute ("expression", true);
         p.vectorDir = juce::jlimit (0, 4, x->getIntAttribute ("vjs", 0));
         p.vectorCenter = (float) juce::jlimit (0.0, 1.0, x->getDoubleAttribute ("vjsCenter", 1.0));
+        p.missingName = x->getStringAttribute ("missingName");
+        p.missingSource = x->getStringAttribute ("missingSource");
+        p.missingPcg = x->getStringAttribute ("missingPcg");
     }
     return perf;
 }

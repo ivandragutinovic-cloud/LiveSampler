@@ -66,6 +66,8 @@ namespace
         // zvuk sa druge klavijature / modula (bilo koji MIDI instrument): bira se Bank Select + Program Change
         bool external = false;
         juce::String extName;
+        // drum kit program: bira se na Kronosu (Program Change), svaki taster se snima posebno
+        bool drum = false;
         int msb = -1, lsb = -1, pc = -1, layers = 1;
         juce::uint32 progBank = 0; int progNum = -1;     // EXi: program u PCG-u (bira se na Kronosu pre slanja)
         // procena (dugme Proceni): koliko drzati tone, release, da li treba loop
@@ -75,6 +77,7 @@ namespace
         juce::String label() const
         {
             if (external) return "EXT " + extName;
+            if (drum) return "DRUM " + programId;
             if (exi) return "EXi " + engine + " " + programId;
             const int type = zone[0] & 3, bankByte = zone[16], index = zone[18] | (zone[19] << 8);
             const int bank = bankByte >> 1;
@@ -822,7 +825,8 @@ private:
     bool programHasRom (const Kronos::Program& p) const
     {
         if (p.exi) return true;
-        if (! p.hd1 || p.drumKit) return false;
+        if (p.drumKit) return p.drumKey.isNotEmpty();
+        if (! p.hd1) return false;
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
             for (auto& z : p.osc[(size_t) o])
                 if (z.used && z.romKey.isNotEmpty()) return true;
@@ -877,6 +881,20 @@ private:
             n.progNum = p.number;
             n.usedBy = p.name;
             n.program.assign (raw, raw + Kronos::programSize);
+            needed.push_back (std::move (n));
+            return;
+        }
+        if (p.drumKit)
+        {
+            for (auto& n : needed)
+                if (n.romKey == p.drumKey) return;
+            NeededMs n;
+            n.drum = true;
+            n.romKey = p.drumKey;
+            n.programId = p.id();
+            n.progBank = p.bankId;
+            n.progNum = p.number;
+            n.usedBy = p.name;
             needed.push_back (std::move (n));
             return;
         }
@@ -1043,7 +1061,9 @@ private:
         {
             if (isDone (n)) { ++done; continue; }
             if (n.exi || n.external) ++exi;
-            if (! n.exi && ! n.external && zoneToggle.getToggleState())
+            if (n.drum)
+                seconds += (int) ((highNote.getValue() - lowNote.getValue() + 1) * (0.7 + 0.5 * (int) exiVelocities (n).size() * (hold.getValue() * 0.4 + 1.0)));
+            else if (! n.exi && ! n.external && zoneToggle.getToggleState())
                 seconds += (int) ((highNote.getValue() - lowNote.getValue() + 1) * 1.1 + 12 * (hold.getValue() + release.getValue() * 0.6 + 0.4));   // ~12 zona
             else
                 seconds += estimateSecondsPerMs() * (n.exi || n.external ? (n.analyzed && n.anVelFlat ? 1 : (int) exiVelocities (n).size()) : 1);
@@ -1231,6 +1251,7 @@ private:
     std::vector<int> exiVelocities (const NeededMs& n) const
     {
         int layers = n.external ? n.layers : exiVelBox.getSelectedId() - 100;
+        if (layers <= 0 && n.drum) layers = 3;
         if (layers <= 0)
         {
             auto has = [&n] (int a) { return n.alg[0] == a || n.alg[1] == a; };
@@ -1512,7 +1533,7 @@ private:
         settings.minLoopMs = minLoopMs.getValue();
         settings.zones = zoneToggle.getToggleState();
         exiVels.clear();
-        for (auto& n : needed) exiVels.push_back (n.exi || n.external ? exiVelocities (n) : std::vector<int> {});
+        for (auto& n : needed) exiVels.push_back (n.exi || n.external || n.drum ? exiVelocities (n) : std::vector<int> {});
         outFolder.createDirectory();
         saveSettings();
         analyzeOnly = false;
@@ -1666,6 +1687,19 @@ private:
     bool selectJob (const NeededMs& n, juce::String& err, bool& fatal)
     {
         fatal = false;
+        if (n.drum)
+        {
+            // drum kit: pravi program sa Kronosa (sa njegovim drum kitom), bira se Program Change-om i proverava po imenu
+            if (! selectKronosProgram (n.progBank, n.progNum, n.usedBy, false))
+            {
+                err = "The Kronos did not switch to the drum kit program " + n.programId + " " + n.usedBy
+                      + ". Check GLOBAL > MIDI (Program / Bank Change receive) and that the PCG is the same as on the Kronos.";
+                return false;
+            }
+            lastKind = 1;
+            wait (1200);
+            return true;
+        }
         if (! n.external && ! ensureKronosKind (n, &err)) return false;
         if (n.external)
         {
@@ -1757,7 +1791,12 @@ private:
                 settings.autoLoop = settings.autoLoop && n.anLoop;
             }
 
-            if (n.exi || n.external)
+            if (n.drum)
+            {
+                settings.autoLoop = false;          // bubnjevi bez loop-a
+                recordDrum (n, i, total, exiVels[(size_t) i]);
+            }
+            else if (n.exi || n.external)
             {
                 auto vels = exiVels[(size_t) i];
                 if (n.analyzed && n.anVelFlat) vels = { 127 };   // dinamika ne menja zvuk
@@ -2048,10 +2087,16 @@ private:
                     for (int k = juce::jmax (0, b - 15); k < juce::jmin (offB, b + 15); ++k, ++cnt) acc += env[(size_t) k];
                     sm[(size_t) b] = acc / juce::jmax (1, cnt);
                 }
+                // nivo na kome drzi: srednja vrednost 0.5-3 s posle vrha (ne kraj od 12 s, jer zvuk koji polako
+                // opada, gudaci / vibrafon, tada nikad ne "stigne" do kraja pa bi drzanje islo do maksimuma)
+                std::vector<double> mid;
+                for (int b = peakB + 50; b < juce::jmin (offB, peakB + 300); ++b) mid.push_back (sm[(size_t) b]);
+                double ref = endHold;
+                if (! mid.empty()) { std::nth_element (mid.begin(), mid.begin() + (long) mid.size() / 2, mid.end()); ref = mid[mid.size() / 2]; }
                 int settle = peakB;
-                while (settle < offB - 1 && std::abs (20.0 * std::log10 (sm[(size_t) settle] / endHold)) > 3.0) ++settle;
-                // cist zvuk bez velikog attack/decay-a: dovoljno ~1.2 s (loop ~0.7 s)
-                hold = juce::jlimit (1.2, 5.0, (settle - onset) * 0.01 + 1.0);
+                while (settle < offB - 1 && std::abs (20.0 * std::log10 (sm[(size_t) settle] / ref)) > 3.0) ++settle;
+                // posle toga samo mesto za loop (~1 s): cist zvuk 1.2 s, najvise 3 s (manje mesta na disku)
+                hold = juce::jlimit (1.2, 3.0, (settle - onset) * 0.01 + 1.0);
             }
             else
             {
@@ -2121,6 +2166,62 @@ private:
         n.anText = juce::String::fromUTF8 ("hold ") + juce::String (n.anHold, 1) + " s, release " + juce::String (n.anRelease, 1) + " s, "
                  + (n.anLoop ? "loop" : juce::String::fromUTF8 ("no loop (sound decays)"))
                  + (n.anVelFlat ? juce::String::fromUTF8 (", velocity does not change the sound: 1 layer") : juce::String());
+    }
+
+    // drum kit: svaki taster posebno (svoja zona, bez pomeranja visine), u vise jacina; tasteri bez zvuka se preskacu
+    void recordDrum (const NeededMs& n, int i, int total, const std::vector<int>& velsIn)
+    {
+        auto vels = velsIn;
+        if (vels.empty()) vels = { 127 };
+        std::sort (vels.begin(), vels.end());
+        const auto folder = msFolder (n);
+        folder.createDirectory();
+        juce::XmlElement map ("LiveSamplerMap");
+        map.setAttribute ("version", 1);
+        int written = 0;
+        // prvo kratko proveri koji tasteri uopste imaju zvuk (drum kit retko koristi celu klavijaturu)
+        std::vector<bool> sounding ((size_t) 128, false);
+        for (int note = settings.low; note <= settings.high && ! threadShouldExit(); ++note)
+        {
+            setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  checking key " + noteName (note));
+            int offPos = 0;
+            const int len = captureNote (note, 127, 0.25, 0.3, offPos);
+            float peak = 0.0f;
+            for (int k = 0; k < len; ++k) peak = juce::jmax (peak, std::abs (recorder.buffer.getSample (0, k)), std::abs (recorder.buffer.getSample (1, k)));
+            sounding[(size_t) note] = peak > 0.0005f;
+        }
+        // bubanj: ako procena nije dala drzanje, dovoljno je 1.5 s (zvuk se snima i posle pustanja tastera)
+        if (! n.analyzed) settings.hold = juce::jmin (settings.hold, 1.5);
+        for (int note = settings.low; note <= settings.high && ! threadShouldExit(); ++note)
+        {
+            if (! sounding[(size_t) note]) continue;
+            bool sound = true;
+            // najjaca jacina prva: ako taster cuti, ostale jacine se ne snimaju
+            for (int v = (int) vels.size() - 1; v >= 0 && sound && ! threadShouldExit(); --v)
+            {
+                const int vel = vels[(size_t) v];
+                setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  key " + noteName (note) + "  velocity " + juce::String (vel));
+                const auto name = juce::String (note).paddedLeft ('0', 3) + " v" + juce::String (vel).paddedLeft ('0', 3) + ".wav";
+                const auto f = folder.getChildFile (name);
+                const bool ok = f.existsAsFile() || recordNote (note, f, vel);
+                if (! ok) { if (v == (int) vels.size() - 1) sound = false; continue; }
+                ++written;
+                auto* e = map.createNewChildElement ("Zone");
+                e->setAttribute ("sample", name);
+                e->setAttribute ("enabled", 1);
+                e->setAttribute ("lowKey", note);
+                e->setAttribute ("highKey", note);
+                e->setAttribute ("lowVel", v == 0 ? 1 : vels[(size_t) v - 1] + 1);
+                e->setAttribute ("highVel", v + 1 == (int) vels.size() ? 127 : vel);
+                e->setAttribute ("root", note);
+                e->setAttribute ("loop", 0);
+            }
+        }
+        if (threadShouldExit()) return;
+        if (written == 0) { folder.deleteRecursively(); return; }
+        map.writeTo (folder.getChildFile ("LiveSampler-mapa.xml"));
+        folder.getChildFile ("kronos-ms.txt").replaceWithText (n.romKey + "\n" + n.label() + "\n" + n.usedBy + "\n"
+                                                               + "layers=" + juce::String ((int) vels.size()) + "\n" + "engine=drum\n");
     }
 
     // ceo EXi program: svaki korak note x svaka jacina; release se meri i upisuje u kronos-ms.txt

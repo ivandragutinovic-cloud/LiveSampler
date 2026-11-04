@@ -149,9 +149,12 @@ public:
     }
     // presemplovan EXi program (ceo program snimljen Kronos Autosamplerom)
     juce::String resolveKronosExi (const Kronos::Program& p) const { return p.exi ? library.findKronosRom (p.exiKey) : juce::String(); }
+    // presemplovan drum kit program (svaki taster snimljen posebno)
+    juce::String resolveKronosDrum (const Kronos::Program& p) const { return p.drumKit && p.drumKey.isNotEmpty() ? library.findKronosRom (p.drumKey) : juce::String(); }
     bool kronosProgramPlayable (const Kronos::Program& p) const
     {
         if (p.exi) return resolveKronosExi (p).isNotEmpty();
+        if (p.drumKit) return resolveKronosDrum (p).isNotEmpty();
         if (! p.hd1 || p.drumKit) return false;
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
             for (auto& z : p.osc[(size_t) o])
@@ -160,6 +163,11 @@ public:
     }
     int createUserFromKronos (const Kronos::Program& p);   // -1 ako nema user semplova u biblioteci
     int createUserFromKronosExi (const Kronos::Program& p);
+    int createUserFromKronosDrum (const Kronos::Program& p);
+    // timbre kombija ciji zvuk jos nije presemplovan: part ostaje u performansu sa imenom programa
+    struct KronosMissing { juce::uint32 bank = 0; int number = 0; juce::String label, where; bool canResample = false; };
+    // posle osvezavanja biblioteke: partovi koji cekaju presemplovan Kronos program dobijaju usera sami
+    int fillMissingParts();
     // velocity slojevi presemplovanog zvuka (iz imena fajlova "060 v127.wav"): jacine od najjace
     std::vector<int> velocityLayersOf (const juce::String& instrument) const;
     // brise jedan velocity sloj sa diska; susedni sloj preuzima njegov opseg (i u mapi i u MS-ovima usera)
@@ -201,7 +209,7 @@ public:
     int userForKronosProgram (const Kronos::Program& p);   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)
-    juce::StringArray loadKronosCombi (const Kronos::Combi& c, bool keepChannels);
+    juce::StringArray loadKronosCombi (const Kronos::Combi& c, bool keepChannels, std::vector<KronosMissing>* missing = nullptr);
 
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }

@@ -291,6 +291,7 @@ namespace Kronos
                             readParams (p, item);
                             if (p.drumKit)
                             {
+                                p.drumKey = "drum:" + makeExiKey (item).substring (4);
                                 // drum kit program: zone ne nose multisempl nego broj drum kita
                                 for (auto& o : p.osc)
                                     for (auto& z : o) { z.user = false; }
