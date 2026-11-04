@@ -2205,16 +2205,43 @@ private:
         map.setAttribute ("version", 1);
         int written = 0;
         // prvo kratko proveri koji tasteri uopste imaju zvuk (drum kit retko koristi celu klavijaturu)
+        // Taster ima zvuk samo ako posle note-on dodje nov udarac: rep prethodnog bubnja (cinela) i sum ulaza se ne racunaju.
+        // Snimak pocinje 40 ms pre note-on, pa se to uzima kao nivo pre udarca.
         std::vector<bool> sounding ((size_t) 128, false);
+        std::vector<float> pre ((size_t) 128, 0.0f), post ((size_t) 128, 0.0f);
+        const int preLen = (int) (recorder.sampleRate * 0.035);
         for (int note = settings.low; note <= settings.high && ! threadShouldExit(); ++note)
         {
             setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  checking key " + noteName (note));
+            // sacekaj da rep prethodnog udarca utihne (do 2 s)
+            for (int k = 0; k < 40 && recorder.level.load() > 0.0005f && ! threadShouldExit(); ++k) wait (50);
             int offPos = 0;
             const int len = captureNote (note, 127, 0.25, 0.3, offPos);
-            float peak = 0.0f;
-            for (int k = 0; k < len; ++k) peak = juce::jmax (peak, std::abs (recorder.buffer.getSample (0, k)), std::abs (recorder.buffer.getSample (1, k)));
-            sounding[(size_t) note] = peak > 0.0005f;
+            float a = 0.0f, b = 0.0f;
+            for (int k = 0; k < len; ++k)
+            {
+                const float s = juce::jmax (std::abs (recorder.buffer.getSample (0, k)), std::abs (recorder.buffer.getSample (1, k)));
+                (k < preLen ? a : b) = juce::jmax (k < preLen ? a : b, s);
+            }
+            pre[(size_t) note] = a;
+            post[(size_t) note] = b;
         }
+        float loudest = 0.0f;
+        for (auto v : post) loudest = juce::jmax (loudest, v);
+        juce::StringArray empty;
+        for (int note = settings.low; note <= settings.high; ++note)
+        {
+            const float a = pre[(size_t) note], b = post[(size_t) note];
+            // nov udarac: bar 10 dB iznad nivoa pre note-on, iznad suma (-50 dB) i ne vise od 46 dB ispod najjaceg bubnja
+            sounding[(size_t) note] = b > a * 3.2f && b > 0.003f && b > loudest * 0.005f;
+            if (! sounding[(size_t) note]) empty.add (noteName (note));
+        }
+        juce::Logger::writeToLog ("drum " + n.label() + ": empty keys " + empty.joinIntoString (" "));
+        // WAV-ovi praznih tastera iz ranijeg snimanja se brisu (u Recycle Bin)
+        for (int note = settings.low; note <= settings.high && ! threadShouldExit(); ++note)
+            if (! sounding[(size_t) note])
+                for (auto& f : folder.findChildFiles (juce::File::findFiles, false, juce::String (note).paddedLeft ('0', 3) + " v*.wav"))
+                    if (! f.moveToTrash()) f.deleteFile();
         // bubanj: ako procena nije dala drzanje, dovoljno je 1.5 s (zvuk se snima i posle pustanja tastera)
         for (int note = settings.low; note <= settings.high && ! threadShouldExit(); ++note)
         {
