@@ -38,8 +38,20 @@ class KeyRangeView : public juce::Component
 public:
     explicit KeyRangeView (LiveSamplerProcessor& p) : proc (p) {}
     void paint (juce::Graphics&) override;
+    // zone se pomeraju misem ili prstom: ivica = donja/gornja granica, sredina = cela zona
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
 private:
+    struct Hit { int part = -1, mode = 0; };   // mode: 1 donja ivica, 2 gornja ivica, 3 cela zona
+    Hit hitTest (juce::Point<float>) const;
+    int keyAt (float x) const;
+    juce::Rectangle<float> barArea() const;
+    juce::Array<int> activeParts() const;
     LiveSamplerProcessor& proc;
+    Hit drag;
+    int dragStartKey = 0, origLo = 0, origHi = 127;
 };
 
 class PerformancePage : public juce::Component

@@ -605,6 +605,99 @@ void PartStrip::resized()
 //==============================================================================
 //  KeyRangeView
 //==============================================================================
+static constexpr int kRangeLo = 21, kRangeHi = 108;
+
+juce::Rectangle<float> KeyRangeView::barArea() const
+{
+    auto area = getLocalBounds().toFloat().reduced (10.0f, 6.0f);
+    area.removeFromBottom (19.0f);
+    return area;
+}
+
+juce::Array<int> KeyRangeView::activeParts() const
+{
+    const auto& perf = proc.getPerformance();
+    juce::Array<int> active;
+    for (int i = 0; i < kNumParts; ++i)
+        if (perf.parts[(size_t) i].on && (perf.parts[(size_t) i].user.isNotEmpty() || perf.parts[(size_t) i].isMissing()))
+            active.add (i);
+    return active;
+}
+
+int KeyRangeView::keyAt (float x) const
+{
+    const auto area = barArea();
+    const float kw = area.getWidth() / (float) (kRangeHi - kRangeLo + 1);
+    return juce::jlimit (0, 127, kRangeLo + (int) std::floor ((x - area.getX()) / kw));
+}
+
+KeyRangeView::Hit KeyRangeView::hitTest (juce::Point<float> pt) const
+{
+    const auto area = barArea();
+    const auto active = activeParts();
+    if (active.isEmpty()) return {};
+    const float kw = area.getWidth() / (float) (kRangeHi - kRangeLo + 1);
+    const float rowH = juce::jmin (16.0f, area.getHeight() / (float) active.size());
+    const int k = (int) std::floor ((pt.y - area.getY()) / rowH);
+    if (k < 0 || k >= active.size()) return {};
+    const auto& p = proc.getPerformance().parts[(size_t) active[k]];
+    const float x0 = area.getX() + (float) (juce::jlimit (kRangeLo, kRangeHi, p.keyLow) - kRangeLo) * kw;
+    const float x1 = area.getX() + (float) (juce::jlimit (kRangeLo, kRangeHi, p.keyHigh) - kRangeLo + 1) * kw;
+    const float grab = juce::jmax (8.0f, kw * 1.5f);   // prst je sirok, ivica se hvata i malo van zone
+    if (pt.x < x0 - grab || pt.x > x1 + grab) return {};
+    Hit h; h.part = active[k];
+    if (std::abs (pt.x - x0) <= grab && pt.x < (x0 + x1) * 0.5f) h.mode = 1;
+    else if (std::abs (pt.x - x1) <= grab) h.mode = 2;
+    else h.mode = 3;
+    return h;
+}
+
+void KeyRangeView::mouseMove (const juce::MouseEvent& e)
+{
+    const auto h = hitTest (e.position);
+    setMouseCursor (h.mode == 1 || h.mode == 2 ? juce::MouseCursor::LeftRightResizeCursor
+                    : h.mode == 3 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+}
+
+void KeyRangeView::mouseDown (const juce::MouseEvent& e)
+{
+    drag = hitTest (e.position);
+    if (drag.part < 0) return;
+    const auto& p = proc.getPerformance().parts[(size_t) drag.part];
+    dragStartKey = keyAt (e.position.x);
+    origLo = juce::jmin (p.keyLow, p.keyHigh);
+    origHi = juce::jmax (p.keyLow, p.keyHigh);
+    repaint();
+}
+
+void KeyRangeView::mouseDrag (const juce::MouseEvent& e)
+{
+    if (drag.part < 0) return;
+    const int key = keyAt (e.position.x);
+    int lo = origLo, hi = origHi;
+    if (drag.mode == 1) lo = juce::jmin (key, hi);
+    else if (drag.mode == 2) hi = juce::jmax (key, lo);
+    else
+    {
+        // pomeranje cele zone; ako je zona do kraja (0 / 127) ta ivica ostaje na kraju
+        int d = key - dragStartKey;
+        d = juce::jlimit (-lo, 127 - hi, d);
+        lo += d; hi += d;
+    }
+    auto perf = proc.getPerformance();
+    auto& pp = perf.parts[(size_t) drag.part];
+    if (pp.keyLow == lo && pp.keyHigh == hi) return;
+    pp.keyLow = lo; pp.keyHigh = hi;
+    proc.updatePerformance (perf);
+    repaint();
+}
+
+void KeyRangeView::mouseUp (const juce::MouseEvent&)
+{
+    drag = {};
+    repaint();
+}
+
 void KeyRangeView::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat();
@@ -614,7 +707,7 @@ void KeyRangeView::paint (juce::Graphics& g)
     auto area = r.reduced (10.0f, 6.0f);
     auto keys = area.removeFromBottom (16.0f);
     area.removeFromBottom (3.0f);
-    const int lo = 21, hi = 108;
+    const int lo = kRangeLo, hi = kRangeHi;
     const float kw = area.getWidth() / (float) (hi - lo + 1);
     auto xOf = [&] (int n) { return area.getX() + (float) (n - lo) * kw; };
 
@@ -637,10 +730,7 @@ void KeyRangeView::paint (juce::Graphics& g)
     }
 
     const auto& perf = proc.getPerformance();
-    juce::Array<int> active;
-    for (int i = 0; i < kNumParts; ++i)
-        if (perf.parts[(size_t) i].on && perf.parts[(size_t) i].user.isNotEmpty())
-            active.add (i);
+    const auto active = activeParts();
 
     if (active.isEmpty())
     {
@@ -659,12 +749,22 @@ void KeyRangeView::paint (juce::Graphics& g)
         const int a = juce::jlimit (lo, hi, p.keyLow), b = juce::jlimit (lo, hi, p.keyHigh);
         if (b < a) continue;
         auto bar = juce::Rectangle<float> (xOf (a), area.getY() + (float) k * rowH + 1.0f, (float) (b - a + 1) * kw, rowH - 2.0f);
-        g.setColour (Pal::part[i].withAlpha (0.85f));
+        g.setColour (Pal::part[i].withAlpha (drag.part == i ? 1.0f : 0.85f));
         g.fillRoundedRectangle (bar, 3.0f);
+        if (drag.part == i)
+        {
+            g.setColour (juce::Colours::white);
+            g.drawRoundedRectangle (bar, 3.0f, 1.5f);
+            // granice zone na klavijaturi dok se vuce
+            g.setColour (Pal::part[i].withAlpha (0.55f));
+            g.fillRect (juce::Rectangle<float> (xOf (a), keys.getY(), (float) (b - a + 1) * kw, keys.getHeight()));
+        }
         g.setColour (juce::Colours::black);
-        juce::String txt = juce::String (i + 1) + "  " + p.user;
+        juce::String txt = juce::String (i + 1) + "  " + (p.isMissing() ? juce::String::fromUTF8 ("\xe2\x9a\xa0 ") + p.missingName : p.user);
         if (p.transpose != 0 || p.octave != 0)
             txt << "  (" << (p.octave * 12 + p.transpose > 0 ? "+" : "") << (p.octave * 12 + p.transpose) << ")";
+        if (drag.part == i)
+            txt << "   " << juce::MidiMessage::getMidiNoteName (p.keyLow, true, true, 4) << " - " << juce::MidiMessage::getMidiNoteName (p.keyHigh, true, true, 4);
         g.drawText (txt, bar.reduced (5.0f, 0.0f), juce::Justification::centredLeft, true);
     }
 }
