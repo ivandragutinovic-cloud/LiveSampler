@@ -689,7 +689,11 @@ function buildUser(m) {
     const g2 = el("div", "kgrid", "", box);
     ENVK.forEach(e => { if (e[1] === "rLevel" && !s.bip) return; const lo = (e[5] === "lvl" && s.bip) ? -1 : e[2]; knob(g2, { label: e[0], target: "user", path: B + "/" + s.eg + "@" + e[1], lo, hi: e[3], c: e[5] === "time" ? e[4] : (lo < 0 ? 0 : undefined), def: e[4] === 0.6 ? 0.3 : e[4], fmt: F[e[5]], col }); });
   } else if (section === "common") {
-    el("h3", "", "VOICE", box); seg(box, { target: "user", path: "@voiceMode", items: ["Poly", "Mono", "Mono legato"] });
+    el("h3", "", "VOICE", box); seg(box, { target: "user", path: "@voiceMode", items: ["Poly", "Mono", "Mono legato", "Mono legato crossfade"] });
+    const lg = el("div", "row", "", box);
+    knob(lg, { label: "Legato xfade", target: "user", path: "@legatoXfade", lo: 0.005, hi: 0.5, c: 0.06, def: 0.06, fmt: F.time, col });
+    knob(lg, { label: "Skip attack", target: "user", path: "@legatoStart", lo: 0, hi: 0.5, c: 0.05, def: 0.05, fmt: F.time, col });
+    el("span", "hint", "Used only in Mono legato crossfade: each new note plays the sample of its own zone, crossfaded without a new attack.", lg);
     el("h3", "", "PRIORITY", box).style.marginTop = "8px"; seg(box, { target: "user", path: "@priority", items: ["Last note", "Highest note", "Lowest note"] });
     el("h3", "", "PORTAMENTO", box).style.marginTop = "8px";
     const r = el("div", "row", "", box);

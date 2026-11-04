@@ -902,8 +902,34 @@ int LiveSamplerProcessor::fillMissingParts()
     return filled;
 }
 
+juce::StringArray LiveSamplerProcessor::userUsage (const juce::String& name) const
+{
+    juce::StringArray out;
+    if (name.isEmpty()) return out;
+    for (int s = 0; s < kNumPerfSlots; ++s)
+    {
+        const auto& sl = slots[(size_t) s];
+        if (! sl.used) continue;
+        for (auto& p : sl.parts)
+            if (p.user == name)
+            {
+                out.add (juce::String (s / kPerfPerBank + 1) + "-" + juce::String (s % kPerfPerBank).paddedLeft ('0', 3) + "  " + sl.name);
+                break;
+            }
+    }
+    if (currentSlot < 0)
+        for (auto& p : perf.parts)
+            if (p.user == name) { out.add ("(current, not saved)  " + perf.name); break; }
+    return out;
+}
+
 int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
 {
+    // user napravljen od istog programa (i kad je posle preimenovan)
+    const auto src = juce::String (p.bankId) + ":" + juce::String (p.number);
+    for (size_t i = 0; i < users.size(); ++i)
+        if (users[i].kronosSource == src && users[i].kronosPcg == kronosFile.getFileName())
+            return (int) i;
     const int existing = findUser (p.name);
     if (existing >= 0)
         return existing;

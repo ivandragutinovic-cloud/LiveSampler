@@ -1477,8 +1477,10 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     addChildComponent (filterType);
     addChildComponent (filterLabel);
 
-    voiceMode.addItemList ({ "Poly", "Mono", "Mono legato" }, 1);
-    voiceMode.onChange = [this] { const int v = voiceMode.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.voiceMode = v; }); };
+    voiceMode.addItemList ({ "Poly", "Mono", "Mono legato", "Mono legato crossfade" }, 1);
+    voiceMode.setTooltip (T ("Mono legato: the first note keeps playing and only its pitch changes. "
+                             "Mono legato crossfade: each new note plays the sample of its own key zone, crossfaded from the previous note without a new attack (more realistic for sax, strings, voice)."));
+    voiceMode.onChange = [this] { const int v = voiceMode.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.voiceMode = v; }); refreshLegatoKnobs(); };
     priority.addItemList ({ T ("Last note"), T ("Highest note"), T ("Lowest note") }, 1);
     priority.onChange = [this] { const int v = priority.getSelectedItemIndex(); edit ([v] (UserProgram& u) { u.priority = v; }); };
     for (auto* b : { &portaOn, &portaFingered, &portaConstRate })
@@ -1496,6 +1498,14 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     portaConstRate.onClick = [this] { const bool v = portaConstRate.getToggleState(); edit ([v] (UserProgram& u) { u.portaConstRate = v; }); };
     portaTime = std::make_unique<ValueKnob> ("Time", Pal::accent, 0.001, 3.0, 0.3, UI::timeText, 0.1);
     portaTime->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.portamento = (float) v; }); };
+    legatoXfade = std::make_unique<ValueKnob> ("Legato xfade", Pal::accent, 0.005, 0.5, 0.06, UI::timeText, 0.06);
+    legatoXfade->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.legatoXfade = (float) v; }); };
+    legatoXfade->slider.setTooltip (T ("Crossfade time from the previous note into the new one"));
+    legatoStart = std::make_unique<ValueKnob> ("Skip attack", Pal::accent, 0.0, 0.5, 0.05, UI::timeText, 0.05);
+    legatoStart->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.legatoStart = (float) v; }); };
+    legatoStart->slider.setTooltip (T ("The new note's sample starts this far in, so its attack is not heard (legato)"));
+    addChildComponent (legatoXfade.get());
+    addChildComponent (legatoStart.get());
     UI::setupIncDec (bendUp, 0, 24, 1);
     UI::setupIncDec (bendDown, 0, 24, 1);
     bendUp.onValueChange = [this] { const int v = (int) bendUp.getValue(); edit ([v] (UserProgram& u) { u.bendUp = v; }); };
@@ -1554,6 +1564,8 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     ml.bindButton (portaFingered, "user.common.fingered");
     ml.bindButton (portaConstRate, "user.common.constrate");
     ml.bindSlider (portaTime->slider, "user.common.portatime");
+    ml.bindSlider (legatoXfade->slider, "user.common.legatoxfade");
+    ml.bindSlider (legatoStart->slider, "user.common.legatostart");
     ml.bindSlider (bendUp, "user.common.bendup");
     ml.bindSlider (bendDown, "user.common.benddown");
     ml.bindCombo (fxType, "user.effect.type");
@@ -1693,6 +1705,7 @@ void SoundEditor::rebuildKnobs()
                                                              portaTime.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
                                                              &commonLabels[2], &commonLabels[3] })
         c->setVisible (section == Common);
+    refreshLegatoKnobs();
     fxType.setVisible (section == Effect);
     fxLabel.setVisible (section == Effect);
 
@@ -1763,6 +1776,9 @@ void SoundEditor::refresh()
     portaFingered.setToggleState (u.portaFingered, juce::dontSendNotification);
     portaConstRate.setToggleState (u.portaConstRate, juce::dontSendNotification);
     portaTime->setValue (u.portamento);
+    legatoXfade->setValue (u.legatoXfade);
+    legatoStart->setValue (u.legatoStart);
+    refreshLegatoKnobs();
     setSliderValue (bendUp, u.bendUp);
     setSliderValue (bendDown, u.bendDown);
     fxType.setSelectedItemIndex (u.fxType, juce::dontSendNotification);
@@ -1904,6 +1920,10 @@ void SoundEditor::resized()
         bendDown.setBounds (c6.removeFromTop (26));
         for (auto* s : { &bendUp, &bendDown })
             s->setTextBoxStyle (juce::Slider::TextBoxLeft, false, 50, 26);
+        auto row2 = r.removeFromTop (100).reduced (0, 4);
+        legatoXfade->setBounds (row2.removeFromLeft (100));
+        row2.removeFromLeft (8);
+        legatoStart->setBounds (row2.removeFromLeft (100));
         return;
     }
 
@@ -2023,7 +2043,33 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     nameEdit.setColour (juce::Label::backgroundColourId, Pal::lcdBg);
     nameEdit.setColour (juce::Label::textColourId, Pal::lcdText);
     nameEdit.setTooltip (T ("Click to rename the user"));
-    nameEdit.onTextChange = [this] { edit ([this] (UserProgram& u) { u.name = nameEdit.getText(); }); };
+    nameEdit.onTextChange = [this]
+    {
+        if (userIndex < 0 || userIndex >= proc.getNumUsers()) return;
+        const auto oldName = proc.getUser (userIndex).name;
+        const auto newName = nameEdit.getText().trim();
+        if (newName.isEmpty() || newName == oldName) { nameEdit.setText (oldName, juce::dontSendNotification); return; }
+        const auto used = proc.userUsage (oldName);
+        if (used.isEmpty()) { edit ([newName] (UserProgram& u) { u.name = newName; }); return; }
+        // koristi se u performansima: pitaj, pa preimenuj i tamo (inace bi delovi izgubili zvuk)
+        juce::String list;
+        for (int i = 0; i < juce::jmin (12, used.size()); ++i) list << "\n   " << used[i];
+        if (used.size() > 12) list << "\n   ... " << (used.size() - 12) << T (" more");
+        juce::Component::SafePointer<UserPage> safe (this);
+        const int idx = userIndex;
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("Rename user"),
+            "\"" + oldName + "\"  ->  \"" + newName + "\"\n\n" + T ("It is used in ") + juce::String (used.size()) + T (" performances:") + list
+                + T ("\n\nRename it there too? (the parts keep this sound)"),
+            T ("Rename everywhere"), T ("Cancel"), nullptr,
+            juce::ModalCallbackFunction::create ([safe, idx, oldName, newName] (int ok)
+            {
+                if (safe == nullptr) return;
+                if (ok == 0 || idx >= safe->proc.getNumUsers()) { safe->nameEdit.setText (oldName, juce::dontSendNotification); return; }
+                auto u = safe->proc.getUser (idx);
+                u.name = newName;
+                safe->proc.updateUser (idx, u);   // preimenuje i u svim performansima
+            }));
+    };
     addAndMakeVisible (nameEdit);
 
     const char* headers[] = { "Multisample", "", "", "Level dB", "Pan", "Transp", "Fine c", "Low", "High", "Vel lo / hi" };
@@ -2037,6 +2083,14 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         addAndMakeVisible (rows.add (new OscRow (p, e, o, [this] { return userIndex; }, [this] { return sound.getBlock(); })));
     sound.onBlockChanged = [this] { for (auto* r : rows) r->refresh(); };
     addAndMakeVisible (sound);
+}
+
+void SoundEditor::refreshLegatoKnobs()
+{
+    const int ui = userIndex();
+    const bool xf = section == Common && ui >= 0 && ui < proc.getNumUsers() && proc.getUser (ui).voiceMode == VoiceMode::MonoLegatoXfade;
+    legatoXfade->setVisible (xf);
+    legatoStart->setVisible (xf);
 }
 
 void UserPage::edit (std::function<void (UserProgram&)> fn)

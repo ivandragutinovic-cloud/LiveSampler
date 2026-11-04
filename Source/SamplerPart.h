@@ -49,6 +49,8 @@ public:
     enum Stage { Idle = 0, Attack, Decay, Slope, Sustain, Release };
 
     void start (const EnvSettings& e, double sampleRate);
+    // legato: bez attack-a, od trenutnog nivoa prethodnog tona ka sustain-u
+    void startLegato (const EnvSettings& e, double sampleRate, float fromLevel);
     void release();
     void kill() { stage = Idle; level = 0.0f; }
     // napreduje n semplova, vraca nivo
@@ -119,6 +121,8 @@ private:
         float vel01 = 1.0f, velGain = 1.0f, gainL = 1.0f, gainR = 1.0f, ampMod = 1.0f;
         bool fadingOut = false;
         float fadeGain = 1.0f;
+        float fadeOutStep = 0.0f;            // > 0: sporo pretapanje (legato crossfade), inace 6 ms
+        float fadeIn = 1.0f, fadeInStep = 0.0f;   // legato crossfade: novi ton ulazi
         juce::uint64 age = 0;
         KronosEnv ampEnv, pitchEnv, filterEnv;
         double vibPhase = 0.0, fltPhase = 0.0, time = 0.0;
@@ -130,7 +134,8 @@ private:
     Voice* findFreeVoice();
     // blockMask: koji OSC-ovi sviraju; keyOff: samo keyoff MS-ovi
     void startVoices (int id, int pitch, int velocity, double startPitch, bool glide,
-                      juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff = false);
+                      juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff = false,
+                      float legatoLevel = -1.0f);   // >= 0: legato crossfade (bez attack-a, od ovog nivoa envelope)
     void releaseVoice (Voice& v);
     void updateModulation (Voice& v);
     void setGlide (Voice& v, double fromPitch, bool glide);

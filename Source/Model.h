@@ -87,7 +87,7 @@ struct SoundBlock
     float atToAmp = 0.0f;               // dB
 };
 
-namespace VoiceMode { enum { Poly = 0, Mono, MonoLegato }; }
+namespace VoiceMode { enum { Poly = 0, Mono, MonoLegato, MonoLegatoXfade }; }   // Xfade: legato prelazi u sempl novog tona
 namespace Priority  { enum { Last = 0, High, Low }; }
 
 struct UserProgram
@@ -97,6 +97,9 @@ struct UserProgram
     std::array<SoundBlock, kNumBlocks> block;
 
     int voiceMode = VoiceMode::Poly;
+    // Mono legato crossfade: novi ton svira svoj sempl (svoju zonu), pretapa se iz prethodnog bez novog attack-a
+    float legatoXfade = 0.06f;          // vreme pretapanja (s)
+    float legatoStart = 0.05f;          // novi sempl krece ovoliko posle pocetka (preskace attack), s
     int priority = Priority::Last;
     bool portaOn = false;
     float portamento = 0.1f;            // sekunde (kod konstantne brzine: po oktavi)

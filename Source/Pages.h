@@ -141,6 +141,7 @@ public:
     };
 
 private:
+    void refreshLegatoKnobs();
     void showSection (int section);
     void rebuildKnobs();
     void edit (std::function<void (UserProgram&)> fn);
@@ -167,7 +168,7 @@ private:
     // zajednicko
     LearnCombo voiceMode, priority;
     LearnButton portaOn, portaFingered, portaConstRate;
-    std::unique_ptr<ValueKnob> portaTime;
+    std::unique_ptr<ValueKnob> portaTime, legatoXfade, legatoStart;
     LearnSlider bendUp, bendDown;
     juce::Label commonLabels[4];
     // efekat

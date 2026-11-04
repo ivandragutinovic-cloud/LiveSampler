@@ -56,6 +56,7 @@ public:
     int getNumUsers() const { return (int) users.size(); }
     const UserProgram& getUser (int i) const { return users[(size_t) juce::jlimit (0, juce::jmax (0, (int) users.size() - 1), i)]; }
     int findUser (const juce::String& name) const;
+    juce::StringArray userUsage (const juce::String& name) const;   // performansi u kojima se user koristi ("1-003 Ime")
     juce::StringArray getUserNames() const;
     int createUser (const juce::String& baseName, const UserProgram* copyFrom = nullptr);
     int createUserFromInstrument (const juce::String& instrument);

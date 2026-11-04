@@ -156,6 +156,15 @@ void KronosEnv::start (const EnvSettings& e, double sampleRate)
     enter (Attack, e.attackLevel, e.attackTime);
 }
 
+void KronosEnv::startLegato (const EnvSettings& e, double sampleRate, float fromLevel)
+{
+    env = e;
+    sr = sampleRate;
+    level = fromLevel;
+    expRelease = false;
+    enter (Slope, e.sustain, juce::jmax (0.02f, e.slopeTime));
+}
+
 void KronosEnv::release()
 {
     if (stage == Idle || stage == Release)
@@ -300,7 +309,8 @@ void SamplerPart::setGlide (Voice& v, double fromPitch, bool glide)
 }
 
 void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitch, bool glide,
-                               juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff)
+                               juce::uint32 blockMask, juce::uint32 serial, int lane, int slot, bool keyOff,
+                               float legatoLevel)
 {
     const auto& u = cfg->user;
     const float vel01 = (float) velocity / 127.0f;
@@ -394,6 +404,9 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
 
         v.fadingOut = false;
         v.fadeGain = 1.0f;
+        v.fadeOutStep = 0.0f;
+        v.fadeIn = 1.0f;
+        v.fadeInStep = 0.0f;
         v.age = ++ageCounter;
         v.time = 0.0;
         v.vibPhase = 0.0;
@@ -402,9 +415,24 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
 
         auto amp = sb.ampEg;
         amp.releaseLevel = 0.0f;
-        v.ampEnv.start (amp, sampleRate);
-        v.pitchEnv.start (sb.pitchEg, sampleRate);
-        v.filterEnv.start (sb.filterEg, sampleRate);
+        if (legatoLevel >= 0.0f)
+        {
+            // legato crossfade: bez attack-a; sempl krece posle pocetka (preskace udarac), pretapa se
+            v.ampEnv.startLegato (amp, sampleRate, juce::jmax (0.05f, legatoLevel));
+            v.pitchEnv.startLegato (sb.pitchEg, sampleRate, sb.pitchEg.sustain);
+            v.filterEnv.startLegato (sb.filterEg, sampleRate, sb.filterEg.sustain);
+            const double skip = (double) u.legatoStart * smp->sampleRate;
+            const double target = v.pos + skip;
+            v.pos = v.loop && v.loopEnd > v.loopStart ? juce::jmin (target, (double) v.loopStart) : juce::jmin (target, (double) juce::jmax (0, v.endPos - 64));
+            v.fadeIn = 0.0f;
+            v.fadeInStep = 1.0f / (juce::jmax (0.005f, u.legatoXfade) * (float) sampleRate);
+        }
+        else
+        {
+            v.ampEnv.start (amp, sampleRate);
+            v.pitchEnv.start (sb.pitchEg, sampleRate);
+            v.filterEnv.start (sb.filterEg, sampleRate);
+        }
 
         v.filterOn = sb.filterType != FilterType::Off;
         v.cascade = sb.filterType == FilterType::LP24;
@@ -593,6 +621,7 @@ void SamplerPart::soundMono (int lane, int slot, int id, bool transition)
 
     const bool glide = u.portaOn && (! u.portaFingered || transition);
     const bool legato = u.voiceMode == VoiceMode::MonoLegato && transition && haveCurrent && ! switching;
+    const bool xfadeLegato = u.voiceMode == VoiceMode::MonoLegatoXfade && transition && haveCurrent;
 
     if (legato)
     {
@@ -608,6 +637,23 @@ void SamplerPart::soundMono (int lane, int slot, int id, bool transition)
             v.pitchTarget = pitch + v.oscTranspose;
             setGlide (v, from, glide);
         }
+    }
+    else if (xfadeLegato)
+    {
+        // legato crossfade: prethodni ton se polako utisava, novi svira sempl svoje zone (pravi ton, ne razvucen)
+        float level = 0.0f;
+        const float step = 1.0f / (juce::jmax (0.005f, u.legatoXfade) * (float) sampleRate);
+        for (auto& v : voices)
+            if (v.active && ! v.fadingOut && v.lane == lane && v.slot == slot && v.serial == L.serial)
+            {
+                level = juce::jmax (level, v.ampEnv.getLevel());
+                v.fadingOut = true;
+                v.fadeOutStep = step;
+                v.keyDown = false;
+            }
+        L.serial = ++serialCounter;
+        const double from = currentPitch;
+        startVoices (id, pitch, idVel[(size_t) id], glide ? from : -1.0, glide, mask, L.serial, lane, slot, false, level);
     }
     else
     {
@@ -859,15 +905,22 @@ void SamplerPart::renderVoices (int start, int num)
             float r = hermite (fetch (R, ip - 1), fetch (R, ip), fetch (R, ip + 1), fetch (R, ip + 2), t);
 
             float g = juce::jmax (0.0f, v.ampEnv.advance (1)) * v.velGain * v.ampMod;
+            if (v.fadeInStep > 0.0f)
+            {
+                // legato crossfade: jednaka snaga (razliciti semplovi se ne ponistavaju)
+                v.fadeIn += v.fadeInStep;
+                if (v.fadeIn >= 1.0f) { v.fadeIn = 1.0f; v.fadeInStep = 0.0f; }
+                g *= std::sqrt (v.fadeIn);
+            }
             if (v.fadingOut)
             {
-                v.fadeGain -= fadeStep;
+                v.fadeGain -= v.fadeOutStep > 0.0f ? v.fadeOutStep : fadeStep;
                 if (v.fadeGain <= 0.0f)
                 {
                     v.active = false;
                     break;
                 }
-                g *= v.fadeGain;
+                g *= v.fadeOutStep > 0.0f ? std::sqrt (v.fadeGain) : v.fadeGain;
             }
 
             l *= g * v.gainL;

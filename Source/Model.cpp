@@ -44,6 +44,8 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     if (category.isNotEmpty()) e->setAttribute ("category", category);
     if (kronosSource.isNotEmpty()) { e->setAttribute ("kronosPcg", kronosPcg); e->setAttribute ("kronosSource", kronosSource); }
     e->setAttribute ("voiceMode", voiceMode);
+    e->setAttribute ("legatoXfade", (double) legatoXfade);
+    e->setAttribute ("legatoStart", (double) legatoStart);
     e->setAttribute ("priority", priority);
     e->setAttribute ("portaOn", portaOn);
     e->setAttribute ("portamento", (double) portamento);
@@ -136,7 +138,9 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
 
     if (e.getChildByName ("Block") != nullptr)
     {
-        u.voiceMode = juce::jlimit (0, 2, e.getIntAttribute ("voiceMode", 0));
+        u.voiceMode = juce::jlimit (0, 3, e.getIntAttribute ("voiceMode", 0));
+        u.legatoXfade = (float) juce::jlimit (0.005, 1.0, e.getDoubleAttribute ("legatoXfade", 0.06));
+        u.legatoStart = (float) juce::jlimit (0.0, 1.0, e.getDoubleAttribute ("legatoStart", 0.05));
         u.priority = juce::jlimit (0, 2, e.getIntAttribute ("priority", 0));
         u.portaOn = e.getBoolAttribute ("portaOn", false);
         u.portamento = f ("portamento", u.portamento);
