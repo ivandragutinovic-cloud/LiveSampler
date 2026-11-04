@@ -1838,17 +1838,35 @@ private:
             prev = note;
         }
         if (zoneStart >= 0) zones.push_back ({ zoneStart, prev, (zoneStart + prev) / 2 });
-        for (auto& z : zones) log << "zone " << noteName (z.lo) << "-" << noteName (z.hi) << "  record " << noteName (z.root) << "\n";
 
-        // ako skoro svaki ton izgleda kao nova zona, detekcija ne radi za ovaj zvuk (npr. LFO): snimaj na svaki korak
-        const int span = hi - lo + 1;
-        if (zones.empty() || (int) zones.size() > span / 2)
+        // mesovito: zona od bar 3 tona je sigurna (jedan snimak). Gde su "zone" od 1-2 tona (zvuk se ne poklapa
+        // pouzdano, npr. svetli metalni zvuci na visokim tonovima), tu se snima na svaki korak kao ranije.
+        const int stepN = juce::jmax (1, settings.step);
+        std::vector<Zone> out;
+        int runLo = -1, runHi = -1;
+        auto flushRun = [&]
         {
-            log << "zone detection not reliable (" << (int) zones.size() << " zones): recording every " << settings.step << " notes\n";
-            zones.clear();
+            if (runLo < 0) return;
+            for (int a = runLo; a <= runHi; a += stepN)
+            {
+                const int b = juce::jmin (runHi, a + stepN - 1);
+                out.push_back ({ a, b, (a + b) / 2 });
+            }
+            runLo = runHi = -1;
+        };
+        int sure = 0;
+        for (auto& z : zones)
+        {
+            if (z.hi - z.lo + 1 >= 3) { flushRun(); out.push_back (z); ++sure; }
+            else { if (runLo < 0) runLo = z.lo; runHi = z.hi; }
         }
+        flushRun();
+        for (auto& z : out)
+            log << "zone " << noteName (z.lo) << "-" << noteName (z.hi) << "  record " << noteName (z.root)
+                << (z.hi - z.lo + 1 >= 3 && std::any_of (zones.begin(), zones.end(), [&z] (const Zone& q) { return q.lo == z.lo && q.hi == z.hi; }) ? "   (sure)" : "   (every " + juce::String (stepN) + " notes)") << "\n";
+        log << juce::String (sure) << " sure zones, " << juce::String ((int) out.size()) << " notes to record\n";
         folder.getChildFile ("kronos-zones.txt").replaceWithText (log);
-        return zones;
+        return out;
     }
 
     // procena na tri tona (nisko, sredina, visoko): drzi li zvuk (loop), koliko traje, koliki je release
