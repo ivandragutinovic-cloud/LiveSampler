@@ -133,7 +133,7 @@ private:
     juce::OwnedArray<PartStrip> strips;
     KeyRangeView ranges;
     SceneBar sceneBar { proc, false };
-    LearnButton pageButtons[2];
+    LearnButton pageButtons[2], keysButton;
     int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
     // vector joystick (kao na Kronosu): ukljuci, equal power, XY polje, CC za X i Y (LEARN)
     std::unique_ptr<juce::Component> vectorPad;

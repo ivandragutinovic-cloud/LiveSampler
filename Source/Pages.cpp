@@ -583,18 +583,26 @@ void PartStrip::resized()
     }
     else
     {
-        auto knobs1 = r.removeFromTop (60);
+        // slobodan prostor (bez KEYS redova) ide na vece dugmice
+        const int need = 120 + 4 + (proc.getShowKeyRows() ? 7 : 2) * 25 + 4 + 24;
+        const int kh = 60 + juce::jlimit (0, 30, (r.getHeight() - need) / 2);
+        auto knobs1 = r.removeFromTop (kh);
         volume.setBounds (knobs1.removeFromLeft (knobs1.getWidth() / 2));
         pan.setBounds (knobs1);
-        auto knobs2 = r.removeFromTop (60);
+        auto knobs2 = r.removeFromTop (kh);
         reverb.setBounds (knobs2.removeFromLeft (knobs2.getWidth() / 2));
         delay.setBounds (knobs2);
     }
     r.removeFromTop (4);
 
     juce::Slider* boxes[] = { &transpose, &octave, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
+    const bool keyRows = proc.getShowKeyRows();
     for (int k = 0; k < 7; ++k)
     {
+        const bool vis = k < 2 || keyRows;   // Transp / Octave uvek; tasteri, jacine i kanal na dugme KEYS (ili prevlacenje dole)
+        labels[k].setVisible (vis);
+        boxes[k]->setVisible (vis);
+        if (! vis) continue;
         auto row = r.removeFromTop (compact ? 22 : 25);
         labels[k].setBounds (row.removeFromLeft (compact ? 34 : 46));
         boxes[k]->setBounds (row.reduced (0, 1));
@@ -1166,6 +1174,11 @@ void SceneBar::resized()
 PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     : proc (p), editor (e), ranges (p)
 {
+    keysButton.setButtonText (T ("KEYS / VEL"));
+    keysButton.setClickingTogglesState (true);
+    keysButton.setTooltip (T ("Show Low / High key, velocity and MIDI channel on every part. Key ranges can also be dragged in the bar below, or set by playing (part menu)."));
+    keysButton.onClick = [this] { proc.setShowKeyRows (keysButton.getToggleState()); for (auto* s : strips) s->resized(); };
+    addAndMakeVisible (keysButton);
     styleLabel (nameLabel, T ("PERFORMANCE NAME"), 12.5f);
     addAndMakeVisible (nameLabel);
 
@@ -1244,6 +1257,11 @@ void PerformancePage::updateVectorButtons()
 void PerformancePage::refresh()
 {
     sceneBar.refresh();
+    if (keysButton.getToggleState() != proc.getShowKeyRows())
+    {
+        keysButton.setToggleState (proc.getShowKeyRows(), juce::dontSendNotification);
+        for (auto* s : strips) s->resized();
+    }
     if (! nameEdit.isBeingEdited())
         nameEdit.setText (proc.getPerformance().name, juce::dontSendNotification);
     for (auto* s : strips)
@@ -1274,6 +1292,7 @@ void PerformancePage::resized()
     saveButton.setBounds (top.removeFromLeft (90).reduced (1, 2));
     pageButtons[1].setBounds (top.removeFromRight (130).reduced (2, 2));
     pageButtons[0].setBounds (top.removeFromRight (130).reduced (2, 2));
+    keysButton.setBounds (top.removeFromRight (110).reduced (2, 2));
     top.removeFromLeft (12);
     vectorOn.setBounds (top.removeFromLeft (70).reduced (1, 2));
     vectorEqual.setBounds (top.removeFromLeft (64).reduced (1, 2));

@@ -76,6 +76,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("liveLock", liveLock);
     root.setAttribute ("maxPolyphony", maxPolyphony);
     root.setAttribute ("gigMode", gigMode);
+    root.setAttribute ("showKeyRows", showKeyRows);
     root.setAttribute ("currentSlot", currentSlot);
     root.setAttribute ("currentBank", currentBank);
     root.setAttribute ("kronosPcg", kronosFile.getFullPathName());
@@ -183,6 +184,7 @@ void LiveSamplerProcessor::loadData()
     liveLock = xml->getBoolAttribute ("liveLock", false);
     maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
     gigMode = xml->getBoolAttribute ("gigMode", false);
+    showKeyRows = xml->getBoolAttribute ("showKeyRows", false);
     currentSlot = xml->getIntAttribute ("currentSlot", -1);
     currentBank = juce::jlimit (0, kNumPerfBanks - 1, xml->getIntAttribute ("currentBank", 0));
     kronosFile = juce::File (xml->getStringAttribute ("kronosPcg"));

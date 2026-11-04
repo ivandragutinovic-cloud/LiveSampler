@@ -245,6 +245,8 @@ public:
     struct AudioInfo { juce::String driver, device; int buffer = 0; double rate = 0, latencyMs = 0; bool warn = false; juce::String advice; };
     AudioInfo getAudioInfo() const;
     juce::String getAudioShortText() const;     // "CPU 12% | 5.8 ms ASIO"
+    bool getShowKeyRows() const { return showKeyRows; }        // PERFORMANCE: redovi Low/High/Vel/Channel na partovima
+    void setShowKeyRows (bool b) { showKeyRows = b; markSave(); sendChangeMessage(); }
     int getMaxPolyphony() const { return maxPolyphony; }
     void setMaxPolyphony (int n);
     bool isGigMode() const { return gigMode; }
@@ -404,6 +406,7 @@ private:
     std::atomic<float> audioLoad { 0.0f };
     std::atomic<int> dropouts { 0 };
     int maxPolyphony = 128;
+    bool showKeyRows = false;
     bool gigMode = false;
     std::atomic<int> keyLearnMode { 0 }, keyLearnPart { 0 }, keyLearnFirst { -1 }, keyLearnNote { -1 };
     float globalDb = 0.0f;

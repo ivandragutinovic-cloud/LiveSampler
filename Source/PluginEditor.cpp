@@ -394,7 +394,10 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     {
         tabButtons[i].setButtonText (T (tabNames[i]));
         tabButtons[i].setColour (juce::TextButton::buttonOnColourId, Pal::accent);
-        tabButtons[i].setColour (juce::TextButton::buttonColourId, Pal::bg);
+        // grupe: SVIRANJE (LIVE..LISTS), EDIT (USER..EFFECTS), SISTEM (KRONOS, SETTINGS)
+        const juce::Colour groupTint[] = { juce::Colour (0xff17202a), juce::Colour (0xff1f1a26), juce::Colour (0xff1c1c1c) };
+        tabButtons[i].setColour (juce::TextButton::buttonColourId, groupTint[i < TabUser ? 0 : i < TabKronos ? 1 : 2]);
+        tabButtons[i].setTooltip (i < TabUser ? T ("PLAY") : i < TabKronos ? T ("EDIT sounds") : T ("SYSTEM"));
         tabButtons[i].onClick = [this, i] { showTab (i); };
         content.addAndMakeVisible (tabButtons[i]);
     }
@@ -556,9 +559,13 @@ void LiveSamplerEditor::resized()
     status.setBounds (top);
 
     auto tabs = r.removeFromTop (44).reduced (12, 4);
-    const int tw = tabs.getWidth() / NumTabs;
-    for (auto& t : tabButtons)
-        t.setBounds (tabs.removeFromLeft (tw).reduced (3, 0));
+    const int groupGap = 14;
+    const int tw = (tabs.getWidth() - 2 * groupGap) / NumTabs;
+    for (int i = 0; i < NumTabs; ++i)
+    {
+        if (i == TabUser || i == TabKronos) tabs.removeFromLeft (groupGap);
+        tabButtons[i].setBounds (tabs.removeFromLeft (tw).reduced (3, 0));
+    }
 
     auto kb = r.removeFromBottom (108).reduced (12, 0).withTrimmedBottom (8);
     keyboard.setBounds (kb);
