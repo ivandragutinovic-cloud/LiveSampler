@@ -131,6 +131,8 @@ public:
     juce::String getTercaText() const;
 
     // Editor mapiranja
+    void previewSample (SamplePtr s);      // presluskivanje sempla (MAPPING), svira jednom
+    void stopPreview();
     InstrumentPtr getLoadedInstrument (const juce::String& name) const;
     void applyZones (const juce::String& name, std::vector<Zone> zones);
     bool saveMap (const juce::String& name);
@@ -298,6 +300,10 @@ private:
     std::atomic<int> scanCounter { 0 };
     int loadEpoch = 0;
     std::map<juce::String, InstrumentPtr> cache;
+    juce::SpinLock previewLock;
+    SamplePtr previewSmp;
+    double previewPos = 0.0;
+    SamplePtr previewOld;                  // oslobadja se na message niti
     std::map<juce::int64, std::shared_ptr<const Fm::Patch>> fmCache;
     std::map<juce::String, std::vector<LoadCallback>> pendingLoads;
     std::vector<InstrumentPtr> graveyard;

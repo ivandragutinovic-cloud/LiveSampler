@@ -277,6 +277,12 @@ void ZoneMapView::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
+void ZoneMapView::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const int i = zoneAt (e.position);
+    if (i >= 0 && onPreview) onPreview (i);
+}
+
 void ZoneMapView::mouseUp (const juce::MouseEvent& e)
 {
     if (boxing)
@@ -952,6 +958,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
 
     // grafik
     mapView.onSelect = [this] (int i) { select (i); };
+    mapView.onPreview = [this] (int i) { select (i); previewSelected(); };
     mapView.onToggle = [this] (int i)
     {
         auto s2 = sel;
@@ -1097,6 +1104,11 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
         commit (z, true);
         setSelection (added, *added.begin());
     };
+    playButton.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xb6 Play"));
+    playButton.setTooltip (T ("Listen to the sample of the selected zone (also: double-click a zone or a row, or Space). Click again to stop."));
+    playButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
+    playButton.onClick = [this] { previewSelected(); };
+    addAndMakeVisible (playButton);
     deleteButton.setButtonText (T ("Delete zone"));
     deleteButton.onClick = [this]
     {
@@ -1539,6 +1551,33 @@ void MappingEditor::paintCell (juce::Graphics& g, int row, int col, int w, int h
     g.drawText (t, 6, 0, w - 8, h, juce::Justification::centredLeft, true);
 }
 
+void MappingEditor::previewSelected()
+{
+    // isti sempl jos svira: drugi klik zaustavlja
+    static juce::uint32 lastStart = 0;
+    static int lastZone = -1;
+    if (selected < 0 || selected >= (int) zones.size() || inst == nullptr) { proc.stopPreview(); return; }
+    const auto& z = zones[(size_t) selected];
+    if (z.sample < 0 || z.sample >= (int) inst->samples.size()) return;
+    const auto now = juce::Time::getMillisecondCounter();
+    const auto& smp = inst->samples[(size_t) z.sample];
+    if (lastZone == selected && now - lastStart < (juce::uint32) (smp->lengthSeconds() * 1000.0))
+    {
+        proc.stopPreview();
+        lastZone = -1;
+        return;
+    }
+    proc.previewSample (smp);
+    lastZone = selected;
+    lastStart = now;
+}
+
+void MappingEditor::cellDoubleClicked (int row, int, const juce::MouseEvent&)
+{
+    select (row);
+    previewSelected();
+}
+
 void MappingEditor::selectedRowsChanged (int lastRowSelected)
 {
     if (updatingUI)
@@ -1558,6 +1597,11 @@ bool MappingEditor::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0))
     {
         undo();
+        return true;
+    }
+    if (k == juce::KeyPress::spaceKey)
+    {
+        previewSelected();
         return true;
     }
     if (k == juce::KeyPress ('a', juce::ModifierKeys::commandModifier, 0))
@@ -1663,7 +1707,9 @@ void MappingEditor::resized()
 
     inspector.removeFromTop (6);
     auto b1 = inspector.removeFromTop (30);
-    duplicateButton.setBounds (b1.removeFromLeft (b1.getWidth() / 2).reduced (2, 0));
+    const int b1w = b1.getWidth() / 3;
+    playButton.setBounds (b1.removeFromLeft (b1w).reduced (2, 0));
+    duplicateButton.setBounds (b1.removeFromLeft (b1w).reduced (2, 0));
     deleteButton.setBounds (b1.reduced (2, 0));
     inspector.removeFromTop (6);
     auto b2 = inspector.removeFromTop (30);

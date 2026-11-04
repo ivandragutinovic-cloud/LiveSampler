@@ -2345,6 +2345,32 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         }
     }
 
+    // presluskivanje sempla iz MAPPING-a
+    {
+        const juce::SpinLock::ScopedTryLockType tl (previewLock);
+        if (tl.isLocked() && previewSmp != nullptr && buffer.getNumChannels() > 0)
+        {
+            const auto& b = previewSmp->buffer;
+            const int len = b.getNumSamples();
+            const double inc = previewSmp->sampleRate / juce::jmax (1.0, getSampleRate());
+            const float* L = b.getReadPointer (0);
+            const float* R = b.getReadPointer (b.getNumChannels() > 1 ? 1 : 0);
+            auto* o0 = buffer.getWritePointer (0);
+            auto* o1 = buffer.getWritePointer (buffer.getNumChannels() > 1 ? 1 : 0);
+            for (int i = 0; i < n; ++i)
+            {
+                const int ip = (int) previewPos;
+                if (ip >= len - 1) { previewPos = -1.0; break; }
+                const float t = (float) (previewPos - ip);
+                const float g = 0.8f * juce::Decibels::decibelsToGain (globalDb);
+                o0[i] += (L[ip] + (L[ip + 1] - L[ip]) * t) * g;
+                if (o1 != o0) o1[i] += (R[ip] + (R[ip + 1] - R[ip]) * t) * g;
+                previewPos += inc;
+            }
+            if (previewPos < 0.0) previewPos = 1.0e12;   // gotovo (sempl se oslobadja na message niti)
+        }
+    }
+
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear (ch, 0, n);
 
@@ -2353,6 +2379,19 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         voicesNow += p.getNumActiveVoices();
     activeVoices = voicesNow;
 }
+
+void LiveSamplerProcessor::previewSample (SamplePtr s)
+{
+    SamplePtr old;
+    {
+        const juce::SpinLock::ScopedLockType sl (previewLock);
+        old = previewSmp;
+        previewSmp = s;
+        previewPos = s != nullptr ? (double) s->startOffset : 0.0;
+    }
+}
+
+void LiveSamplerProcessor::stopPreview() { previewSample (nullptr); }
 
 void LiveSamplerProcessor::panic()
 {

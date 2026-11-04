@@ -18,6 +18,8 @@ public:
     // vise zona: Ctrl + klik = dodaj / skini, Shift + klik = sve izmedju, prevuci po praznom = okvir
     std::function<void (int)> onToggle, onRange;
     std::function<void (std::vector<int>, bool add)> onBox;
+    std::function<void (int)> onPreview;              // dupli klik na zonu: presluskivanje
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     std::function<void (const std::vector<Zone>&, bool finished)> onChange;
 
     void paint (juce::Graphics&) override;
@@ -189,7 +191,9 @@ private:
     juce::Slider rootSlider, lowKeySlider, highKeySlider, lowVelSlider, highVelSlider,
                  tuneSlider, gainSlider, panSlider;
     juce::ToggleButton enabledToggle, loopToggle, fixedToggle;
-    juce::TextButton duplicateButton, deleteButton, octDownButton, octUpButton, rangesButton;
+    juce::TextButton duplicateButton, deleteButton, octDownButton, octUpButton, rangesButton, playButton;
+    void previewSelected();
+    void cellDoubleClicked (int row, int col, const juce::MouseEvent&) override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MappingEditor)
 };
