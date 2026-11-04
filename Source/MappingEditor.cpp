@@ -16,11 +16,12 @@ juce::Colour ZoneMapView::colourFor (int sampleIndex)
     return juce::Colour::fromHSV (hue, 0.55f, 0.92f, 1.0f);
 }
 
-void ZoneMapView::setZones (const std::vector<Zone>& z, int selectedIndex, bool c3Is60)
+void ZoneMapView::setZones (const std::vector<Zone>& z, int selectedIndex, bool c3Is60, const std::set<int>& multiSel)
 {
     if (mode == None)
         zones = z;
     selected = selectedIndex;
+    multi = multiSel;
     c3 = c3Is60;
     repaint();
 }
@@ -150,10 +151,20 @@ void ZoneMapView::paint (juce::Graphics& g)
     };
 
     for (int i = 0; i < (int) zones.size(); ++i)
-        if (zones[(size_t) i].enabled && i != selected)
+        if (zones[(size_t) i].enabled && i != selected && multi.count (i) == 0)
             drawZone (i, false);
+    for (int i : multi)
+        if (i != selected && i >= 0 && i < (int) zones.size() && zones[(size_t) i].enabled)
+            drawZone (i, true);
     if (selected >= 0 && selected < (int) zones.size() && zones[(size_t) selected].enabled)
         drawZone (selected, true);
+    if (boxing)
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.12f));
+        g.fillRect (box);
+        g.setColour (juce::Colours::white.withAlpha (0.8f));
+        g.drawRect (box, 1.0f);
+    }
 
     if (zones.empty())
     {
@@ -167,65 +178,119 @@ void ZoneMapView::mouseDown (const juce::MouseEvent& e)
 {
     const auto pos = e.position;
     const int i = zoneAt (pos);
-    if (i != selected && onSelect)
-        onSelect (i);
-    selected = i;
-
-    mode = modeAt (i, pos);
-    if (i >= 0)
-        dragStartZone = zones[(size_t) i];
-    dragStart = pos;
+    const bool ctrl = e.mods.isCommandDown() || e.mods.isCtrlDown();
+    const bool shift = e.mods.isShiftDown();
+    mode = None;
     dragged = false;
+    dragStart = pos;
+    boxing = false;
+
+    if (i < 0)
+    {
+        // prazno mesto: okvir za vise zona (sa Ctrl / Shift se dodaje izabranima)
+        if (! ctrl && ! shift && onSelect) onSelect (-1);
+        boxing = true;
+        box = { pos, pos };
+        repaint();
+        return;
+    }
+    if (ctrl) { if (onToggle) onToggle (i); repaint(); return; }
+    if (shift) { if (onRange) onRange (i); repaint(); return; }
+
+    // klik na zonu koja je vec u grupi: grupa ostaje (povlace se sve zajedno)
+    if (multi.count (i) == 0 || multi.size() <= 1)
+    {
+        if (i != selected && onSelect) onSelect (i);
+        multi = { i };
+    }
+    selected = i;
+    mode = modeAt (i, pos);
+    dragStartZone = zones[(size_t) i];
+    dragStartAll = zones;
     repaint();
 }
 
 void ZoneMapView::mouseDrag (const juce::MouseEvent& e)
 {
+    if (boxing)
+    {
+        box = juce::Rectangle<float> (dragStart, e.position);
+        repaint();
+        return;
+    }
     if (mode == None || selected < 0 || selected >= (int) zones.size())
         return;
 
     auto p = plotArea();
     const int dk = juce::roundToInt ((e.position.x - dragStart.x) / (p.getWidth() / 128.0f));
     const int dv = juce::roundToInt (-(e.position.y - dragStart.y) / (p.getHeight() / 127.0f));
-    const auto& s = dragStartZone;
-    Zone z = s;
 
-    switch (mode)
+    auto apply = [this, dk, dv] (const Zone& s) -> Zone
     {
-        case Move:
+        Zone z = s;
+        switch (mode)
         {
-            const int kWidth = s.highKey - s.lowKey;
-            const int vWidth = s.highVel - s.lowVel;
-            z.lowKey = juce::jlimit (0, 127 - kWidth, s.lowKey + dk);
-            z.highKey = z.lowKey + kWidth;
-            z.rootKey = juce::jlimit (0, 127, s.rootKey + (z.lowKey - s.lowKey));
-            z.lowVel = juce::jlimit (1, 127 - vWidth, s.lowVel + dv);
-            z.highVel = z.lowVel + vWidth;
-            break;
+            case Move:
+            {
+                const int kWidth = s.highKey - s.lowKey;
+                const int vWidth = s.highVel - s.lowVel;
+                z.lowKey = juce::jlimit (0, 127 - kWidth, s.lowKey + dk);
+                z.highKey = z.lowKey + kWidth;
+                z.rootKey = juce::jlimit (0, 127, s.rootKey + (z.lowKey - s.lowKey));
+                z.lowVel = juce::jlimit (1, 127 - vWidth, s.lowVel + dv);
+                z.highVel = z.lowVel + vWidth;
+                break;
+            }
+            case Left:   z.lowKey = juce::jlimit (0, s.highKey, s.lowKey + dk); break;
+            case Right:  z.highKey = juce::jlimit (s.lowKey, 127, s.highKey + dk); break;
+            case Top:    z.highVel = juce::jlimit (s.lowVel, 127, s.highVel + dv); break;
+            case Bottom: z.lowVel = juce::jlimit (1, s.highVel, s.lowVel + dv); break;
+            case None:   break;
         }
-        case Left:   z.lowKey = juce::jlimit (0, s.highKey, s.lowKey + dk); break;
-        case Right:  z.highKey = juce::jlimit (s.lowKey, 127, s.highKey + dk); break;
-        case Top:    z.highVel = juce::jlimit (s.lowVel, 127, s.highVel + dv); break;
-        case Bottom: z.lowVel = juce::jlimit (1, s.highVel, s.lowVel + dv); break;
-        case None:   break;
-    }
+        return z;
+    };
 
-    auto& cur = zones[(size_t) selected];
-    if (z.lowKey != cur.lowKey || z.highKey != cur.highKey || z.lowVel != cur.lowVel
-        || z.highVel != cur.highVel || z.rootKey != cur.rootKey)
+    auto next = zones;
+    bool changed = false;
+    // grupa: isti pomak za sve izabrane (jedna zona: samo ona)
+    std::set<int> group = multi.size() > 1 && multi.count (selected) ? multi : std::set<int> { selected };
+    for (int k : group)
+    {
+        if (k < 0 || k >= (int) next.size() || k >= (int) dragStartAll.size()) continue;
+        const auto z = apply (dragStartAll[(size_t) k]);
+        auto& cur = next[(size_t) k];
+        if (z.lowKey != cur.lowKey || z.highKey != cur.highKey || z.lowVel != cur.lowVel || z.highVel != cur.highVel || z.rootKey != cur.rootKey)
+        {
+            cur = z;
+            changed = true;
+        }
+    }
+    if (changed)
     {
         if (! dragged && onChange)
             onChange (zones, false);   // stanje pre prvog pomeranja (za Ponisti)
         dragged = true;
-        cur = z;
+        zones = next;
         repaint();
         if (onChange)
             onChange (zones, true);
     }
 }
 
-void ZoneMapView::mouseUp (const juce::MouseEvent&)
+void ZoneMapView::mouseUp (const juce::MouseEvent& e)
 {
+    if (boxing)
+    {
+        boxing = false;
+        std::vector<int> hits;
+        if (box.getWidth() > 3.0f || box.getHeight() > 3.0f)
+            for (int i = 0; i < (int) zones.size(); ++i)
+                if (zones[(size_t) i].enabled && zoneRect (zones[(size_t) i]).intersects (box))
+                    hits.push_back (i);
+        if (! hits.empty() && onBox)
+            onBox (hits, e.mods.isCommandDown() || e.mods.isCtrlDown() || e.mods.isShiftDown());
+        repaint();
+    }
     mode = None;
     dragged = false;
 }
@@ -887,6 +952,38 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
 
     // grafik
     mapView.onSelect = [this] (int i) { select (i); };
+    mapView.onToggle = [this] (int i)
+    {
+        auto s2 = sel;
+        if (s2.empty() && selected >= 0) s2.insert (selected);
+        if (s2.count (i)) s2.erase (i); else s2.insert (i);
+        setSelection (s2, s2.count (i) ? i : (s2.empty() ? -1 : *s2.begin()));
+    };
+    mapView.onRange = [this] (int i)
+    {
+        // Shift: sve zone u pravougaoniku izmedju glavne i ove (tasteri i jacine)
+        if (selected < 0 || selected >= (int) zones.size()) { select (i); return; }
+        const auto& a = zones[(size_t) selected];
+        const auto& b = zones[(size_t) i];
+        const int lo = juce::jmin (a.lowKey, b.lowKey), hi = juce::jmax (a.highKey, b.highKey);
+        const int vl = juce::jmin (a.lowVel, b.lowVel), vh = juce::jmax (a.highVel, b.highVel);
+        auto s2 = sel;
+        for (int k = 0; k < (int) zones.size(); ++k)
+        {
+            const auto& z = zones[(size_t) k];
+            if (z.lowKey >= lo && z.highKey <= hi && z.lowVel >= vl && z.highVel <= vh) s2.insert (k);
+        }
+        s2.insert (selected);
+        s2.insert (i);
+        setSelection (s2, i);
+    };
+    mapView.onBox = [this] (std::vector<int> hits, bool add)
+    {
+        std::set<int> s2 = add ? sel : std::set<int>();
+        if (add && s2.empty() && selected >= 0) s2.insert (selected);
+        for (int k : hits) s2.insert (k);
+        setSelection (s2, hits.front());
+    };
     mapView.onChange = [this] (const std::vector<Zone>& z, bool afterChange)
     {
         if (! afterChange) { undoStack.push_back (zones); return; }
@@ -896,6 +993,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
 
     // tabela
     table.setModel (this);
+    table.setMultipleSelectionEnabled (true);   // Ctrl / Shift + klik u tabeli
     table.setColour (juce::ListBox::backgroundColourId, Pal::bg);
     table.setRowHeight (24);
     auto& h = table.getHeader();
@@ -935,9 +1033,27 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     setupValueSlider (gainSlider, -40, 24, 0.5, " dB");
     setupValueSlider (panSlider, -1, 1, 0.02, {});
 
-    rootSlider.onValueChange    = [this] { editSelected ([this] (Zone& z) { z.rootKey = (int) rootSlider.getValue(); }); };
-    lowKeySlider.onValueChange  = [this] { editSelected ([this] (Zone& z) { z.lowKey = (int) lowKeySlider.getValue(); z.highKey = juce::jmax (z.highKey, z.lowKey); }); };
-    highKeySlider.onValueChange = [this] { editSelected ([this] (Zone& z) { z.highKey = (int) highKeySlider.getValue(); z.lowKey = juce::jmin (z.lowKey, z.highKey); }); };
+    // tasteri: vise izabranih zona se pomera za istu razliku (ne dobijaju svi isti taster)
+    auto keyDelta = [this] (int Zone::* field, int value)
+    {
+        if (selected < 0 || selected >= (int) zones.size()) return 0;
+        return value - zones[(size_t) selected].*field;
+    };
+    rootSlider.onValueChange    = [this, keyDelta]
+    {
+        const int d = keyDelta (&Zone::rootKey, (int) rootSlider.getValue());
+        editSelected ([d] (Zone& z) { z.rootKey = juce::jlimit (0, 127, z.rootKey + d); });
+    };
+    lowKeySlider.onValueChange  = [this, keyDelta]
+    {
+        const int d = keyDelta (&Zone::lowKey, (int) lowKeySlider.getValue());
+        editSelected ([d] (Zone& z) { z.lowKey = juce::jlimit (0, 127, z.lowKey + d); z.highKey = juce::jmax (z.highKey, z.lowKey); });
+    };
+    highKeySlider.onValueChange = [this, keyDelta]
+    {
+        const int d = keyDelta (&Zone::highKey, (int) highKeySlider.getValue());
+        editSelected ([d] (Zone& z) { z.highKey = juce::jlimit (0, 127, z.highKey + d); z.lowKey = juce::jmin (z.lowKey, z.highKey); });
+    };
     lowVelSlider.onValueChange  = [this] { editSelected ([this] (Zone& z) { z.lowVel = (int) lowVelSlider.getValue(); z.highVel = juce::jmax (z.highVel, z.lowVel); }); };
     highVelSlider.onValueChange = [this] { editSelected ([this] (Zone& z) { z.highVel = (int) highVelSlider.getValue(); z.lowVel = juce::jmin (z.lowVel, z.highVel); }); };
     tuneSlider.onValueChange    = [this] { editSelected ([this] (Zone& z) { z.tuneCents = (float) tuneSlider.getValue(); }); };
@@ -972,20 +1088,27 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     duplicateButton.setButtonText ("Duplicate zone");
     duplicateButton.onClick = [this]
     {
-        if (selected < 0) return;
+        const auto list = selectedList();
+        if (list.empty()) return;
         auto z = zones;
-        z.insert (z.begin() + selected + 1, z[(size_t) selected]);
+        std::set<int> added;
+        for (int i : list) z.push_back (z[(size_t) i]);   // kopije idu na kraj
+        for (int k = 0; k < (int) list.size(); ++k) added.insert ((int) zones.size() + k);
         commit (z, true);
-        select (selected + 1);
+        setSelection (added, *added.begin());
     };
     deleteButton.setButtonText (T ("Delete zone"));
     deleteButton.onClick = [this]
     {
-        if (selected < 0) return;
+        auto list = selectedList();
+        if (list.empty()) return;
+        const int first = list.front();
         auto z = zones;
-        z.erase (z.begin() + selected);
+        for (auto it = list.rbegin(); it != list.rend(); ++it)
+            if (*it < (int) z.size()) z.erase (z.begin() + *it);
+        sel.clear();
         commit (z, true);
-        select (juce::jmin (selected, (int) zones.size() - 1));
+        select (juce::jmin (first, (int) zones.size() - 1));
     };
     octDownButton.setButtonText (T ("All − octave"));
     octDownButton.setTooltip (T ("Move all zones and root notes one octave down"));
@@ -1038,7 +1161,7 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     for (auto* b : { &duplicateButton, &deleteButton, &octDownButton, &octUpButton, &rangesButton })
         addAndMakeVisible (b);
 
-    hint.setText (T ("Click a zone to select it, drag it or drag its edges. Play to hear the changes at once."),
+    hint.setText (T ("Click a zone to select it, drag it or its edges. Ctrl + click: add / remove, Shift + click: all in between, drag on an empty spot: box, Ctrl + A: all. Several selected move and change together."),
                   juce::dontSendNotification);
     hint.setFont (juce::FontOptions (13.0f));
     hint.setMinimumHorizontalScale (1.0f);
@@ -1134,6 +1257,7 @@ void MappingEditor::refresh()
         instName = name;
         undoStack.clear();
         selected = -1;
+        sel.clear();
         inst = nullptr;
     }
 
@@ -1211,7 +1335,7 @@ void MappingEditor::commit (std::vector<Zone> newZones, bool pushUndo, bool coal
     table.repaint();
     if (selected >= (int) zones.size())
         selected = (int) zones.size() - 1;
-    mapView.setZones (zones, selected, proc.getC3Is60());
+    mapView.setZones (zones, selected, proc.getC3Is60(), sel);
     updateInspector();
     updateHeader();
 }
@@ -1230,22 +1354,48 @@ void MappingEditor::editSelected (std::function<void (Zone&)> fn, bool coalesce)
     if (updatingUI || selected < 0 || selected >= (int) zones.size())
         return;
     auto z = zones;
-    fn (z[(size_t) selected]);
+    for (int i : selectedList())
+        if (i < (int) z.size()) fn (z[(size_t) i]);   // ista izmena za sve izabrane zone
     commit (z, true, coalesce);
+}
+
+std::vector<int> MappingEditor::selectedList() const
+{
+    std::vector<int> v;
+    for (int i : sel) if (i >= 0 && i < (int) zones.size()) v.push_back (i);
+    if (v.empty() && selected >= 0 && selected < (int) zones.size()) v.push_back (selected);
+    return v;
+}
+
+void MappingEditor::setSelection (std::set<int> s, int primary)
+{
+    std::set<int> clean;
+    for (int i : s) if (i >= 0 && i < (int) zones.size()) clean.insert (i);
+    sel = clean;
+    selected = clean.count (primary) ? primary : (clean.empty() ? -1 : *clean.begin());
+    if (sel.size() <= 1) sel.clear();
+    syncSelectionUI();
+}
+
+void MappingEditor::syncSelectionUI()
+{
+    {
+        const juce::ScopedValueSetter<bool> svs (updatingUI, true);
+        juce::SparseSet<int> rows;
+        for (int i : selectedList()) rows.addRange ({ i, i + 1 });
+        table.setSelectedRows (rows, juce::dontSendNotification);
+    }
+    if (selected >= 0)
+        table.scrollToEnsureRowIsOnscreen (selected);
+    mapView.setZones (zones, selected, proc.getC3Is60(), sel);
+    updateInspector();
 }
 
 void MappingEditor::select (int index)
 {
+    sel.clear();
     selected = (index >= 0 && index < (int) zones.size()) ? index : -1;
-    {
-        const juce::ScopedValueSetter<bool> svs (updatingUI, true);
-        if (selected >= 0) table.selectRow (selected, false, true);
-        else               table.deselectAllRows();
-    }
-    if (selected >= 0)
-        table.scrollToEnsureRowIsOnscreen (selected);
-    mapView.setZones (zones, selected, proc.getC3Is60());
-    updateInspector();
+    syncSelectionUI();
 }
 
 void MappingEditor::setWaveView (bool w)
@@ -1330,6 +1480,8 @@ void MappingEditor::updateInspector()
              << juce::String (s.lengthSeconds(), 2) << " s  |  " << juce::String (s.sampleRate / 1000.0, 1) << " kHz  |  "
              << (z.hasOwnLoop() ? T ("own zone loop") : (s.hasLoop ? T ("has loop") : T ("no loop"))) << "\n"
              << s.id;
+        if (sel.size() > 1)
+            info = juce::String ((int) sel.size()) + T (" zones selected: changes apply to all (keys move by the same amount)\n") + info;
         sampleInfo.setText (info, juce::dontSendNotification);
     }
 }
@@ -1391,8 +1543,13 @@ void MappingEditor::selectedRowsChanged (int lastRowSelected)
 {
     if (updatingUI)
         return;
-    selected = lastRowSelected;
-    mapView.setZones (zones, selected, proc.getC3Is60());
+    // tabela: Ctrl / Shift + klik bira vise zona
+    std::set<int> s2;
+    const auto rows = table.getSelectedRows();
+    for (int k = 0; k < rows.size(); ++k) s2.insert (rows[k]);
+    sel = s2.size() > 1 ? s2 : std::set<int>();
+    selected = lastRowSelected >= 0 ? lastRowSelected : (s2.empty() ? -1 : *s2.begin());
+    mapView.setZones (zones, selected, proc.getC3Is60(), sel);
     updateInspector();
 }
 
@@ -1401,6 +1558,18 @@ bool MappingEditor::keyPressed (const juce::KeyPress& k)
     if (k == juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0))
     {
         undo();
+        return true;
+    }
+    if (k == juce::KeyPress ('a', juce::ModifierKeys::commandModifier, 0))
+    {
+        std::set<int> all;
+        for (int i = 0; i < (int) zones.size(); ++i) all.insert (i);
+        setSelection (all, selected >= 0 ? selected : 0);
+        return true;
+    }
+    if (k == juce::KeyPress::escapeKey && ! sel.empty())
+    {
+        select (selected);
         return true;
     }
     if (k == juce::KeyPress::deleteKey && selected >= 0)
@@ -1459,8 +1628,8 @@ void MappingEditor::resized()
         viewButtons[1].setBounds (vb.removeFromLeft (170).reduced (1, 0));
         r.removeFromTop (4);
     }
-    if (waveView) waveEditor.setBounds (r.removeFromTop (290));
-    else          mapView.setBounds (r.removeFromTop (172));
+    if (waveView) waveEditor.setBounds (r.removeFromTop (juce::jlimit (180, 290, r.getHeight() - 10 - 286)));
+    else          mapView.setBounds (r.removeFromTop (juce::jlimit (110, 172, r.getHeight() - 10 - 286)));   // dole mora da stane ceo inspektor
     r.removeFromTop (10);
 
     auto inspector = r.removeFromRight (420);
@@ -1518,7 +1687,7 @@ void MappingEditor::toolsMenu()
     m.addItem (3, T ("Normalize WAV files (same gain for all, dynamics stay)"), wav);
     m.addSeparator();
     m.addSectionHeader ("Delete zones");
-    m.addItem (6, "Delete the selected zone (and its WAV file)...", selected >= 0);
+    m.addItem (6, sel.size() > 1 ? "Delete the " + juce::String ((int) sel.size()) + " selected zones (and their WAV files)..." : juce::String ("Delete the selected zone (and its WAV file)..."), selected >= 0);
     m.addItem (7, "Delete zones in a key range, e.g. C5-C7 (and their WAV files)...", inst != nullptr && ! zones.empty());
     m.addSeparator();
     m.addSectionHeader (T ("In the map (files untouched)"));
@@ -1531,7 +1700,7 @@ void MappingEditor::toolsMenu()
         if (safe == nullptr || r == 0) return;
         if (r == 1 || r == 2) safe->trimToDisk (r == 1);
         if (r == 3) safe->normalizeFiles();
-        if (r == 6) safe->deleteZones ({ safe->selected }, true, true);
+        if (r == 6) safe->deleteZones (safe->selectedList(), true, true);
         if (r == 7) safe->askDeleteRange();
         if (r == 4) safe->equalizeZones();
         if (r == 5)

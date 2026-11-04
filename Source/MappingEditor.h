@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <set>
 #include "PluginProcessor.h"
 #include "AutoLoop.h"
 
@@ -11,9 +12,12 @@ class ZoneMapView : public juce::Component,
 public:
     explicit ZoneMapView (juce::MidiKeyboardState& keyboardState);
 
-    void setZones (const std::vector<Zone>& z, int selectedIndex, bool c3Is60);
+    void setZones (const std::vector<Zone>& z, int selectedIndex, bool c3Is60, const std::set<int>& multiSel = {});
 
     std::function<void (int)> onSelect;
+    // vise zona: Ctrl + klik = dodaj / skini, Shift + klik = sve izmedju, prevuci po praznom = okvir
+    std::function<void (int)> onToggle, onRange;
+    std::function<void (std::vector<int>, bool add)> onBox;
     std::function<void (const std::vector<Zone>&, bool finished)> onChange;
 
     void paint (juce::Graphics&) override;
@@ -36,6 +40,10 @@ private:
     juce::MidiKeyboardState& keyboard;
     std::vector<Zone> zones;
     int selected = -1;
+    std::set<int> multi;
+    std::vector<Zone> dragStartAll;          // sve zone na pocetku povlacenja (grupa)
+    bool boxing = false;
+    juce::Rectangle<float> box;
     bool c3 = true;
     std::array<bool, 128> held {};
 
@@ -146,6 +154,10 @@ private:
     InstrumentPtr inst;
     std::vector<Zone> zones;
     int selected = -1;
+    std::set<int> sel;                       // sve izabrane zone (Ctrl / Shift / okvir); selected je glavna
+    std::vector<int> selectedList() const;
+    void setSelection (std::set<int> s, int primary);
+    void syncSelectionUI();
     std::set<juce::String> dirtyNames;
     std::vector<std::vector<Zone>> undoStack;
     juce::uint32 lastUndoPush = 0;
