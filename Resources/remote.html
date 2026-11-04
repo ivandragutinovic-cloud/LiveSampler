@@ -52,11 +52,11 @@ button:active{filter:brightness(1.25)}
 .sect h3{margin:0 0 6px;font-size:12px;color:var(--dim);letter-spacing:.5px}
 .kgrid{display:flex;flex-wrap:wrap;gap:4px}
 .kgrid .knob{width:84px}
-.ms{display:grid;grid-template-columns:62px 30px minmax(120px,1fr) 30px 70px 70px 120px 70px 44px 44px;gap:4px;align-items:center;background:var(--panel);border-radius:8px;padding:3px 4px;margin-top:4px}
+.ms{display:grid;grid-template-columns:62px 30px minmax(120px,1fr) 30px 70px 70px 120px 70px 44px 44px 52px;gap:4px;align-items:center;background:var(--panel);border-radius:8px;padding:3px 4px;margin-top:4px}
 .ms .knob svg{width:36px;height:36px}
 .ms .knob label{display:none}
 .ms .nm{background:var(--bg);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;min-height:40px}
-.msh{display:grid;grid-template-columns:62px 30px minmax(120px,1fr) 30px 70px 70px 120px 70px 44px 44px;gap:4px;font-size:11px;color:var(--dim);font-weight:700;padding:6px 4px 0;text-align:center}
+.msh{display:grid;grid-template-columns:62px 30px minmax(120px,1fr) 30px 70px 70px 120px 70px 44px 44px 52px;gap:4px;font-size:11px;color:var(--dim);font-weight:700;padding:6px 4px 0;text-align:center}
 .seg{display:flex;gap:3px;flex-wrap:wrap}
 .seg button{min-height:40px}
 select{font:inherit;color:var(--text);background:var(--hi);border:0;border-radius:8px;min-height:40px;padding:0 8px}
@@ -77,6 +77,37 @@ select{font:inherit;color:var(--text);background:var(--hi);border:0;border-radiu
 .hint{color:var(--dim);font-size:12px}
 #off{position:fixed;inset:136px 0 0 0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--dim);font-size:18px;background:var(--bg);z-index:5}
 #off.show{display:flex}
+#zones{position:relative;background:var(--panel);border-radius:10px;margin-top:6px;padding:6px 10px 4px;touch-action:none}
+#zones .zb{position:absolute;border-radius:4px;font-size:11px;font-weight:700;color:#111;white-space:nowrap;overflow:hidden;padding:0 6px;display:flex;align-items:center}
+#zones .zb.drag{outline:2px solid #fff}
+.kb{position:relative;height:18px;background:#dcdcdc;border-radius:3px;margin-top:3px}
+.kb i{position:absolute;top:0;height:62%;background:#1a1a1a}
+.kb s{position:absolute;top:0;bottom:0;width:1px;background:#9a9a9a}
+.kb u{position:absolute;top:0;bottom:0;background:#ff8a3d88}
+.grid8{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:4px;margin-top:6px}
+.cell{background:var(--panel);border-radius:6px;min-height:46px;padding:3px 5px;font-size:12px;font-weight:600;text-align:left;display:flex;flex-direction:column;justify-content:center;overflow:hidden;border-left:5px solid transparent}
+.cell small{color:var(--dim);font-size:10px}
+.cell.empty{opacity:.4}
+.cell.cur{background:#ff8a3d55}
+.big{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+.big button{min-height:84px;font-size:18px;white-space:normal;line-height:1.15}
+.big button.cur{outline:3px solid var(--lcd)}
+.hs{display:flex;gap:4px;overflow-x:auto;padding-bottom:2px}
+.hs button{flex:0 0 auto;font-size:12px;min-height:36px}
+table.zt{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+table.zt td,table.zt th{padding:5px 4px;border-bottom:1px solid var(--hi);text-align:center;white-space:nowrap}
+table.zt th{color:var(--dim);font-size:11px}
+table.zt td:first-child{text-align:left;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+table.zt tr.sel{background:#ff8a3d40}
+#zmap{position:relative;height:150px;background:var(--bg);border-radius:8px;margin-top:6px;touch-action:none;overflow:hidden}
+#zmap .z{position:absolute;border:1px solid #000a;border-radius:2px;opacity:.8}
+#zmap .z.sel{opacity:1;outline:2px solid #fff;z-index:2}
+.notes{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:3px}
+.notes button{min-height:36px;padding:0;font-size:12px}
+.stpx{display:flex;flex-direction:column;align-items:center;gap:2px}
+.stpx b{background:var(--bg);border-radius:6px;padding:5px 0;width:100%;text-align:center;font-size:13px}
+.stpx button{min-height:30px;width:100%;padding:0}
+.lab{font-size:11px;color:var(--dim);font-weight:700}
 @media (max-width:1000px){.parts{grid-template-columns:repeat(4,minmax(0,1fr))}}
 </style>
 </head>
@@ -91,7 +122,7 @@ select{font:inherit;color:var(--text);background:var(--hi);border:0;border-radiu
   <button id="harm"><small>HARMONY</small><span id="harmText">—</span></button>
   <button id="panic" style="background:#7a2230">PANIC</button>
 </div>
-<div id="tabs"><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button></div>
+<div id="tabs"><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button><button data-tab="lists">LISTS</button><button data-tab="map">MAPPING</button><button data-tab="harm">HARMONY</button></div>
 <div id="main"></div>
 <div id="off"><div>Pikaso Workstation is not connected</div><div class="hint">Start Pikaso Workstation on the mini PC (port 8091).</div></div>
 <div id="modal"><div id="box"></div></div>
@@ -99,7 +130,8 @@ select{font:inherit;color:var(--text);background:var(--hi);border:0;border-radiu
 "use strict";
 const $ = id => document.getElementById(id);
 const PCOL = ["#ff8a3d","#3dc5ff","#7ddf64","#ff5c8a","#c58aff","#ffd23d","#3dffd0","#ff9be0","#d9a066","#6f9dff","#b8e05a","#ff7a6b","#9be7ff","#e8c9ff","#5fd39b","#ffb36b"];
-let S = { status:{}, perf:null, users:{list:[],cats:[]}, user:{index:-1}, meta:{fx:[]} };
+let S = { status:{}, perf:null, users:{list:[],cats:[]}, user:{index:-1}, meta:{fx:[]}, lists:null, setlist:null, terca:null, map:null };
+let listMode = "recall", listSub = "perf", slPage = 0, slMode = "play", mapSel = -1, mapOpt = { neighbours: true, files: false }, tScale = 0;
 let tab = "perf", partPage = 0, osc = 0, section = "filter", built = "", ctrls = [], instruments = [], instVer = "";
 const holdUntil = {};           // control path -> time until incoming values are ignored (while touching)
 
@@ -194,6 +226,10 @@ function onState(m) {
   if (m.status) S.status = m.status;
   if (m.meta) { S.meta = m.meta; if (m.meta.instVer !== instVer) { instVer = m.meta.instVer; loadInstruments(); } }
   if (m.users) S.users = m.users;
+  if (m.lists) S.lists = m.lists;
+  if (m.setlist) S.setlist = m.setlist;
+  if (m.terca) S.terca = m.terca;
+  if (m.map) S.map = m.map;
   // vrednosti koje korisnik upravo pomera ne vracaj nazad (da knob ne skace)
   const keep = (target, fresh) => {
     const old = rootOf(target);
@@ -287,6 +323,64 @@ function seg(parent, o) {
 function el(tag, cls, html, parent) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; if (parent) parent.appendChild(e); return e; }
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
+
+// ---------- helpers ----------
+const NN = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+function noteName(n) { n = Math.round(n); return NN[((n % 12) + 12) % 12] + (Math.floor(n / 12) - (S.status.c3 === false ? 1 : 2)); }
+function parseNote(t) {
+  const m = String(t).trim().toUpperCase().match(/^([A-G])(#|B)?(-?\d+)$/); if (!m) return NaN;
+  let pc = NN.indexOf(m[1]); if (m[2] === "#") pc++; if (m[2] === "B") pc--;
+  return pc + (+m[3] + (S.status.c3 === false ? 1 : 2)) * 12;
+}
+// modal sa kontrolama koje se osvezavaju
+function modal(title, build) {
+  const box = $("box");
+  box.innerHTML = `<div class="row"><b style="flex:1;font-size:16px">${esc(title)}</b><button id="mdx">✕</button></div><div id="mdb" style="overflow:auto"></div>`;
+  const before = ctrls.length;
+  build($("mdb"), () => close());
+  const mine = ctrls.splice(before);
+  const tick = setInterval(() => mine.forEach(f => f()), 150);
+  const close = () => { clearInterval(tick); $("modal").classList.remove("open"); $("modal").onpointerdown = null; };
+  $("mdx").onclick = close;
+  $("modal").classList.add("open");
+  $("modal").onpointerdown = e => { if (e.target.id === "modal") close(); };
+  return close;
+}
+// stepper sa sopstvenim get/set (vertikalni: + gore, - dole)
+function stpx(parent, o) {
+  const d = el("div", "stpx", "", parent);
+  if (o.label !== undefined) el("span", "lab", esc(o.label), d);
+  const pl = el("button", "", "+", d), b = el("b", "", "", d), mi = el("button", "", "−", d);
+  const chg = s => { const v = Math.min(o.hi, Math.max(o.lo, o.get() + s)); o.set(v); upd(); };
+  pl.onclick = () => chg(o.big || 1); mi.onclick = () => chg(-(o.big || 1));
+  if (o.big) { pl.oncontextmenu = mi.oncontextmenu = e => e.preventDefault(); }
+  const upd = () => { b.textContent = (o.fmt || F.semis)(o.get()); };
+  ctrls.push(upd); upd();
+  return d;
+}
+// stepper u redu sa get/set; dugi pritisak = korak 12 (za tastere)
+function rowStep(parent, o) {
+  const d = el("div", "step", "", parent);
+  d.innerHTML = `<label>${esc(o.label)}</label><button>-</button><b></b><button>+</button>`;
+  const [mi, pl] = d.querySelectorAll("button");
+  const get = o.get || (() => +getV(o.target, o.path, o.def || 0));
+  const set = o.set || (v => setP(o.target, o.path, v));
+  const chg = s => { const v = Math.min(o.hi, Math.max(o.lo, get() + s)); set(v); upd(); };
+  const hold = (btn, s) => { let t = 0, big = false; btn.onpointerdown = () => { big = false; t = setTimeout(() => { big = true; chg(s * (o.big || 10)); }, 450); }; btn.onpointerup = btn.onpointerleave = () => clearTimeout(t); btn.onclick = () => { if (!big) chg(s); }; };
+  hold(mi, -1); hold(pl, 1);
+  const upd = () => { d.querySelector("b").textContent = (o.fmt || F.semis)(get()); };
+  ctrls.push(upd); upd();
+  return d;
+}
+// mala klavijatura 21..108 u elementu
+function miniKeys(parent, lo, hi) {
+  const kb = el("div", "kb", "", parent); const n = hi - lo + 1;
+  for (let k = lo; k <= hi; k++) { const pc = k % 12, x = (k - lo) / n * 100;
+    if (pc === 0 || pc === 5) { const s = el("s", "", "", kb); s.style.left = x + "%"; }
+    if ([1, 3, 6, 8, 10].includes(pc)) { const i = el("i", "", "", kb); i.style.left = x + "%"; i.style.width = (100 / n) + "%"; } }
+  return kb;
+}
+
 // ---------- picker (search) ----------
 function picker(title, items, current, actions, onPick, chips) {
   // items: [{label, value, cat}]
@@ -333,6 +427,10 @@ function buildPerf(m) {
   const top = el("div", "row", "", m);
   [0, 1].forEach(p => { const b = el("button", partPage === p ? "on" : "", p ? "PARTS 9-16" : "PARTS 1-8", top); b.onclick = () => { partPage = p; built = ""; render(); }; });
   el("span", "", "", top).style.flex = "1";
+  el("button", "", "RENAME", top).onclick = () => { const n = prompt("Performance name", S.status.name || ""); if (n && n.trim()) api({ op: "perfName", name: n.trim() }); };
+  const catB = el("button", "", "", top);
+  catB.onclick = () => { const cs = (S.lists && S.lists.cats) || []; picker("Performance category", cs.map(x => ({ label: x[0], value: x[0] })), S.perf.categoryName || "", ["(no category)"], (a, v) => setP("perf", "@categoryName", a === 0 ? "" : v)); };
+  ctrls.push(() => { catB.textContent = "CAT: " + (S.perf.categoryName || "—"); });
   toggle(top, { label: "VECTOR", target: "perf", path: "@vector", title: "Vector joystick changes part volumes" });
   toggle(top, { label: "EQ.POW", target: "perf", path: "@vectorEqualPower" });
   const pad = el("div", "", "<i></i>", top); pad.id = "pad";
@@ -382,12 +480,84 @@ function buildPerf(m) {
     toggle(t3, { label: "HARM", target: "perf", path: P + "@terca", onCol: "#3ddc84" });
     toggle(t3, { label: "SUST", target: "perf", path: P + "@sustain", def: true, onCol: "#8a91a0" });
     toggle(t3, { label: "EXPR", target: "perf", path: P + "@expression", def: true, onCol: "#8a91a0" });
-    const t2 = el("div", "tg3", "", c); t2.style.gridTemplateColumns = "1fr 1fr";
+    const t2 = el("div", "tg3", "", c);
     const eq = el("button", "", "EQ", t2);
     eq.onclick = () => eqBox("Part " + (i + 1) + " EQ (added to the user EQ)", "perf", P, [["Low", "eqLow", -15, 15], ["Mid", "eqMid", -15, 15], ["High", "eqHigh", -15, 15]], col);
+    el("button", "", "KEYS", t2).onclick = () => partKeys(i);
     const ed = el("button", "", "EDIT", t2);
     ed.onclick = () => { const ui = userIndexOf(partOf(i).user || ""); if (ui < 0) return; api({ op: "editUser", index: ui }); S.user = { index: ui }; tab = "user"; built = ""; render(); };
   }
+  zoneStrip(m);
+}
+
+
+// raspon tastera svih delova: povuci ivicu (donji / gornji taster) ili sredinu (cela zona)
+function zoneStrip(m) {
+  const LO = 21, HI = 108, N = HI - LO + 1;
+  const wrap = el("div", "", "", m); wrap.id = "zones";
+  const area = el("div", "", "", wrap); area.style.position = "relative";
+  miniKeys(wrap, LO, HI);
+  const hint = el("div", "hint", "Drag an edge to set the low / high key, drag the middle to move the whole zone.", wrap); hint.style.fontSize = "11px";
+  let drag = null;
+  const active = () => { const a = []; for (let i = 0; i < 16; i++) { const p = partOf(i); if (+p.on && (p.user || p.missingName)) a.push(i); } return a; };
+  const draw = () => {
+    const a = active(); area.style.height = Math.max(20, a.length * 20) + "px";
+    area.innerHTML = a.length ? "" : "<div class='hint' style='text-align:center'>No part is on</div>";
+    a.forEach((i, k) => {
+      const p = partOf(i), lo = Math.max(LO, Math.min(HI, +p.keyLow || 0)), hi = Math.max(LO, Math.min(HI, p.keyHigh === undefined ? 127 : +p.keyHigh));
+      const b = el("div", "zb" + (drag && drag.i === i ? " drag" : ""), "", area);
+      b.style.left = ((lo - LO) / N * 100) + "%"; b.style.width = ((hi - lo + 1) / N * 100) + "%"; b.style.top = (k * 20 + 1) + "px"; b.style.height = "18px"; b.style.background = PCOL[i];
+      const tr = (+p.octave || 0) * 12 + (+p.transpose || 0);
+      b.textContent = (i + 1) + "  " + (p.user || "⚠ " + p.missingName) + (tr ? "  (" + (tr > 0 ? "+" : "") + tr + ")" : "") + "   " + noteName(+p.keyLow || 0) + "–" + noteName(p.keyHigh === undefined ? 127 : +p.keyHigh);
+      b.dataset.i = i;
+    });
+  };
+  const keyAt = x => { const r = area.getBoundingClientRect(); return Math.max(0, Math.min(127, LO + Math.floor((x - r.left) / r.width * N))); };
+  area.addEventListener("pointerdown", e => {
+    const b = e.target.closest(".zb"); if (!b) return;
+    e.preventDefault(); area.setPointerCapture(e.pointerId);
+    const i = +b.dataset.i, p = partOf(i), r = b.getBoundingClientRect(), grab = Math.max(14, r.width * 0.2);
+    const mode = e.clientX - r.left < grab ? 1 : r.right - e.clientX < grab ? 2 : 3;
+    drag = { i, mode, k0: keyAt(e.clientX), lo: Math.min(+p.keyLow || 0, p.keyHigh ?? 127), hi: Math.max(+p.keyLow || 0, p.keyHigh ?? 127) };
+    holdUntil["perf:Part[" + i + "]@keyLow"] = holdUntil["perf:Part[" + i + "]@keyHigh"] = Date.now() + 60000;
+    draw();
+  });
+  area.addEventListener("pointermove", e => {
+    if (!drag || !area.hasPointerCapture(e.pointerId)) return;
+    const k = keyAt(e.clientX); let lo = drag.lo, hi = drag.hi;
+    if (drag.mode === 1) lo = Math.min(k, hi); else if (drag.mode === 2) hi = Math.max(k, lo);
+    else { let d = Math.max(-lo, Math.min(127 - hi, k - drag.k0)); lo += d; hi += d; }
+    const P = "Part[" + drag.i + "]", p = partOf(drag.i);
+    if (+p.keyLow === lo && +p.keyHigh === hi) return;
+    setMany("perf", [[P + "@keyLow", lo], [P + "@keyHigh", hi]]); draw();
+  });
+  const up = () => { if (!drag) return; const P = "perf:Part[" + drag.i + "]"; holdUntil[P + "@keyLow"] = holdUntil[P + "@keyHigh"] = Date.now() + 800; drag = null; draw(); };
+  area.addEventListener("pointerup", up); area.addEventListener("pointercancel", up);
+  ctrls.push(() => { if (!drag) draw(); });
+  draw();
+}
+
+function partKeys(i) {
+  const P = "Part[" + i + "]", col = PCOL[i];
+  modal("Part " + (i + 1) + ": keys, velocity, channel", g => {
+    const r = el("div", "kgrid", "", g); r.style.gap = "10px";
+    const nf = v => noteName(v);
+    [["Key low", "keyLow", 0, 127, nf, 12], ["Key high", "keyHigh", 0, 127, nf, 12], ["Vel low", "velLow", 1, 127, F.int, 10], ["Vel high", "velHigh", 1, 127, F.int, 10]].forEach(k => {
+      const d = el("div", "", "", r); d.style.width = "150px";
+      rowStep(d, { label: k[0], target: "perf", path: P + "@" + k[1], lo: k[2], hi: k[3], fmt: k[4], big: k[5], def: k[1] === "keyHigh" || k[1] === "velHigh" ? 127 : k[1] === "velLow" ? 1 : 0 });
+    });
+    const d2 = el("div", "", "", r); d2.style.width = "150px";
+    rowStep(d2, { label: "MIDI ch", target: "perf", path: P + "@channel", lo: 0, hi: 16, fmt: v => v ? String(v) : "All" });
+    knob(r, { label: "Detune", target: "perf", path: P + "@detune", lo: -100, hi: 100, c: 0, def: 0, fmt: F.cents, col });
+    const r2 = el("div", "row", "", g); r2.style.marginTop = "10px";
+    el("button", "", "Full keyboard", r2).onclick = () => setMany("perf", [[P + "@keyLow", 0], [P + "@keyHigh", 127]]);
+    el("button", "", "Type range (e.g. C2-B3)", r2).onclick = () => {
+      const t = prompt("Key range, e.g. C2-B3", noteName(+partOf(i).keyLow || 0) + "-" + noteName(partOf(i).keyHigh ?? 127)); if (!t) return;
+      const [a, b] = t.split(/\s*[-–]\s*/).map(parseNote); if (isNaN(a) || isNaN(b)) return alert("Not understood: " + t);
+      setMany("perf", [[P + "@keyLow", Math.max(0, Math.min(a, b))], [P + "@keyHigh", Math.min(127, Math.max(a, b))]]);
+    };
+    el("button", "", "All velocities", r2).onclick = () => setMany("perf", [[P + "@velLow", 1], [P + "@velHigh", 127]]);
+  });
 }
 
 function eqBox(title, target, P, bands, col) {
@@ -421,6 +591,23 @@ const SECT = {
   amp: { title: "AMP", eg: "AmpEG", bip: false, k: [["Velocity", "velSens", 0, 1, 0, 0.8, "pct"], ["Vel curve", "velCurve", 0.3, 4, 1.4, 1.6, "n2"], ["Aftert→amp", "atToAmp", 0, 12, 0, 0, "dbs"]] }
 };
 
+
+function msRange(oi, r) {
+  const O = "Osc[" + oi + "]", col = PCOL[Math.floor(oi / 8)];
+  modal("MS" + (r + 1) + ": key / velocity range", g => {
+    const k = el("div", "kgrid", "", g); k.style.gap = "10px";
+    [["Key low", "keyLow", 0, 127, noteName, 12, 0], ["Key high", "keyHigh", 0, 127, noteName, 12, 127], ["Vel low", "velLow", 1, 127, F.int, 10, 1], ["Vel high", "velHigh", 1, 127, F.int, 10, 127],
+     ["Fade in", "fadeIn", 0, 127, F.int, 10, 0], ["Fade out", "fadeOut", 0, 127, F.int, 10, 0]].forEach(x => {
+      const d = el("div", "", "", k); d.style.width = "150px";
+      rowStep(d, { label: x[0], target: "user", path: O + "@" + x[1], lo: x[2], hi: x[3], fmt: x[4], big: x[5], def: x[6] });
+    });
+    el("h3", "", "VELOCITY CROSSFADE CURVE", g).style.margin = "10px 0 4px";
+    seg(g, { target: "user", path: O + "@fadeCurve", items: ["Linear", "Power"] });
+    const r2 = el("div", "row", "", g); r2.style.marginTop = "10px";
+    el("button", "", "Open in MAPPING", r2).onclick = () => { const n = getV("user", O + "@instrument", ""); if (!n) return; $("modal").classList.remove("open"); api({ op: "mapInst", name: n, user: S.user.index }); mapSel = -1; tab = "map"; built = ""; render(); };
+  });
+}
+
 function buildUser(m) {
   const ui = S.user.index, d = S.user.data;
   const top = el("div", "row", "", m);
@@ -430,7 +617,24 @@ function buildUser(m) {
   mi.onclick = () => go(ui - 1); pl.onclick = () => go(ui + 1);
   nm.onclick = () => picker("Edit user", userItems(), ui >= 0 && S.users.list[ui] ? S.users.list[ui][0] : "", [], (a, v) => go(userIndexOf(v)), S.users.cats);
   nm.textContent = ui >= 0 && S.users.list[ui] ? String(ui + 1).padStart(3, "0") + "  " + S.users.list[ui][0] + (S.users.list[ui][1] ? "   [" + S.users.list[ui][1] + "]" : "") : "— choose user —";
+  el("button", "", "+ NEW", top).onclick = () => picker("New user", [], "", ["From a multisample...", "Empty user"], a => {
+    if (a === 0) pickInstrument("New user from multisample", "", inst => { if (inst) api({ op: "newUser", instrument: inst, part: -1 }); });
+    else api({ op: "newUser", instrument: "", part: -1 });
+  });
   if (!d) { el("div", "hint", "Choose a user to edit.", m); return; }
+  const mg = el("div", "row", "", m); mg.style.marginTop = "6px";
+  el("button", "small", "RENAME", mg).onclick = () => { const n = prompt("User name", d.name || ""); if (n && n.trim()) { setP("user", "@name", n.trim()); } };
+  const cb = el("button", "small", "CATEGORY: " + (d.category || "—"), mg);
+  cb.onclick = () => picker("User category", S.users.cats.map(x => ({ label: x, value: x })), d.category || "", ["(no category)", "+ New category..."], (a, v) => {
+    if (a === 1) { const n = prompt("New category name"); if (n && n.trim()) { api({ op: "userCat", old: "", name: n.trim() }); setP("user", "@category", n.trim()); } return; }
+    setP("user", "@category", a === 0 ? "" : v); built = ""; render();
+  });
+  el("button", "small", "▲ UP", mg).onclick = () => { if (ui > 0) { api({ op: "userMove", from: ui, to: ui - 1 }); S.user.index = ui - 1; } };
+  el("button", "small", "▼ DOWN", mg).onclick = () => { if (ui < S.users.list.length - 1) { api({ op: "userMove", from: ui, to: ui + 1 }); S.user.index = ui + 1; } };
+  el("button", "small", "NUMBER...", mg).onclick = () => { const n = parseInt(prompt("Move to number (1-" + S.users.list.length + ")", ui + 1)); if (n >= 1 && n <= S.users.list.length && n - 1 !== ui) { api({ op: "userMove", from: ui, to: n - 1 }); S.user.index = n - 1; } };
+  el("button", "small", "DUPLICATE", mg).onclick = () => api({ op: "userDuplicate", index: ui });
+  const del = el("button", "small", "DELETE", mg); del.style.background = "#5a2230";
+  del.onclick = () => { if (confirm("Delete user \"" + d.name + "\"? Parts that use it become empty.")) api({ op: "userDelete", index: ui }); };
 
   const orow = el("div", "row", "", m); orow.style.marginTop = "8px";
   for (let b = 0; b < 8; b++) {
@@ -441,7 +645,7 @@ function buildUser(m) {
   }
   toggle(orow, { label: "OSC ON", target: "user", path: "Block[" + osc + "]@oscOn", def: true, onCol: PCOL[osc], title: "Selected OSC on / off (all its MS)" });
 
-  el("div", "msh", "<span>MS</span><span></span><span style='text-align:left'>Multisample</span><span></span><span>Level</span><span>Pan</span><span>Transp</span><span>Fine</span><span>KO</span><span>EQ</span>", m);
+  el("div", "msh", "<span>MS</span><span></span><span style='text-align:left'>Multisample</span><span></span><span>Level</span><span>Pan</span><span>Transp</span><span>Fine</span><span>KO</span><span>EQ</span><span>Range</span>", m);
   for (let r = 0; r < 8; r++) {
     const oi = osc * 8 + r, O = "Osc[" + oi + "]";
     const row = el("div", "ms", "", m);
@@ -459,6 +663,7 @@ function buildUser(m) {
     toggle(row, { label: "KO", target: "user", path: O + "@keyOff", onCol: "#ffb340", title: "Key off: plays when the key is released" });
     const eq = el("button", "", "EQ", row);
     eq.onclick = () => eqBox("MS" + (r + 1) + " EQ", "user", O, [["Low", "eqLow", -15, 15], ["Mid", "eqMid", -15, 15], ["Mid Hz", "eqMidFreq", 100, 8000, 1000, 1000, F.hz], ["High", "eqHigh", -15, 15]], PCOL[osc]);
+    el("button", "small", "RNG", row).onclick = () => msRange(oi, r);
   }
 
   const srow = el("div", "row", "", m); srow.style.marginTop = "10px";
@@ -511,6 +716,239 @@ function buildFx(m) {
   el("div", "hint", "Effects are saved in the performance (SAVE). The master volume is for all performances.", m).style.marginTop = "8px";
 }
 
+
+// ---------- LISTS: 16 lista po 128 performansa + set lista ----------
+function buildLists(m) {
+  const sub = el("div", "row", "", m);
+  [["perf", "PERFORMANCE LISTS"], ["set", "SET LIST"]].forEach(([k, t]) => { const b = el("button", listSub === k ? "on" : "", t, sub); b.style.flex = "1"; b.onclick = () => { listSub = k; built = ""; render(); }; });
+  if (listSub === "set") return buildSetList(m);
+  const L = S.lists; if (!L) { el("div", "hint", "Loading...", m); return; }
+  const bk = el("div", "hs", "", m); bk.style.marginTop = "6px";
+  L.banks.forEach((n, b) => { const x = el("button", b === L.bank ? "on" : "", (b + 1) + "  " + esc(n), bk); x.onclick = () => api({ op: "bank", bank: b }); });
+  const tools = el("div", "row", "", m); tools.style.marginTop = "6px";
+  [["recall", "TAP = RECALL"], ["store", "TAP = STORE HERE"], ["cat", "TAP = CATEGORY"], ["clear", "TAP = CLEAR"]].forEach(([k, t]) => {
+    const b = el("button", listMode === k ? "on" : "", t, tools); b.onclick = () => { listMode = k; built = ""; render(); };
+    if (k === "store" && listMode === k) b.style.background = "#b8343f";
+  });
+  el("span", "", "", tools).style.flex = "1";
+  el("button", "", "RENAME LIST", tools).onclick = () => { const n = prompt("List name", L.banks[L.bank]); if (n && n.trim()) api({ op: "bankName", bank: L.bank, name: n.trim() }); };
+  const g = el("div", "grid8", "", m);
+  for (let i = 0; i < 128; i++) {
+    const s = L.bank * 128 + i, v = L.slots[s];
+    const b = el("button", "cell" + (v ? "" : " empty") + (s === L.cur ? " cur" : ""), "", g);
+    const cat = v && v[1] >= 0 && L.cats[v[1]];
+    if (cat) b.style.borderLeftColor = cat[1];
+    b.innerHTML = `<small>${String(i + 1).padStart(3, "0")}${cat ? " · " + esc(cat[0]) : ""}</small>${v ? esc(v[0]) : "—"}`;
+    b.onclick = () => {
+      if (listMode === "recall") { if (v) api({ op: "recall", slot: s }); return; }
+      if (listMode === "store") { if (!v || confirm("Overwrite \"" + v[0] + "\" with \"" + S.status.name + "\"?")) api({ op: "storeTo", slot: s }); return; }
+      if (listMode === "clear") { if (!v) return; if (s === L.cur) return alert("The current performance cannot be cleared."); if (confirm("Clear \"" + v[0] + "\"?")) api({ op: "clearSlot", slot: s }); return; }
+      if (listMode === "cat" && v) picker("Category: " + v[0], L.cats.map((x, k) => ({ label: x[0], value: k })), v[1], ["(no category)"], (a, k) => api({ op: "slotCat", slot: s, cat: a === 0 ? -1 : k }));
+    };
+  }
+}
+
+function buildSetList(m) {
+  const L = S.setlist; if (!L) { el("div", "hint", "Loading...", m); return; }
+  const top = el("div", "row", "", m); top.style.marginTop = "6px";
+  const nb = el("button", "", esc((L.list + 1) + "  " + L.names[L.list]) + "  ▾", top); nb.style.flex = "1"; nb.style.textAlign = "left"; nb.style.fontSize = "16px";
+  nb.onclick = () => picker("Set list", L.names.map((n, i) => ({ label: (i + 1) + "  " + n, value: i })), L.list, [], (a, v) => api({ op: "setList", list: v }));
+  el("button", "", "RENAME", top).onclick = () => { const n = prompt("Set list name", L.names[L.list]); if (n !== null) api({ op: "setListName", name: n }); };
+  [["play", "PLAY"], ["edit", "EDIT BUTTONS"]].forEach(([k, t]) => { const b = el("button", slMode === k ? "on" : "", t, top); b.onclick = () => { slMode = k; built = ""; render(); }; });
+  toggle(top, { label: "PC = SET LIST", get: () => S.setlist.pcMode === 1, set: v => api({ op: "pcMode", mode: v ? 1 : 0 }), title: "Program Change selects the set list button (otherwise the performance)" });
+  const pg = el("div", "hs", "", m); pg.style.marginTop = "6px";
+  for (let p = 0; p < 8; p++) { const b = el("button", p === slPage ? "on" : "", (p * 16 + 1) + "-" + (p * 16 + 16), pg); b.onclick = () => { slPage = p; built = ""; render(); }; }
+  const COLS = ["#2a3140", "#8a3d1f", "#1f5e8a", "#2f7d4a", "#7a2a5a", "#7a6a1f", "#1f7a72", "#5a3d8a"];
+  const g = el("div", "big", "", m);
+  for (let i = slPage * 16; i < slPage * 16 + 16; i++) {
+    const x = L.slots[i];
+    const b = el("button", i === L.slot ? "cur" : "", "", g);
+    b.style.background = COLS[x[1]] || COLS[0];
+    b.innerHTML = `<div style="font-size:11px;color:#fff9">${i + 1}</div>${x[0] ? esc(x[0]) : "<span style='opacity:.4'>—</span>"}`;
+    if (x[2] >= 0 && !x[3]) b.style.opacity = ".5";
+    b.onclick = () => {
+      if (slMode === "play") { if (x[2] >= 0) api({ op: "setListPlay", slot: i }); return; }
+      modal("Set list button " + (i + 1), (bx, close) => {
+        const r = el("div", "row", "", bx);
+        el("button", "", "Put the current performance", r).onclick = () => { if (!(S.status.slot >= 0)) return alert("The current performance has no slot yet."); api({ op: "setListEdit", slot: i, perf: S.status.slot }); close(); };
+        el("button", "", "Choose performance...", r).onclick = () => {
+          const items = []; S.lists.slots.forEach((v, s) => { if (v) items.push({ label: S.lists.banks[Math.floor(s / 128)] + "  " + String(s % 128 + 1).padStart(3, "0") + "  " + v[0], value: s }); });
+          picker("Performance for button " + (i + 1), items, x[2], [], (a, s) => api({ op: "setListEdit", slot: i, perf: s }));
+        };
+        el("button", "", "Label...", r).onclick = () => { const t = prompt("Button text (empty = performance name)", x[0] || ""); if (t !== null) { api({ op: "setListEdit", slot: i, label: t }); close(); } };
+        const cr = el("div", "row", "", bx); cr.style.marginTop = "8px";
+        COLS.forEach((cc, k) => { const b2 = el("button", "", "&nbsp;", cr); b2.style.background = cc; b2.style.width = "54px"; if (k === x[1]) b2.style.outline = "3px solid #fff"; b2.onclick = () => { api({ op: "setListEdit", slot: i, colour: k }); close(); }; });
+        const r3 = el("div", "row", "", bx); r3.style.marginTop = "8px";
+        const cl = el("button", "", "Clear button", r3); cl.style.background = "#5a2230"; cl.onclick = () => { api({ op: "setListEdit", slot: i, clear: 1 }); close(); };
+      });
+    };
+  }
+}
+
+// ---------- MAPPING: zone multisempla ----------
+function buildMap(m) {
+  const M = S.map || {};
+  const top = el("div", "row", "", m);
+  const nb = el("button", "", M.name ? esc(M.name) : "— choose multisample —", top); nb.style.flex = "1"; nb.style.textAlign = "left"; nb.style.fontSize = "16px";
+  nb.onclick = () => pickInstrument("Multisample to edit", M.name || "", n => { if (n) { mapSel = -1; api({ op: "mapInst", name: n }); } });
+  (M.userInst || []).forEach(n => { const b = el("button", "small" + (n === M.name ? " on" : ""), esc(n.split("/").pop()), top); b.title = n; b.onclick = () => { mapSel = -1; api({ op: "mapInst", name: n }); }; });
+  if (!M.name) { el("div", "hint", "Choose a multisample (or use RNG → Open in MAPPING on a MS in USER EDIT). The buttons on the right are the multisamples of the user being edited.", m).style.marginTop = "8px"; return; }
+  if (!M.loaded) { el("div", "hint", "Loading the multisample...", m).style.marginTop = "8px"; return; }
+  let Z = M.zones || [];
+  const bar = el("div", "row", "", m); bar.style.marginTop = "6px";
+  const sv = el("button", "", "SAVE MAP", bar); sv.style.background = M.dirty ? "#b8343f" : "";
+  sv.onclick = () => api({ op: "mapSave" });
+  el("button", "", "REVERT", bar).onclick = () => { if (confirm("Undo the changes that are not saved?")) api({ op: "mapRevert" }); };
+  el("span", "hint", Z.length + " zones" + (M.dirty ? "  ·  not saved" : ""), bar).style.flex = "1";
+  toggle(bar, { label: "Neighbours take keys", get: () => mapOpt.neighbours, set: v => { mapOpt.neighbours = v; } });
+  if (M.wav) toggle(bar, { label: "WAV to Recycle Bin", get: () => mapOpt.files, set: v => { mapOpt.files = v; }, onCol: "#ff4d5e" });
+  const dz = el("button", "", "DELETE ZONE", bar); dz.style.background = "#5a2230";
+  dz.onclick = () => { if (mapSel < 0 || !Z[mapSel]) return alert("Select a zone first."); if (confirm("Delete zone " + Z[mapSel].s + (mapOpt.files ? " and its WAV file" : "") + "? The map is saved right away.")) { api({ op: "mapDelete", zones: [mapSel], neighbours: mapOpt.neighbours, files: mapOpt.files }); mapSel = -1; } };
+  const dr = el("button", "", "DELETE RANGE...", bar); dr.style.background = "#5a2230";
+  dr.onclick = () => {
+    const t = prompt("Delete all zones inside a key range, e.g. C5-C7"); if (!t) return;
+    const [a, b] = t.split(/\s*[-–]\s*/).map(parseNote); if (isNaN(a) || isNaN(b)) return alert("Not understood: " + t);
+    const lo = Math.min(a, b), hi = Math.max(a, b), n = Z.filter(z => z.lo >= lo && z.hi <= hi).length;
+    if (!n) return alert("No zone lies completely inside " + noteName(lo) + "-" + noteName(hi) + ".");
+    if (confirm("Delete " + n + " zones in " + noteName(lo) + "-" + noteName(hi) + (mapOpt.files ? " and their WAV files (Recycle Bin)" : "") + "? The map is saved right away.")) { api({ op: "mapDelete", from: lo, to: hi, neighbours: mapOpt.neighbours, files: mapOpt.files }); mapSel = -1; }
+  };
+
+  // mapa: x = taster, y = velocity; povuci ivicu ili sredinu zone
+  const LO = 0, HI = 127, N = 128;
+  const plot = el("div", "", "", m); plot.id = "zmap";
+  miniKeys(m, LO, HI);
+  const ZC = ["#ff8a3d", "#3dc5ff", "#7ddf64", "#ff5c8a", "#c58aff", "#ffd23d", "#3dffd0", "#ff9be0"];
+  let drag = null;
+  const drawPlot = () => {
+    plot.innerHTML = "";
+    Z.forEach((z, i) => {
+      const d = el("div", "z" + (i === mapSel ? " sel" : ""), "", plot);
+      d.style.left = (z.lo / N * 100) + "%"; d.style.width = ((z.hi - z.lo + 1) / N * 100) + "%";
+      d.style.top = ((127 - z.hv) / 127 * 100) + "%"; d.style.height = ((z.hv - z.lv + 1) / 127 * 100) + "%";
+      d.style.background = ZC[i % 8]; if (!z.en) d.style.opacity = ".25"; d.dataset.i = i;
+    });
+  };
+  const keyAt = x => { const r = plot.getBoundingClientRect(); return Math.max(0, Math.min(127, Math.floor((x - r.left) / r.width * N))); };
+  plot.addEventListener("pointerdown", e => {
+    const t = e.target.closest(".z"); if (!t) return;
+    e.preventDefault(); plot.setPointerCapture(e.pointerId);
+    const i = +t.dataset.i, z = Z[i], r = t.getBoundingClientRect(), grab = Math.max(10, r.width * 0.25);
+    mapSel = i;
+    drag = { i, mode: e.clientX - r.left < grab ? 1 : r.right - e.clientX < grab ? 2 : 3, k0: keyAt(e.clientX), lo: z.lo, hi: z.hi, root: z.root, moved: false };
+    drawPlot(); drawTable();
+  });
+  plot.addEventListener("pointermove", e => {
+    if (!drag || !plot.hasPointerCapture(e.pointerId)) return;
+    const k = keyAt(e.clientX); let lo = drag.lo, hi = drag.hi;
+    if (drag.mode === 1) lo = Math.min(k, hi); else if (drag.mode === 2) hi = Math.max(k, lo);
+    else { const d = Math.max(-lo, Math.min(127 - hi, k - drag.k0)); lo += d; hi += d; }
+    const z = Z[drag.i]; if (z.lo === lo && z.hi === hi) return;
+    z.lo = lo; z.hi = hi; drag.moved = true;
+    api({ op: "mapZone", index: drag.i, set: { lo, hi } });
+    drawPlot(); drawTable();
+  });
+  const up = () => { drag = null; };
+  plot.addEventListener("pointerup", up); plot.addEventListener("pointercancel", up);
+
+  // izabrana zona
+  const ed = el("div", "sect", "", m);
+  // tabela zona
+  const tbl = el("table", "zt", "", m);
+  const drawTable = () => {
+    tbl.innerHTML = "<tr><th>Sample</th><th>Low</th><th>High</th><th>Root</th><th>Vel</th><th>Gain</th><th>Tune</th><th>Loop</th><th>On</th></tr>" +
+      Z.map((z, i) => `<tr data-i="${i}" class="${i === mapSel ? "sel" : ""}"><td>${esc(z.s)}</td><td>${noteName(z.lo)}</td><td>${noteName(z.hi)}</td><td>${noteName(z.root)}</td><td>${z.lv}-${z.hv}</td><td>${(+z.gain).toFixed(1)}</td><td>${Math.round(z.tune)}</td><td>${z.loop ? "✓" : ""}</td><td>${z.en ? "✓" : "✕"}</td></tr>`).join("");
+    drawEd();
+  };
+  tbl.onclick = e => { const tr = e.target.closest("tr[data-i]"); if (!tr) return; mapSel = +tr.dataset.i; drawPlot(); drawTable(); };
+  const drawEd = () => {
+    ed.innerHTML = "";
+    const z0 = Z[mapSel];
+    if (!z0) { el("div", "hint", "Tap a zone (in the map or in the table) to edit it. Drag its edges or middle in the map.", ed); return; }
+    el("h3", "", "ZONE: " + esc(z0.s), ed);
+    const z = new Proxy({}, { get: (t, k) => (Z[mapSel] || {})[k], set: (t, k, v) => { if (Z[mapSel]) Z[mapSel][k] = v; return true; } });
+    const g = el("div", "kgrid", "", ed); g.style.gap = "10px";
+    const fz = (k, v) => { z[k] = v; const s = {}; s[k] = v; api({ op: "mapZone", index: mapSel, set: s }); drawPlot(); };
+    [["Low key", "lo", 0, 127, noteName, 12], ["High key", "hi", 0, 127, noteName, 12], ["Root key", "root", 0, 127, noteName, 12], ["Vel low", "lv", 1, 127, F.int, 10], ["Vel high", "hv", 1, 127, F.int, 10]].forEach(x => {
+      const d = el("div", "", "", g); d.style.width = "150px";
+      rowStep(d, { label: x[0], lo: x[2], hi: x[3], fmt: x[4], big: x[5], get: () => +z[x[1]], set: v => { fz(x[1], v); tbl.querySelector(`tr[data-i="${mapSel}"]`) && drawTableRows(); } });
+    });
+    knob(g, { label: "Gain", lo: -40, hi: 12, c: 0, def: 0, fmt: F.dbs, col: "#ff8a3d", get: () => +z.gain, set: v => fz("gain", Math.round(v * 10) / 10) });
+    knob(g, { label: "Tune", lo: -100, hi: 100, c: 0, def: 0, fmt: F.cents, col: "#ff8a3d", get: () => +z.tune, set: v => fz("tune", Math.round(v)) });
+    knob(g, { label: "Pan", lo: -1, hi: 1, c: 0, def: 0, fmt: F.pan, col: "#ff8a3d", get: () => +z.pan, set: v => fz("pan", v) });
+    const t = el("div", "row", "", ed); t.style.marginTop = "6px";
+    toggle(t, { label: "LOOP", get: () => !!z.loop, set: v => fz("loop", v) });
+    toggle(t, { label: "FIXED PITCH", get: () => !!z.fixed, set: v => fz("fixed", v), title: "Same pitch on all keys (drums)" });
+    toggle(t, { label: "ZONE ON", get: () => !!z.en, set: v => fz("en", v), onCol: "#3ddc84" });
+  };
+  const drawTableRows = () => { const sel = mapSel; tbl.querySelectorAll("tr[data-i]").forEach(tr => { const z = Z[+tr.dataset.i]; tr.children[1].textContent = noteName(z.lo); tr.children[2].textContent = noteName(z.hi); tr.children[3].textContent = noteName(z.root); tr.children[4].textContent = z.lv + "-" + z.hv; tr.children[5].textContent = (+z.gain).toFixed(1); tr.children[6].textContent = Math.round(z.tune); tr.children[7].textContent = z.loop ? "✓" : ""; tr.children[8].textContent = z.en ? "✓" : "✕"; }); };
+  drawPlot(); drawTable();
+  // izmene sa PC-a (ili potvrda sa servera): osvezi mapu i tabelu, osim dok se vuce
+  ctrls.push(() => { if (drag || !S.map || !S.map.zones || S.map.zones.length !== Z.length) return; Z = S.map.zones; drawPlot(); drawTableRows(); });
+  el("div", "hint", "Changes play right away; SAVE MAP writes LiveSampler-mapa.xml so they stay. The map applies to every user that uses this multisample.", m).style.marginTop = "6px";
+}
+
+// ---------- HARMONY ----------
+function tSend() { api({ op: "terca", data: S.terca }); }
+function buildHarm(m) {
+  const T = S.terca; if (!T) { el("div", "hint", "Loading...", m); return; }
+  // stanje stize ponovo posle svake izmene: uvek citaj iz S.terca
+  const SC = () => (S.terca.Scale = S.terca.Scale || []), RU = () => (S.terca.Rule = S.terca.Rule || []);
+  const scales = SC(), rules = RU();
+  if (tScale >= scales.length) tScale = 0;
+  const top = el("div", "row", "", m);
+  const on = el("button", "", "", top); on.style.minWidth = "140px"; on.style.fontSize = "18px";
+  on.onclick = () => api({ op: "harmony", on: !S.terca.on });
+  const st = el("div", "", "", top); st.style.cssText = "flex:1;background:var(--lcdbg);border-radius:10px;padding:8px 14px;color:var(--lcd);font-size:22px;font-weight:700";
+  const lb = el("button", "", "", top);
+  lb.onclick = () => api({ op: "tercaLearn" });
+  ctrls.push(() => { on.textContent = S.terca.on ? "HARMONY ON" : "HARMONY OFF"; on.style.background = S.terca.on ? "#3ddc84" : ""; on.style.color = S.terca.on ? "#111" : ""; st.textContent = S.terca.text || "—";
+    lb.textContent = S.terca.learning ? "LEARNING... press a key / CC" : "LEARN button: " + (S.terca.learnText || "none"); lb.style.background = S.terca.learning ? "#ffb340" : ""; lb.style.color = S.terca.learning ? "#111" : ""; });
+
+  const k = el("div", "sect", "", m); el("h3", "", "KEY (also recognized from the chord while holding HARMONY)", k);
+  const nr = el("div", "notes", "", k);
+  NN.forEach((n, i) => { const b = el("button", "", n, nr); b.onclick = () => api({ op: "tercaKey", root: i, scale: S.terca.scale }); ctrls.push(() => b.classList.toggle("on", S.terca.root === i)); });
+  const sr = el("div", "seg", "", k); sr.style.marginTop = "6px";
+  scales.forEach((s, i) => { const b = el("button", "", esc(s.name), sr); b.onclick = () => api({ op: "tercaKey", root: S.terca.root, scale: i }); ctrls.push(() => b.classList.toggle("on", S.terca.scale === i)); });
+
+  const o = el("div", "sect", "", m); el("h3", "", "VOICES", o);
+  const orow = el("div", "row", "", o);
+  ["Third above", "Third below", "Above and below"].forEach((t, i) => { const b = el("button", "", t, orow); b.onclick = () => { S.terca.voiceMode = i; tSend(); }; ctrls.push(() => b.classList.toggle("on", +S.terca.voiceMode === i)); });
+  toggle(orow, { label: "Top note only (melody)", get: () => !!+S.terca.topNoteOnly, set: v => { S.terca.topNoteOnly = v; tSend(); } });
+  knob(orow, { label: "Velocity", lo: 0.1, hi: 1.5, c: 0.8, def: 0.8, fmt: F.pct, col: "#3ddc84", get: () => +S.terca.velocity, set: v => { S.terca.velocity = v; tSend(); } });
+
+  const sc = el("div", "sect", "", m); el("h3", "", "SCALES: interval for each step (semitones above / below the played note, 0 = no harmony on that step)", sc);
+  const sh = el("div", "row", "", sc);
+  scales.forEach((s, i) => { const b = el("button", i === tScale ? "on" : "", esc(s.name), sh); b.onclick = () => { tScale = i; built = ""; render(); }; });
+  el("span", "", "", sh).style.flex = "1";
+  el("button", "small", "RENAME", sh).onclick = () => { const n = prompt("Scale name", SC()[tScale].name); if (n && n.trim()) { SC()[tScale].name = n.trim(); tSend(); built = ""; render(); } };
+  el("button", "small", "NEW SCALE", sh).onclick = () => { const s = SC(), cp = JSON.parse(JSON.stringify(s[tScale])); cp.name = "User scale " + (s.length + 1); s.push(cp); tScale = s.length - 1; tSend(); built = ""; render(); };
+  const ds = el("button", "small", "DELETE", sh); ds.style.background = "#5a2230";
+  ds.onclick = () => { const s = SC(); if (s.length <= 1) return; if (!confirm("Delete scale " + s[tScale].name + "?")) return; const idx = tScale; s.splice(idx, 1); RU().forEach(r => { if (+r.scale === idx) r.scale = 0; else if (+r.scale > idx) r.scale--; }); tScale = 0; tSend(); built = ""; render(); };
+  const arr = (s, key) => String(s[key] ?? "").trim().split(/\s+/).map(Number).concat(Array(12).fill(0)).slice(0, 12);
+  const g = el("div", "notes", "", sc); g.style.marginTop = "6px";
+  for (let i = 0; i < 12; i++) {
+    const cell = el("div", "", "", g);
+    el("div", "lab", NN[(S.terca.root + i) % 12] + " (" + i + ")", cell).style.textAlign = "center";
+    ["above", "below"].forEach(key => stpx(cell, { label: key === "above" ? "above" : "below", lo: -12, hi: 12,
+      get: () => arr(S.terca.Scale[tScale], key)[i],
+      set: v => { const a = arr(S.terca.Scale[tScale], key); a[i] = v; S.terca.Scale[tScale][key] = a.join(" "); tSend(); } }));
+  }
+
+  const rl = el("div", "sect", "", m); el("h3", "", "CHORD RULES: chord notes from the root → scale (first match wins)", rl);
+  rules.forEach((r0, ri) => {
+    const r = new Proxy({}, { get: (t, k) => (RU()[ri] || {})[k], set: (t, k, v) => { if (RU()[ri]) RU()[ri][k] = v; return true; } });
+    const row = el("div", "row", "", rl); row.style.marginTop = "4px";
+    const nn = el("div", "notes", "", row); nn.style.flex = "1 1 420px";
+    for (let b = 0; b < 12; b++) { const x = el("button", "", String(b), nn); x.title = "semitones from the chord root"; x.onclick = () => { r.mask = (+r.mask) ^ (1 << b); tSend(); }; ctrls.push(() => x.classList.toggle("on", !!((+r.mask) & (1 << b)))); }
+    const sb = el("button", "", "", row); sb.onclick = () => picker("Scale for this rule", SC().map((s, i) => ({ label: s.name, value: i })), +r.scale, [], (a, v) => { r.scale = v; tSend(); });
+    ctrls.push(() => { sb.textContent = (SC()[+r.scale] || {}).name || "?"; });
+    const sd = el("div", "", "", row); sd.style.width = "150px";
+    rowStep(sd, { label: "Shift", lo: -11, hi: 11, get: () => +r.rootShift, set: v => { r.rootShift = v; tSend(); } });
+    const x = el("button", "", "✕", row); x.style.background = "#5a2230"; x.onclick = () => { RU().splice(ri, 1); tSend(); built = ""; render(); };
+  });
+  el("button", "", "+ Add rule", rl).onclick = () => { RU().push({ mask: 1 | 16 | 128, scale: 0, rootShift: 0 }); tSend(); built = ""; render(); };
+}
+
 // ---------- render ----------
 function render() {
   const st = S.status || {};
@@ -520,11 +958,15 @@ function render() {
   $("harmText").textContent = (st.harm ? "ON  " : "OFF  ") + (st.harmText || "");
   document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
   if (!S.perf) return;
-  const key = tab + "|" + partPage + "|" + osc + "|" + section + "|" + (tab === "user" ? S.user.index + "|" + (S.user.data ? 1 : 0) + "|" + S.users.list.length : "") + "|" + (tab === "perf" ? S.users.list.length : "");
+  let key = tab + "|" + partPage + "|" + osc + "|" + section + "|" + (tab === "user" ? S.user.index + "|" + (S.user.data ? 1 : 0) + "|" + S.users.list.length + "|" + (S.user.data ? S.user.data.name + S.user.data.category : "") : "") + "|" + (tab === "perf" ? S.users.list.length : "");
+  // stranice koje se crtaju iz stanja: ponovo kad se promeni ono sto vidis
+  if (tab === "lists") key += "|" + listSub + listMode + slPage + slMode + "|" + JSON.stringify(listSub === "perf" ? S.lists && [S.lists.bank, S.lists.cur, S.lists.banks, S.lists.slots.slice(S.lists.bank * 128, S.lists.bank * 128 + 128)] : S.setlist);
+  if (tab === "map") key += "|" + JSON.stringify(S.map && [S.map.name, S.map.loaded, S.map.dirty, S.map.userInst, (S.map.zones || []).length]) + mapSel;
+  if (tab === "harm") key += "|" + tScale + "|" + JSON.stringify(S.terca && [(S.terca.Scale || []).map(s => s.name), (S.terca.Rule || []).length]);
   if (key !== built) {
     built = key; ctrls = [];
     const m = $("main"); const sc = m.scrollTop; m.innerHTML = "";
-    if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else buildFx(m);
+    if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else if (tab === "lists") buildLists(m); else if (tab === "map") buildMap(m); else if (tab === "harm") buildHarm(m); else buildFx(m);
     m.scrollTop = sc;
   }
   ctrls.forEach(f => f());

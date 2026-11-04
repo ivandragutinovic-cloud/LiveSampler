@@ -63,6 +63,10 @@ private:
     juce::StringPairArray lastSent;
     bool dirty = true;
     int remoteUser = -1;          // user koji se edituje na iPad-u (-1 = user dela 1)
+    juce::String mapInst;
+    bool mapDirty = false;        // zone promenjene, mapa jos nije sacuvana         // multisempl otvoren u MAPPING na iPad-u
+    int mapUser = -1;             // user iz kog je otvoren (za listu njegovih multisemplova)
+    void deleteMapZones (const juce::var& v);
     juce::String instrumentsJson { "[]" }, instrumentsVer;   // pod clientsLock
     std::shared_ptr<bool> alive { std::make_shared<bool> (true) };
 

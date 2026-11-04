@@ -3,6 +3,7 @@
 #include "SamplerPart.h"
 #include "BinaryData.h"
 #include <thread>
+#include <set>
 #if ! JUCE_WINDOWS
  #include <csignal>
 #endif
@@ -356,6 +357,126 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "vector")     proc.setVectorXY ((float) (double) v["x"], (float) (double) v["y"]);
     else if (op == "gvol")       proc.setGlobalVolume ((float) (double) v["db"]);
     else if (op == "panic")      proc.panic();
+    else if (op == "perfName")   { auto p = proc.getPerformance(); p.name = v["name"].toString().trim().substring (0, 40); if (p.name.isNotEmpty()) proc.updatePerformance (p); }
+    // ---------- liste performansa ----------
+    else if (op == "bank")       { proc.setCurrentBank (juce::jlimit (0, kNumPerfBanks - 1, (int) v["bank"])); dirty = true; }
+    else if (op == "bankName")   { proc.setBankName (juce::jlimit (0, kNumPerfBanks - 1, (int) v["bank"]), v["name"].toString().trim()); dirty = true; }
+    else if (op == "storeTo")    { const int s = (int) v["slot"]; if (s >= 0 && s < kNumPerfSlots) proc.storePerformance (s); }
+    else if (op == "clearSlot")  { const int s = (int) v["slot"]; if (s >= 0 && s < kNumPerfSlots && s != proc.getCurrentSlot()) proc.clearPerformanceSlot (s); dirty = true; }
+    else if (op == "slotCat")    { const int s = (int) v["slot"]; if (s >= 0 && s < kNumPerfSlots) proc.setSlotCategory (s, (int) v["cat"]); dirty = true; }
+    // ---------- set liste ----------
+    else if (op == "setList")    { proc.setCurrentSetList (juce::jlimit (0, kNumSetLists - 1, (int) v["list"])); dirty = true; }
+    else if (op == "setListPage"){ proc.setSetListPage ((int) v["page"]); dirty = true; }
+    else if (op == "setListPlay"){ const int s = (int) v["slot"]; if (s >= 0 && s < kSetListSlots) proc.recallSetListSlot (s); }
+    else if (op == "setListName"){ const int i = proc.getCurrentSetList(); auto sl = proc.getSetList (i); sl.name = v["name"].toString().trim(); proc.updateSetList (i, sl); dirty = true; }
+    else if (op == "setListEdit")
+    {
+        const int s = (int) v["slot"];
+        if (s < 0 || s >= kSetListSlots) return;
+        const int i = proc.getCurrentSetList();
+        auto sl = proc.getSetList (i);
+        auto& x = sl.slots[(size_t) s];
+        if (v.hasProperty ("clear")) x = SetListSlot();
+        if (v.hasProperty ("perf"))   x.perf = juce::jlimit (-1, kNumPerfSlots - 1, (int) v["perf"]);
+        if (v.hasProperty ("label"))  x.label = v["label"].toString().trim();
+        if (v.hasProperty ("colour")) x.colour = juce::jlimit (0, 7, (int) v["colour"]);
+        proc.updateSetList (i, sl);
+        dirty = true;
+    }
+    else if (op == "pcMode")     { proc.setProgramChangeMode ((int) v["mode"]); dirty = true; }
+    // ---------- harmony ----------
+    else if (op == "tercaKey")   proc.setTercaKey (juce::jlimit (0, 11, (int) v["root"]), juce::jmax (0, (int) v["scale"]));
+    else if (op == "tercaLearn") proc.startLearn (! proc.isLearning());
+    else if (op == "terca")
+    {
+        // cela podesavanja (bez LEARN dugmeta, ono ostaje)
+        const auto& d = v["data"];
+        auto cur = proc.getTerca().toXml();
+        juce::XmlElement x ("Terce");
+        x.setAttribute ("voiceMode", juce::jlimit (0, 2, (int) d["voiceMode"]));
+        x.setAttribute ("velocity", juce::jlimit (0.1, 1.5, (double) d["velocity"]));
+        x.setAttribute ("topNoteOnly", (bool) d["topNoteOnly"]);
+        for (auto* k : { "learnType", "learnChannel", "learnNumber" }) x.setAttribute (k, cur->getIntAttribute (k));
+        if (auto* sc = d["Scale"].getArray())
+            for (auto& s : *sc)
+            {
+                auto* e = x.createNewChildElement ("Scale");
+                e->setAttribute ("name", s["name"].toString());
+                e->setAttribute ("above", s["above"].toString());
+                e->setAttribute ("below", s["below"].toString());
+            }
+        if (auto* rs = d["Rule"].getArray())
+            for (auto& r : *rs)
+            {
+                auto* e = x.createNewChildElement ("Rule");
+                e->setAttribute ("mask", (int) r["mask"] & 0xfff);
+                e->setAttribute ("scale", (int) r["scale"]);
+                e->setAttribute ("rootShift", juce::jlimit (-11, 11, (int) r["rootShift"]));
+            }
+        proc.updateTerca (TercaSettings::fromXml (x));
+        dirty = true;
+    }
+    // ---------- useri ----------
+    else if (op == "userDuplicate")
+    {
+        const int u = (int) v["index"];
+        if (u < 0 || u >= proc.getNumUsers()) return;
+        const auto copy = proc.getUser (u);
+        remoteUser = proc.createUser (copy.name, &copy);
+        dirty = true;
+    }
+    else if (op == "userDelete")
+    {
+        const int u = (int) v["index"];
+        if (u < 0 || u >= proc.getNumUsers()) return;
+        proc.deleteUser (u);
+        remoteUser = juce::jmin (u, proc.getNumUsers() - 1);
+        dirty = true;
+    }
+    else if (op == "userMove")
+    {
+        const int from = (int) v["from"], to = (int) v["to"];
+        if (from < 0 || from >= proc.getNumUsers() || to < 0 || to >= proc.getNumUsers()) return;
+        proc.moveUser (from, to);
+        if (remoteUser == from) remoteUser = to;
+        dirty = true;
+    }
+    else if (op == "userCat")    { proc.editUserCategory (v["old"].toString(), v["name"].toString().trim()); dirty = true; }
+    // ---------- mapping ----------
+    else if (op == "mapInst")
+    {
+        mapInst = v["name"].toString();
+        mapUser = v.hasProperty ("user") ? (int) v["user"] : remoteUser;
+        if (mapInst.isNotEmpty()) proc.ensureLoaded (mapInst);
+        dirty = true;
+    }
+    else if (op == "mapZone")
+    {
+        auto inst = proc.getLoadedInstrument (mapInst);
+        const int i = (int) v["index"];
+        if (inst == nullptr || i < 0 || i >= (int) inst->zones.size()) return;
+        auto zones = inst->zones;
+        auto& z = zones[(size_t) i];
+        const auto& f = v["set"];
+        auto geti = [&] (const char* k, int& dst, int lo, int hi) { if (f.hasProperty (k)) dst = juce::jlimit (lo, hi, (int) f[k]); };
+        geti ("lo", z.lowKey, 0, 127);  geti ("hi", z.highKey, 0, 127);
+        geti ("lv", z.lowVel, 1, 127);  geti ("hv", z.highVel, 1, 127);
+        geti ("root", z.rootKey, 0, 127);
+        if (z.highKey < z.lowKey) std::swap (z.lowKey, z.highKey);
+        if (z.highVel < z.lowVel) std::swap (z.lowVel, z.highVel);
+        if (f.hasProperty ("tune")) z.tuneCents = (float) juce::jlimit (-100.0, 100.0, (double) f["tune"]);
+        if (f.hasProperty ("gain")) z.gainDb = (float) juce::jlimit (-40.0, 12.0, (double) f["gain"]);
+        if (f.hasProperty ("pan"))  z.pan = (float) juce::jlimit (-1.0, 1.0, (double) f["pan"]);
+        if (f.hasProperty ("loop")) z.loop = (bool) f["loop"];
+        if (f.hasProperty ("fixed")) z.fixedPitch = (bool) f["fixed"];
+        if (f.hasProperty ("en"))   z.enabled = (bool) f["en"];
+        proc.applyZones (mapInst, zones);
+        mapDirty = true;
+        dirty = true;
+    }
+    else if (op == "mapSave")    { if (mapInst.isNotEmpty() && proc.saveMap (mapInst)) mapDirty = false; dirty = true; }
+    else if (op == "mapRevert")  { if (mapInst.isNotEmpty()) proc.reloadInstrument (mapInst, false); mapDirty = false; dirty = true; }
+    else if (op == "mapDelete")  deleteMapZones (v);
     else if (op == "newUser")
     {
         const auto inst = v["instrument"].toString();
@@ -371,6 +492,54 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
         }
         dirty = true;
     }
+}
+
+// brise zone (kao TOOLS u MAPPING): neighbours = najblize zone preuzimaju tastere, files = WAV u Recycle Bin
+void RemoteServer::deleteMapZones (const juce::var& v)
+{
+    auto inst = proc.getLoadedInstrument (mapInst);
+    if (inst == nullptr) return;
+    std::set<int> del;
+    if (auto* a = v["zones"].getArray()) for (auto& x : *a) del.insert ((int) x);
+    if (v.hasProperty ("from"))
+        for (int i = 0; i < (int) inst->zones.size(); ++i)
+        {
+            const auto& z = inst->zones[(size_t) i];
+            if (z.lowKey >= (int) v["from"] && z.highKey <= (int) v["to"]) del.insert (i);
+        }
+    std::vector<Zone> keep, gone;
+    for (int i = 0; i < (int) inst->zones.size(); ++i) (del.count (i) ? gone : keep).push_back (inst->zones[(size_t) i]);
+    if (gone.empty()) return;
+    juce::Array<juce::File> files;
+    if ((bool) v["files"] && inst->type == SourceType::WavFolder)
+        for (auto& g : gone)
+        {
+            if (g.sample < 0 || g.sample >= (int) inst->samples.size()) continue;
+            bool used = false;
+            for (auto& k : keep) used = used || k.sample == g.sample;
+            if (! used) files.addIfNotAlreadyThere (inst->source.getChildFile (inst->samples[(size_t) g.sample]->id));
+        }
+    if ((bool) v["neighbours"])
+        for (auto& g : gone)
+            for (int key = g.lowKey; key <= g.highKey; ++key)
+            {
+                int best = -1, bestDist = 1000;
+                for (int k = 0; k < (int) keep.size(); ++k)
+                {
+                    const auto& z = keep[(size_t) k];
+                    if (! z.enabled || z.highVel < g.lowVel || z.lowVel > g.highVel) continue;
+                    if (key >= z.lowKey && key <= z.highKey) { best = -1; break; }
+                    const int d = key < z.lowKey ? z.lowKey - key : key - z.highKey;
+                    if (d < bestDist) { bestDist = d; best = k; }
+                }
+                if (best >= 0) { auto& z = keep[(size_t) best]; z.lowKey = juce::jmin (z.lowKey, key); z.highKey = juce::jmax (z.highKey, key); }
+            }
+    proc.applyZones (mapInst, keep);
+    proc.saveMap (mapInst);
+    for (auto& f : files) if (! f.moveToTrash()) f.deleteFile();
+    proc.reloadInstrument (mapInst, false);
+    mapDirty = false;
+    dirty = true;
 }
 
 //==============================================================================
@@ -441,6 +610,99 @@ juce::StringPairArray RemoteServer::buildSections()
             const juce::ScopedLock sl (clientsLock);
             instrumentsJson = j;
             instrumentsVer = ver;
+        }
+        // ---------- liste performansa ----------
+        {
+            auto* li = new juce::DynamicObject();
+            li->setProperty ("bank", proc.getCurrentBank());
+            li->setProperty ("cur", proc.getCurrentSlot());
+            juce::Array<juce::var> banks, cats, slots;
+            for (int b = 0; b < kNumPerfBanks; ++b) banks.add (proc.getBankName (b));
+            for (int k = 0; k < proc.getCategories().size(); ++k)
+                cats.add (juce::Array<juce::var> { proc.getCategories()[k], "#" + proc.categoryColour (k).toDisplayString (false) });
+            for (int s = 0; s < kNumPerfSlots; ++s)
+            {
+                const auto& p = proc.getSlot (s);
+                if (p.used) slots.add (juce::Array<juce::var> { p.name, proc.categoryIndex (p) });
+                else slots.add (0);
+            }
+            li->setProperty ("banks", banks);
+            li->setProperty ("cats", cats);
+            li->setProperty ("slots", slots);
+            out.set ("lists", json (juce::var (li)));
+        }
+        // ---------- set lista ----------
+        {
+            auto* sl = new juce::DynamicObject();
+            const int cur = proc.getCurrentSetList();
+            sl->setProperty ("list", cur);
+            sl->setProperty ("page", proc.getSetListPage());
+            sl->setProperty ("slot", proc.getCurrentSetListSlot());
+            sl->setProperty ("pcMode", proc.getProgramChangeMode());
+            juce::Array<juce::var> names, slots;
+            for (int i = 0; i < kNumSetLists; ++i)
+            {
+                const auto n = proc.getSetList (i).name;
+                names.add (n.isNotEmpty() ? n : "Set list " + juce::String (i + 1));
+            }
+            for (auto& x : proc.getSetList (cur).slots)
+            {
+                const auto& p = proc.getSlot (x.perf >= 0 ? x.perf : 0);
+                const bool ok = x.perf >= 0 && p.used;
+                slots.add (juce::Array<juce::var> { x.label.isNotEmpty() ? x.label : (ok ? p.name : juce::String()), x.colour, x.perf, ok });
+            }
+            sl->setProperty ("names", names);
+            sl->setProperty ("slots", slots);
+            out.set ("setlist", json (juce::var (sl)));
+        }
+        // ---------- harmony ----------
+        {
+            const auto& t = proc.getTerca();
+            auto var = xmlToVar (*t.toXml());
+            if (auto* o = var.getDynamicObject())
+            {
+                o->setProperty ("on", proc.isTercaOn());
+                o->setProperty ("root", proc.getTercaRoot());
+                o->setProperty ("scale", proc.getTercaScale());
+                o->setProperty ("text", proc.getTercaText());
+                o->setProperty ("learning", proc.isLearning());
+                o->setProperty ("learnText", t.learn.describe());
+            }
+            out.set ("terca", json (var));
+        }
+        // ---------- mapping ----------
+        {
+            auto* mp = new juce::DynamicObject();
+            mp->setProperty ("name", mapInst);
+            mp->setProperty ("dirty", mapDirty);
+            mp->setProperty ("c3", proc.getC3Is60());
+            // multisemplovi usera koji se edituje (brz izbor)
+            juce::Array<juce::var> mine;
+            const int mu = mapUser >= 0 ? mapUser : remoteUser;
+            if (mu >= 0 && mu < proc.getNumUsers())
+                for (auto& o : proc.getUser (mu).osc)
+                    if (o.instrument.isNotEmpty() && ! mine.contains (o.instrument)) mine.add (o.instrument);
+            mp->setProperty ("userInst", mine);
+            if (auto inst = mapInst.isNotEmpty() ? proc.getLoadedInstrument (mapInst) : nullptr)
+            {
+                mp->setProperty ("loaded", true);
+                mp->setProperty ("wav", inst->type == SourceType::WavFolder);
+                juce::Array<juce::var> zs;
+                for (auto& z : inst->zones)
+                {
+                    auto* o = new juce::DynamicObject();
+                    o->setProperty ("s", z.sample >= 0 && z.sample < (int) inst->samples.size() ? inst->samples[(size_t) z.sample]->id : juce::String());
+                    o->setProperty ("lo", z.lowKey);  o->setProperty ("hi", z.highKey);
+                    o->setProperty ("lv", z.lowVel);  o->setProperty ("hv", z.highVel);
+                    o->setProperty ("root", z.rootKey);
+                    o->setProperty ("tune", z.tuneCents); o->setProperty ("gain", z.gainDb); o->setProperty ("pan", z.pan);
+                    o->setProperty ("loop", z.loop); o->setProperty ("fixed", z.fixedPitch); o->setProperty ("en", z.enabled);
+                    zs.add (juce::var (o));
+                }
+                mp->setProperty ("zones", zs);
+            }
+            else mp->setProperty ("loaded", false);
+            out.set ("map", json (juce::var (mp)));
         }
         dirty = false;
     }
