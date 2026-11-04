@@ -111,6 +111,8 @@ private:
         bool keyDown = false, held = false;
         InstrumentPtr instrument;
         const SampleData* sample = nullptr;
+        int stream = -1;                 // DiskStreamer slot (sempl se cita sa diska), -1 = ceo u RAM-u
+        juce::uint32 streamToken = 0;
         int block = 0;
         int lane = -1, slot = 0;             // mono traka (-1 = poly)
         bool eqOn = false;

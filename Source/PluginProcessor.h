@@ -248,6 +248,8 @@ public:
     juce::String getAudioShortText() const;     // "CPU 12% | 5.8 ms ASIO"
     bool getShowKeyRows() const { return showKeyRows; }        // PERFORMANCE: redovi Low/High/Vel/Channel na partovima
     void setShowKeyRows (bool b) { showKeyRows = b; markSave(); sendChangeMessage(); }
+    bool isDiskStreaming() const { return SampleLibrary::streamingEnabled.load(); }
+    void setDiskStreaming (bool on);       // ponovo ucita sve semplove u RAM-u
     int getMaxPolyphony() const { return maxPolyphony; }
     void setMaxPolyphony (int n);
     bool isGigMode() const { return gigMode; }

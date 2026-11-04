@@ -43,6 +43,43 @@ const Zone* Instrument::findZone (int key, int velocity) const
     return nullptr;
 }
 
+std::atomic<bool> SampleLibrary::streamingEnabled { false };
+
+SamplePtr SampleLibrary::loadResident (const SampleData& s)
+{
+    auto n = std::make_shared<SampleData>();
+    n->id = s.id; n->displayName = s.displayName; n->sampleRate = s.sampleRate; n->startOffset = s.startOffset;
+    n->hasLoop = s.hasLoop; n->loopStart = s.loopStart; n->loopEnd = s.loopEnd; n->endPoint = s.endPoint;
+    n->fileRootKey = s.fileRootKey; n->file = s.file;
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (s.file));
+    if (r == nullptr) return nullptr;
+    n->buffer.setSize (2, s.numFrames);
+    n->buffer.clear();
+    r->read (&n->buffer, 0, s.numFrames, 0, true, r->numChannels > 1);
+    if (r->numChannels == 1) n->buffer.copyFrom (1, 0, n->buffer, 0, 0, s.numFrames);
+    n->compact();
+    return n;
+}
+
+bool SampleLibrary::makeZonesPlayable (Instrument& inst)
+{
+    bool changed = false;
+    for (auto& z : inst.zones)
+    {
+        if (z.sample < 0 || z.sample >= (int) inst.samples.size()) continue;
+        const auto& s = inst.samples[(size_t) z.sample];
+        if (s == nullptr || ! s->streamed) continue;
+        const int res = s->residentFrames();
+        int need = z.sampleStart > 0 ? z.sampleStart + 4096 : 0;
+        if (z.loop && z.hasOwnLoop()) need = juce::jmax (need, z.loopEnd + 8);
+        if (need > res)
+            if (auto full = loadResident (*s)) { inst.samples[(size_t) z.sample] = full; changed = true; }
+    }
+    return changed;
+}
+
 int Instrument::roundRobinCount (int key, int velocity) const
 {
     int count = 0;
@@ -130,9 +167,10 @@ juce::String sourceTypeName (SourceType t)
 //==============================================================================
 //  SampleData: kompaktno cuvanje (16-bit, mono kad je moguce)
 //==============================================================================
-void SampleData::compact()
+void SampleData::compact (int keepFrames)
 {
     const int len = buffer.getNumSamples();
+    const int keep = keepFrames > 0 && keepFrames < len ? keepFrames : len;
     if (pcmL != nullptr || len <= 0) return;
     const int chans = buffer.getNumChannels();
     const float* l = buffer.getReadPointer (0);
@@ -146,17 +184,18 @@ void SampleData::compact()
     }
     const float scale = peak > 1.0f ? peak : 1.0f;           // float WAV preko 0 dB: cuva se sa skalom
     pcmScale = scale / 32767.0f;
-    auto conv = [len, scale] (const float* src)
+    auto conv = [keep, scale] (const float* src)
     {
-        auto v = std::make_shared<std::vector<juce::int16>> ((size_t) len);
+        auto v = std::make_shared<std::vector<juce::int16>> ((size_t) keep);
         auto* d = v->data();
-        for (int i = 0; i < len; ++i)
+        for (int i = 0; i < keep; ++i)
             d[i] = (juce::int16) juce::jlimit (-32767, 32767, (int) std::lround (src[i] / scale * 32767.0f));
         return std::shared_ptr<const std::vector<juce::int16>> (v);
     };
     pcmL = conv (l);
     if (! mono) pcmR = conv (r);
     numFrames = len;
+    streamed = keep < len;
     buffer.setSize (0, 0, false, true, false);   // float vise ne treba (oslobadja memoriju)
 }
 
@@ -164,6 +203,20 @@ const juce::AudioBuffer<float>& SampleData::audio() const
 {
     if (pcmL == nullptr) return buffer;
     const juce::ScopedLock sl (cache->lock);
+    if (cache->buf == nullptr && streamed)
+    {
+        // sempl se cita sa diska: alati (MAPPING) dobijaju ceo zvuk iz fajla
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        auto b = std::make_unique<juce::AudioBuffer<float>> (2, numFrames);
+        b->clear();
+        if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (file) })
+        {
+            r->read (b.get(), 0, numFrames, 0, true, r->numChannels > 1);
+            if (r->numChannels == 1) b->copyFrom (1, 0, *b, 0, 0, numFrames);
+        }
+        cache->buf = std::move (b);
+    }
     if (cache->buf == nullptr)
     {
         auto b = std::make_unique<juce::AudioBuffer<float>> (2, numFrames);
@@ -552,7 +605,17 @@ SamplePtr SampleLibrary::loadAudioFile (const juce::File& f, const juce::String&
     }
 
     trimLeadingSilence (*sd);
-    sd->compact();
+    sd->file = f;
+    int keep = -1;
+    if (streamingEnabled.load() && sd->sampleRate > 0 && len > (int) (streamMinSec * sd->sampleRate)
+        && (f.hasFileExtension ("wav") || f.hasFileExtension ("aif") || f.hasFileExtension ("aiff")))
+    {
+        // pocetak (posle tisine) + loop sempla mora biti u RAM-u
+        keep = sd->startOffset + (int) (streamPreloadSec * sd->sampleRate);
+        if (sd->hasLoop) keep = juce::jmax (keep, sd->loopEnd + 8);
+        if (keep > len * 8 / 10) keep = -1;
+    }
+    sd->compact (keep);
     return sd;
 }
 
@@ -1555,6 +1618,7 @@ InstrumentPtr SampleLibrary::loadInstrument (const juce::String& name, bool c3Is
 
     if (! ignoreMapFile)
         applyMapFile (*inst);
+    makeZonesPlayable (*inst);
 
     return inst;
 }

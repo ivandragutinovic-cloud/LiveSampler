@@ -1,4 +1,5 @@
 #include "SamplerPart.h"
+#include "DiskStreamer.h"
 
 //==============================================================================
 //  InsertFx
@@ -364,8 +365,11 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.slot = slot;
         v.keyDown = ! keyOff;
         v.held = false;
+        if (v.stream >= 0) { DiskStreamer::get().release (v.stream, v.streamToken); v.stream = -1; }
         v.instrument = inst;
         v.sample = smp;
+        if (smp != nullptr && smp->streamed)
+            v.stream = DiskStreamer::get().acquire (inst->samples[(size_t) zone->sample], v.streamToken);
         v.fmOn = fmOsc;
         v.block = oscBlock;
         v.oscTranspose = o.transpose;
@@ -408,6 +412,8 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         }
         if (keyOff)
             v.loop = false;   // keyoff sempl se odsvira jednom
+        if (smp->streamed && v.loop && v.loopEnd > smp->residentFrames())
+            v.loop = false;   // (ne bi trebalo: takav sempl se ucitava ceo)
         if (zone->sampleStart > 0 && zone->sampleStart < v.endPos - 16)
             v.pos = v.loop ? juce::jmin ((double) zone->sampleStart, (double) v.loopStart) : (double) zone->sampleStart;
         }
@@ -967,6 +973,9 @@ void SamplerPart::renderVoices (int start, int num)
         const juce::int16* R = smp->pcmR != nullptr ? smp->pcmR->data() : L;
         const float pcmScale = smp->pcmScale;
         const int len = smp->numFrames;
+        const int resident = smp->residentFrames();
+        const bool streamed = smp->streamed;
+        auto& disk = DiskStreamer::get();
         const bool loop = v.loop;
         const int loopStart = v.loopStart, loopEnd = v.loopEnd;
         const int loopLen = loopEnd - loopStart;
@@ -986,6 +995,15 @@ void SamplerPart::renderVoices (int start, int num)
             }
             return idx < endPos ? (float) d[idx] * pcmScale : 0.0f;
         };
+        // sempl sa diska: pocetak iz RAM-a, ostalo iz prstena DiskStreamer-a (tisina ako jos nije stiglo)
+        auto fetchS = [&] (int idx, float& l, float& r)
+        {
+            if (loop && idx >= loopEnd) idx -= loopLen;
+            if (idx < 0) idx = 0;
+            if (idx >= endPos) { l = r = 0.0f; return; }
+            if (idx < resident) { l = (float) L[idx] * pcmScale; r = (float) R[idx] * pcmScale; return; }
+            if (v.stream < 0 || ! disk.fetch (v.stream, v.streamToken, idx, l, r)) { l = r = 0.0f; disk.countUnderrun(); }
+        };
 
         for (int i = 0; i < num; ++i)
         {
@@ -997,8 +1015,19 @@ void SamplerPart::renderVoices (int start, int num)
 
             const int ip = (int) v.pos;
             const float t = (float) (v.pos - ip);
-            float l = hermite (fetch (L, ip - 1), fetch (L, ip), fetch (L, ip + 1), fetch (L, ip + 2), t);
-            float r = hermite (fetch (R, ip - 1), fetch (R, ip), fetch (R, ip + 1), fetch (R, ip + 2), t);
+            float l, r;
+            if (streamed && ip + 2 >= resident)
+            {
+                float l0, r0, l1, r1, l2, r2, l3, r3;
+                fetchS (ip - 1, l0, r0); fetchS (ip, l1, r1); fetchS (ip + 1, l2, r2); fetchS (ip + 2, l3, r3);
+                l = hermite (l0, l1, l2, l3, t);
+                r = hermite (r0, r1, r2, r3, t);
+            }
+            else
+            {
+                l = hermite (fetch (L, ip - 1), fetch (L, ip), fetch (L, ip + 1), fetch (L, ip + 2), t);
+                r = hermite (fetch (R, ip - 1), fetch (R, ip), fetch (R, ip + 1), fetch (R, ip + 2), t);
+            }
 
             float g = juce::jmax (0.0f, v.ampEnv.advance (1)) * v.velGain * v.ampMod;
             if (v.fadeInStep > 0.0f)
@@ -1058,6 +1087,11 @@ void SamplerPart::renderVoices (int start, int num)
             }
         }
 
+        if (v.stream >= 0)
+        {
+            if (! v.active) { disk.release (v.stream, v.streamToken); v.stream = -1; }
+            else disk.setReadPos (v.stream, v.streamToken, juce::jmax (0, (int) v.pos - 8));
+        }
         if (! v.active)
             v.instrument.reset();
     }

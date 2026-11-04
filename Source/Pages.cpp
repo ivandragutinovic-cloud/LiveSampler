@@ -1,4 +1,5 @@
 #include "Pages.h"
+#include "DiskStreamer.h"
 #include "Text.h"
 #include "MidiLearn.h"
 #include "KronosNames.h"
@@ -3714,6 +3715,10 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     gigToggle.setButtonText (T ("GIG MODE: screen never sleeps, high priority (also on the LIVE page)"));
     gigToggle.onClick = [this] { proc.setGigMode (gigToggle.getToggleState()); };
     addAndMakeVisible (gigToggle);
+    streamToggle.setButtonText (T ("DISK STREAMING: long samples keep only the first 0.75 s in RAM, the rest is read from the disk (SSD)"));
+    streamToggle.setTooltip (T ("For big libraries (pianos, long strings): much less RAM. Needs a fast disk (SSD). Samples are loaded again when you change this."));
+    streamToggle.onClick = [this] { proc.setDiskStreaming (streamToggle.getToggleState()); };
+    addAndMakeVisible (streamToggle);
     resetDrops.setButtonText (T ("Reset dropouts"));
     resetDrops.onClick = [this] { proc.resetDropouts(); refresh(); };
     addAndMakeVisible (resetDrops);
@@ -3752,12 +3757,15 @@ void SettingsPage::refresh()
     polyBox.setSelectedId (proc.getMaxPolyphony(), juce::dontSendNotification);
     if (polyBox.getSelectedId() == 0) polyBox.setText (juce::String (proc.getMaxPolyphony()), juce::dontSendNotification);
     gigToggle.setToggleState (proc.isGigMode(), juce::dontSendNotification);
+    streamToggle.setToggleState (proc.isDiskStreaming(), juce::dontSendNotification);
     {
         const auto a = proc.getAudioInfo();
         audioLabel.setText (T ("Audio: ") + (a.driver.isNotEmpty() ? a.driver : juce::String ("-")) + "  " + a.device + "   |   "
                             + juce::String (a.buffer) + T (" samples @ ") + juce::String (a.rate / 1000.0, 1) + " kHz   |   "
                             + T ("latency ") + juce::String (a.latencyMs, 1) + " ms   |   CPU " + juce::String (juce::roundToInt (proc.getAudioLoad() * 100.0f)) + "%   |   "
                             + juce::String (proc.getDropouts()) + T (" dropouts")
+                            + (proc.isDiskStreaming() ? T ("   |   disk: ") + juce::String (DiskStreamer::get().getActiveStreams()) + T (" streams, ")
+                                                        + juce::String (DiskStreamer::get().getUnderruns()) + T (" underruns") : juce::String())
                             + (a.advice.isNotEmpty() ? "\n" + a.advice : T ("\nAudio OK")), juce::dontSendNotification);
         audioLabel.setColour (juce::Label::textColourId, a.warn ? juce::Colour (0xffffb340) : Pal::dim);
     }
@@ -3817,6 +3825,7 @@ void SettingsPage::resized()
     }
     r.removeFromTop (6);
     gigToggle.setBounds (r.removeFromTop (28));
+    streamToggle.setBounds (r.removeFromTop (28));
     r.removeFromTop (6);
     {
         auto row = r.removeFromTop (44);

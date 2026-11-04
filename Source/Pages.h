@@ -410,7 +410,7 @@ private:
     LiveSamplerProcessor& proc;
     juce::ListBox folders;
     LearnButton addButton, removeButton, rescanButton, backupButton, restoreButton;
-    juce::ToggleButton c3Toggle, gigToggle;
+    juce::ToggleButton c3Toggle, gigToggle, streamToggle;
     juce::Label info, backupStatus, velCurveLabel, polyLabel, audioLabel;
     LearnCombo velCurveBox;
     juce::ComboBox polyBox;

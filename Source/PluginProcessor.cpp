@@ -4,6 +4,7 @@
 #include "PluginEditor.h"
 #include "Text.h"
 #include "AutoLoop.h"
+#include "DiskStreamer.h"
 #if JucePlugin_Build_Standalone
  #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 #endif
@@ -77,6 +78,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("maxPolyphony", maxPolyphony);
     root.setAttribute ("gigMode", gigMode);
     root.setAttribute ("showKeyRows", showKeyRows);
+    root.setAttribute ("diskStreaming", SampleLibrary::streamingEnabled.load());
     root.setAttribute ("currentSlot", currentSlot);
     root.setAttribute ("currentBank", currentBank);
     root.setAttribute ("kronosPcg", kronosFile.getFullPathName());
@@ -185,6 +187,8 @@ void LiveSamplerProcessor::loadData()
     maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
     gigMode = xml->getBoolAttribute ("gigMode", false);
     showKeyRows = xml->getBoolAttribute ("showKeyRows", false);
+    SampleLibrary::streamingEnabled = xml->getBoolAttribute ("diskStreaming", false);
+    if (SampleLibrary::streamingEnabled.load()) DiskStreamer::get();   // nit i baferi se prave ovde, ne na audio niti
     currentSlot = xml->getIntAttribute ("currentSlot", -1);
     currentBank = juce::jlimit (0, kNumPerfBanks - 1, xml->getIntAttribute ("currentBank", 0));
     kronosFile = juce::File (xml->getStringAttribute ("kronosPcg"));
@@ -428,7 +432,11 @@ void LiveSamplerProcessor::installInstrument (const juce::String& name, Instrume
 void LiveSamplerProcessor::applyZones (const juce::String& name, std::vector<Zone> zones)
 {
     if (auto cur = getLoadedInstrument (name))
-        installInstrument (name, cur->withZones (std::move (zones)));
+    {
+        auto n = cur->withZones (std::move (zones));
+        SampleLibrary::makeZonesPlayable (*n);   // loop / start iza dela u RAM-u: taj sempl se ucita ceo
+        installInstrument (name, n);
+    }
 }
 
 void LiveSamplerProcessor::setRoundRobinRandom (const juce::String& name, bool random)
@@ -597,6 +605,8 @@ LiveSamplerProcessor::AudioInfo LiveSamplerProcessor::getAudioInfo() const
     if (a.latencyMs > 12.0) adv.add (T ("Latency over 12 ms: lower the buffer (128 or 256 samples)"));
     if (dropouts.load() > 0) adv.add (juce::String (dropouts.load()) + T (" audio dropouts: raise the buffer, or lower polyphony"));
     if (audioLoad.load() > 0.8f) adv.add (T ("Audio load is high (over 80%)"));
+    if (SampleLibrary::streamingEnabled.load() && DiskStreamer::get().getUnderruns() > 0)
+        adv.add (juce::String (DiskStreamer::get().getUnderruns()) + T (" disk underruns: the disk is too slow (use an SSD) or turn off disk streaming"));
     a.warn = ! adv.isEmpty();
     a.advice = adv.joinIntoString ("\n");
     return a;
@@ -610,6 +620,17 @@ juce::String LiveSamplerProcessor::getAudioShortText() const
     if (a.driver.isNotEmpty()) s << " " << a.driver;
     if (dropouts.load() > 0) s << " | " << dropouts.load() << " drop";
     return s;
+}
+
+void LiveSamplerProcessor::setDiskStreaming (bool on)
+{
+    if (SampleLibrary::streamingEnabled.load() == on) return;
+    if (on) DiskStreamer::get();
+    SampleLibrary::streamingEnabled = on;
+    juce::StringArray names;
+    for (auto& kv : cache) names.add (kv.first);
+    for (auto& n : names) reloadInstrument (n, false);
+    markSave(); sendChangeMessage();
 }
 
 void LiveSamplerProcessor::setMaxPolyphony (int n)
@@ -2706,7 +2727,7 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         const juce::SpinLock::ScopedTryLockType tl (previewLock);
         if (tl.isLocked() && previewSmp != nullptr && previewPos >= 0.0 && buffer.getNumChannels() > 0)
         {
-            const int len = previewSmp->numFrames;
+            const int len = previewSmp->residentFrames();
             const double inc = previewSmp->sampleRate / juce::jmax (1.0, getSampleRate());
             const float k = previewSmp->pcmScale;
             const juce::int16* L = previewSmp->pcmL != nullptr ? previewSmp->pcmL->data() : nullptr;

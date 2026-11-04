@@ -19,7 +19,12 @@ struct SampleData
     juce::String id;                   // relativna putanja, koristi se u fajlu mape
     juce::String displayName;
 
-    void compact();                                   // float -> 16-bit (posle ucitavanja)
+    // citanje sa diska: u RAM-u je samo prvih residentFrames() frejmova, ostalo cita DiskStreamer iz fajla
+    bool streamed = false;
+    juce::File file;
+    int residentFrames() const { return pcmL != nullptr ? (int) pcmL->size() : buffer.getNumSamples(); }
+
+    void compact (int keepFrames = -1);               // float -> 16-bit (posle ucitavanja); keepFrames > 0: samo pocetak u RAM-u
     bool isCompact() const { return pcmL != nullptr; }
     bool isMono() const { return pcmL != nullptr && pcmR == nullptr; }
     int length() const { return pcmL != nullptr ? numFrames : buffer.getNumSamples(); }
@@ -99,6 +104,12 @@ juce::String sourceTypeName (SourceType t);
 class SampleLibrary
 {
 public:
+    // citanje sa diska (SETTINGS): semplovi duzi od streamMinSec drze u RAM-u samo streamPreloadSec sa pocetka
+    static std::atomic<bool> streamingEnabled;
+    static constexpr double streamMinSec = 2.5, streamPreloadSec = 0.75;
+    // zone koje traze loop / start posle preload-a: taj sempl se ipak ucita ceo (vraca true ako je nesto promenjeno)
+    static bool makeZonesPlayable (Instrument&);
+    static SamplePtr loadResident (const SampleData&);
     SampleLibrary();
 
     // Pretrazuje foldere (disk, USB): WAV folderi, Korg .kmp i Kontakt .nki postaju instrumenti.
