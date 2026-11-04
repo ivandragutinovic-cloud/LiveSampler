@@ -363,7 +363,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.pitchTarget = (double) oscPitch;
         setGlide (v, startPitch >= 0.0 ? startPitch + o.transpose : -1.0, glide);
         v.rootKey = zone->rootKey;
-        v.tune = (zone->tuneCents + o.fineCents) / 100.0;
+        v.tune = (zone->tuneCents + o.fineCents + cfg->scaleCents[(size_t) (((pitch % 12) + 12) % 12)]) / 100.0;
         v.fixedPitch = zone->fixedPitch;
         v.keySlope = o.keySlope;
 

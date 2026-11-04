@@ -528,6 +528,7 @@ void LiveSamplerProcessor::rebuildConfig()
                 pr.fm = fmPatchFor (pr.user);
         }
         pr.active = pr.part.on && u >= 0;
+        if (perf.tuneOn && pr.part.scaleTune) pr.scaleCents = perf.tuneCents;
         pr.vectorOn = perf.vectorOn;
         pr.vectorEqualPower = perf.vectorEqualPower;
     }
@@ -549,6 +550,16 @@ void LiveSamplerProcessor::rebuildConfig()
 
 void LiveSamplerProcessor::timerCallback()
 {
+    if (const int qm = qtMask.exchange (0); qm != 0)
+    {
+        auto p = perf;
+        for (int pc = 0; pc < 12; ++pc)
+            if (qm & (1 << pc))
+                p.tuneCents[(size_t) pc] = std::abs (p.tuneCents[(size_t) pc]) > 0.5f ? 0.0f : -50.0f;
+        p.tuneOn = true;
+        p.tuneName = "Custom";
+        updatePerformance (p);
+    }
     // daljinsko upravljanje sa iPad-a: samo u samostalnom programu (ne u VST3 instanci)
     if (remote == nullptr && wrapperType == wrapperType_Standalone)
         remote = std::make_unique<RemoteServer> (*this);
@@ -1314,6 +1325,34 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     rebuildConfig();
     loadNeededInstruments();
     sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setTuning (bool on)
+{
+    auto p = perf;
+    p.tuneOn = on;
+    updatePerformance (p);
+}
+
+void LiveSamplerProcessor::setTuningPreset (int preset, int root)
+{
+    const auto& ps = Tuning::presets();
+    if (preset < 0 || preset >= (int) ps.size()) return;
+    auto p = perf;
+    p.tuneCents = Tuning::apply (ps[(size_t) preset], juce::jlimit (0, 11, root));
+    p.tuneName = juce::String (ps[(size_t) preset].name) + (preset > 0 ? " " + Terca::pcName (root) : juce::String());
+    p.tuneOn = preset > 0;
+    updatePerformance (p);
+}
+
+void LiveSamplerProcessor::setTuneCents (int pc, float cents)
+{
+    if (pc < 0 || pc > 11) return;
+    auto p = perf;
+    p.tuneCents[(size_t) pc] = juce::jlimit (-100.0f, 100.0f, cents);
+    p.tuneName = "Custom";
+    p.tuneOn = true;
+    updatePerformance (p);
 }
 
 void LiveSamplerProcessor::stepPerformance (int dir)
@@ -2322,6 +2361,12 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         return;
     }
 
+    if (m.isNoteOn() && qtEdit.load())
+    {
+        // QT EDIT (kao Korg Pa / Ketron): pritisnut taster menja ton izmedju 0 i -50 centi, ne svira
+        qtMask.fetch_or (1 << (m.getNoteNumber() % 12));
+        return;
+    }
     if (m.isNoteOn())
     {
         routeNoteOn (ch, m.getNoteNumber(), shapeVelocity (m.getVelocity()), c);

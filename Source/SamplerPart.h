@@ -12,6 +12,7 @@ struct PartRuntime
     UserProgram user;
     std::array<InstrumentPtr, kNumOsc> inst;
     std::shared_ptr<const Fm::Patch> fm;   // FM sinteza (user napravljen od MOD-7 programa)
+    std::array<float, 12> scaleCents {};   // orijentalno stimovanje za ovaj deo (nule = iskljuceno)
     bool active = false;   // ukljucen i ima usera
     bool vectorOn = false, vectorEqualPower = false;   // iz performansa
 };

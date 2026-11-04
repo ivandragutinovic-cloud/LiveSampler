@@ -466,6 +466,10 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "mapDelete")  deleteMapZones (v);
     else if (op == "gtrans")      proc.setGlobalTranspose ((int) v["st"]);
     else if (op == "lock")        proc.setLiveLock ((bool) v["on"]);
+    else if (op == "tuneOn")      proc.setTuning ((bool) v["on"]);
+    else if (op == "tunePreset")  proc.setTuningPreset ((int) v["preset"], (int) v["root"]);
+    else if (op == "tuneCents")   proc.setTuneCents ((int) v["pc"], (float) (double) v["cents"]);
+    else if (op == "qtEdit")      proc.setQtEdit ((bool) v["on"]);
     else if (op == "sceneRecall") proc.recallScene ((int) v["scene"]);
     else if (op == "sceneStore")  proc.storeScene ((int) v["scene"]);
     else if (op == "sceneClear")  proc.clearScene ((int) v["scene"]);
@@ -575,6 +579,17 @@ juce::StringPairArray RemoteServer::buildSections()
         st->setProperty ("c3", proc.getC3Is60());
         st->setProperty ("gtrans", proc.getGlobalTranspose());
         st->setProperty ("locked", proc.isLiveLocked());
+        {
+            const auto& pf = proc.getPerformance();
+            st->setProperty ("tuneOn", pf.tuneOn);
+            st->setProperty ("tuneName", pf.tuneName);
+            st->setProperty ("qtEdit", proc.isQtEdit());
+            juce::Array<juce::var> tc, tp;
+            for (auto c : pf.tuneCents) tc.add (std::round (c * 10.0f) / 10.0f);
+            for (auto& t : Tuning::presets()) tp.add (juce::String (t.name));
+            st->setProperty ("tuneCents", tc);
+            st->setProperty ("tunePresets", tp);
+        }
         st->setProperty ("status", proc.getStatusText());
         int ru = remoteUser;
         if (ru < 0) ru = proc.findUser (proc.getPerformance().parts[0].user);

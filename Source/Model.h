@@ -145,6 +145,7 @@ struct PerfPart
     bool terca = false;                 // ovaj deo dobija terce
     bool sustainPedal = true;
     bool expression = true;             // prima Expression (CC11)
+    bool scaleTune = true;              // prati orijentalno stimovanje performansa (iskljuci za bubnjeve)
     int vectorDir = 0;                  // vector joystick: 0 Off, 1 +X, 2 -X, 3 +Y, 4 -Y (kao VJS Assign na Kronosu)
     float vectorCenter = 1.0f;          // jacina u centru joysticka (0..1, Volume Center)
     // Kronos program koji jos nije presemplovan: part ceka (cuti) dok se ne presempluje ili ne zameni drugim userom
@@ -167,6 +168,14 @@ struct SetList
     juce::String name;
     std::array<SetListSlot, kSetListSlots> slots;
 };
+
+// Stimovanja (makami): obrazac od tonike u centima; Tuning::apply ga postavlja na izabranu toniku
+namespace Tuning
+{
+    struct Preset { const char* name; float cents[12]; };
+    const std::vector<Preset>& presets();
+    std::array<float, 12> apply (const Preset& p, int root);
+}
 
 // Scena (kao Montage Scene / Genos registracija): stanje delova u istom performansu, prelaz je trenutan (semplovi su vec ucitani)
 constexpr int kNumScenes = 8;
@@ -199,6 +208,10 @@ struct Performance
     juce::String kronosPcg;             // ... iz kog PCG fajla (ime fajla)
     std::array<Scene, kNumScenes> scenes;
     int scene = -1;                     // poslednja pozvana scena (-1 = nijedna)
+    // orijentalno stimovanje (Scale Tune / cetvrttonovi): pomeraj u centima za svaki ton C..B
+    bool tuneOn = false;
+    std::array<float, 12> tuneCents {};
+    juce::String tuneName;
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static Performance fromXml (const juce::XmlElement&);

@@ -310,6 +310,14 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
     if (kronosSource.isNotEmpty()) e->setAttribute ("kronosSource", kronosSource);
     if (kronosPcg.isNotEmpty()) e->setAttribute ("kronosPcg", kronosPcg);
     if (scene >= 0) e->setAttribute ("scene", scene);
+    {
+        juce::StringArray tc;
+        bool any = false;
+        for (auto v : tuneCents) { tc.add (juce::String (v, 1)); any = any || std::abs (v) > 0.05f; }
+        if (tuneOn) e->setAttribute ("tuneOn", true);
+        if (any) e->setAttribute ("tuneCents", tc.joinIntoString (" "));
+        if (tuneName.isNotEmpty()) e->setAttribute ("tuneName", tuneName);
+    }
     for (int s = 0; s < kNumScenes; ++s)
     {
         const auto& sc = scenes[(size_t) s];
@@ -351,6 +359,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("terca", p.terca);
         x->setAttribute ("sustain", p.sustainPedal);
         x->setAttribute ("expression", p.expression);
+        if (! p.scaleTune) x->setAttribute ("scaleTune", false);
         if (p.vectorDir != 0) { x->setAttribute ("vjs", p.vectorDir); x->setAttribute ("vjsCenter", (double) p.vectorCenter); }
         if (p.missingSource.isNotEmpty()) { x->setAttribute ("missingName", p.missingName); x->setAttribute ("missingSource", p.missingSource); x->setAttribute ("missingPcg", p.missingPcg); }
     }
@@ -367,6 +376,12 @@ Performance Performance::fromXml (const juce::XmlElement& e)
     perf.category = e.getStringAttribute ("categoryName");
     perf.kronosSource = e.getStringAttribute ("kronosSource");
     perf.scene = juce::jlimit (-1, kNumScenes - 1, e.getIntAttribute ("scene", -1));
+    perf.tuneOn = e.getBoolAttribute ("tuneOn", false);
+    perf.tuneName = e.getStringAttribute ("tuneName");
+    {
+        const auto tc = juce::StringArray::fromTokens (e.getStringAttribute ("tuneCents"), " ", "");
+        for (int i = 0; i < 12 && i < tc.size(); ++i) perf.tuneCents[(size_t) i] = juce::jlimit (-100.0f, 100.0f, tc[i].getFloatValue());
+    }
     for (auto* x : e.getChildWithTagNameIterator ("Scene"))
     {
         const int s = x->getIntAttribute ("index", -1);
@@ -415,6 +430,7 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.terca = x->getBoolAttribute ("terca", false);
         p.sustainPedal = x->getBoolAttribute ("sustain", true);
         p.expression = x->getBoolAttribute ("expression", true);
+        p.scaleTune = x->getBoolAttribute ("scaleTune", true);
         p.vectorDir = juce::jlimit (0, 4, x->getIntAttribute ("vjs", 0));
         p.vectorCenter = (float) juce::jlimit (0.0, 1.0, x->getDoubleAttribute ("vjsCenter", 1.0));
         p.missingName = x->getStringAttribute ("missingName");
@@ -604,5 +620,35 @@ namespace Terca
     juce::String keyName (int root, const TercaSettings& s, int scale)
     {
         return pcName (root) + " " + (scale >= 0 && scale < (int) s.scales.size() ? s.scales[(size_t) scale].name.toLowerCase() : juce::String ("?"));
+    }
+}
+
+//==============================================================================
+//  Stimovanja (makami, priblizno u 12-tonskom sistemu sa cetvrttonovima)
+//==============================================================================
+namespace Tuning
+{
+    const std::vector<Preset>& presets()
+    {
+        //                         1    b2   2    b3   3    4   #4   5    b6   6   b7    7
+        static const std::vector<Preset> p = {
+            { "Equal (off)",     {  0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0 } },
+            { "Rast",            {  0,   0,   0,   0, -50,   0,   0,   0,   0,   0,   0, -50 } },
+            { "Bayati",          {  0,   0, -50,   0,   0,   0,   0,   0,   0,   0,   0,   0 } },
+            { "Saba",            {  0,   0, -50,   0,   0,   0,   0,   0,   0,   0,   0,   0 } },
+            { "Huseyni",         {  0,   0, -50,   0,   0,   0,   0,   0,   0, -50,   0,   0 } },
+            { "Ussak",           {  0,   0, -30,   0,   0,   0,   0,   0,   0,   0,   0,   0 } },
+            { "Hicaz (Turkish)", {  0,  14,   0,   0, -14,   0,   0,   0,  14,   0,   0,   0 } },
+            { "Segah / Sikah",   {  0,   0,   0, -50,   0,   0,   0, -50,   0,   0, -50,   0 } },
+            { "Huzam",           {  0,   0, -50,   0, -50,   0,   0,   0,   0, -50,   0,   0 } },
+            { "Quarter-flat 3 & 7", { 0, 0,   0,   0, -50,   0,   0,   0,   0,   0, -50,   0 } } };
+        return p;
+    }
+
+    std::array<float, 12> apply (const Preset& p, int root)
+    {
+        std::array<float, 12> out {};
+        for (int k = 0; k < 12; ++k) out[(size_t) ((root + k) % 12)] = p.cents[k];
+        return out;
     }
 }

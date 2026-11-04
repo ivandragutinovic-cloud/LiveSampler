@@ -233,6 +233,12 @@ public:
     bool isLiveLocked() const { return liveLock; }
     void setLiveLock (bool b) { liveLock = b; markSave(); sendChangeMessage(); }
     void stepPerformance (int dir);
+    // orijentalno stimovanje performansa (cetvrttonovi)
+    void setTuning (bool on);
+    void setTuningPreset (int preset, int root);
+    void setTuneCents (int pitchClass, float cents);
+    bool isQtEdit() const { return qtEdit.load(); }
+    void setQtEdit (bool b) { qtEdit = b; sendChangeMessage(); }
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }
 
@@ -374,6 +380,8 @@ private:
     TercaSettings terca;
     int globalTranspose = 0;
     bool liveLock = false;
+    std::atomic<bool> qtEdit { false };
+    std::atomic<int> qtMask { 0 };
     float globalDb = 0.0f;
     bool saveNeeded = false;
     juce::uint32 lastSaveCheck = 0;

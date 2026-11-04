@@ -73,6 +73,22 @@ private:
 };
 
 //==============================================================================
+//  STIMOVANJE (orijentalno / cetvrttonovi): ON, makam + tonika, QT EDIT (tasteri), 12 tonova u centima
+//==============================================================================
+class TuningBar : public juce::Component
+{
+public:
+    explicit TuningBar (LiveSamplerProcessor&);
+    void refresh();
+    void resized() override;
+private:
+    LiveSamplerProcessor& proc;
+    LearnButton onButton, qtButton;
+    juce::TextButton presetButton, cells[12];
+    juce::Label title;
+};
+
+//==============================================================================
 //  LIVE: ekran za svirku (veliko ime, scene, jacine delova, transpose, harmony, LOCK)
 //==============================================================================
 class LivePage : public juce::Component
@@ -86,6 +102,7 @@ private:
     LiveSamplerProcessor& proc;
     LiveSamplerEditor& editor;
     SceneBar scenes { proc, true };
+    TuningBar tuning { proc };
     LearnButton prevButton, nextButton, transDown, transUp, transZero, harmButton, panicButton, lockButton;
     struct Fader
     {

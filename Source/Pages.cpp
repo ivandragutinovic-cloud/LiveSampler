@@ -398,11 +398,13 @@ void PartStrip::showPartMenu()
                                                  std::abs (pp.vectorCenter - c * 0.25f) < 0.01f);
         m.addSeparator();
         m.addSubMenu (T ("Vector joystick (") + Vector::dirName (pp.vectorDir) + ")", vm);
+        m.addItem (300, T ("Follows the oriental tuning (TUNING)"), true, pp.scaleTune);
     }
     juce::Component::SafePointer<PartStrip> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&partMenu), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
+        if (r == 300) { safe->edit ([] (PerfPart& pp) { pp.scaleTune = ! pp.scaleTune; }); return; }
         if (r == 200)
         {
             const auto& pp = safe->proc.getPerformance().parts[(size_t) safe->index];
@@ -770,11 +772,104 @@ void KeyRangeView::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+//  TuningBar
+//==============================================================================
+TuningBar::TuningBar (LiveSamplerProcessor& p) : proc (p)
+{
+    title.setText ("TUNING", juce::dontSendNotification);
+    title.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    title.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (title);
+    onButton.setButtonText ("ON");
+    onButton.setClickingTogglesState (true);
+    onButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
+    onButton.setTooltip (T ("Oriental tuning (quarter tones) of this performance on / off"));
+    onButton.onClick = [this] { proc.setTuning (onButton.getToggleState()); };
+    MidiLearn::get().bindButton (onButton, "tuning.on");
+    addAndMakeVisible (onButton);
+    qtButton.setButtonText ("QT EDIT");
+    qtButton.setClickingTogglesState (true);
+    qtButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
+    qtButton.setTooltip (T ("While on, the keys you press switch that note between 0 and -50 cents (quarter tone) instead of playing. Turn off to play."));
+    qtButton.onClick = [this] { proc.setQtEdit (qtButton.getToggleState()); };
+    MidiLearn::get().bindButton (qtButton, "tuning.qtedit");
+    addAndMakeVisible (qtButton);
+    presetButton.setTooltip (T ("Choose a maqam (scale) and its tonic"));
+    presetButton.onClick = [this]
+    {
+        juce::PopupMenu m;
+        const auto& ps = Tuning::presets();
+        for (int i = 0; i < (int) ps.size(); ++i)
+        {
+            if (i == 0) { m.addItem (1000, ps[0].name); continue; }
+            juce::PopupMenu roots;
+            for (int r = 0; r < 12; ++r) roots.addItem (1000 + i * 12 + r, juce::String (ps[(size_t) i].name) + " " + Terca::pcName (r));
+            m.addSubMenu (ps[(size_t) i].name, roots);
+        }
+        juce::Component::SafePointer<TuningBar> safe (this);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetButton), [safe] (int r)
+        {
+            if (safe == nullptr || r < 1000) return;
+            const int v = r - 1000;
+            if (v == 0) safe->proc.setTuningPreset (0, 0);
+            else safe->proc.setTuningPreset (v / 12, v % 12);
+        });
+    };
+    addAndMakeVisible (presetButton);
+    for (int pc = 0; pc < 12; ++pc)
+    {
+        cells[pc].onClick = [this, pc]
+        {
+            juce::PopupMenu m;
+            const float vals[] = { -50, -40, -30, -20, -14, -10, 0, 10, 14, 20, 30, 50 };
+            const float cur = proc.getPerformance().tuneCents[(size_t) pc];
+            for (int k = 0; k < 12; ++k)
+                m.addItem (k + 1, (vals[k] > 0 ? "+" : "") + juce::String ((int) vals[k]) + " cents", true, std::abs (cur - vals[k]) < 0.5f);
+            juce::Component::SafePointer<TuningBar> safe (this);
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&cells[pc]), [safe, pc, vals] (int r)
+            {
+                if (safe != nullptr && r > 0) safe->proc.setTuneCents (pc, vals[r - 1]);
+            });
+        };
+        addAndMakeVisible (cells[pc]);
+    }
+}
+
+void TuningBar::refresh()
+{
+    const auto& p = proc.getPerformance();
+    onButton.setToggleState (p.tuneOn, juce::dontSendNotification);
+    qtButton.setToggleState (proc.isQtEdit(), juce::dontSendNotification);
+    presetButton.setButtonText (p.tuneName.isNotEmpty() ? p.tuneName : T ("Maqam..."));
+    for (int pc = 0; pc < 12; ++pc)
+    {
+        const float c = p.tuneCents[(size_t) pc];
+        const bool moved = std::abs (c) > 0.5f;
+        cells[pc].setButtonText (Terca::pcName (pc) + (moved ? "\n" + juce::String ((c > 0 ? "+" : "") + juce::String ((int) std::lround (c))) : juce::String()));
+        cells[pc].setColour (juce::TextButton::buttonColourId, moved ? juce::Colour (0xffffb340).withAlpha (p.tuneOn ? 0.85f : 0.35f) : Pal::panelHi);
+        cells[pc].setColour (juce::TextButton::textColourOffId, moved && p.tuneOn ? juce::Colours::black : Pal::text);
+    }
+}
+
+void TuningBar::resized()
+{
+    auto r = getLocalBounds();
+    title.setBounds (r.removeFromLeft (86));
+    onButton.setBounds (r.removeFromLeft (64).reduced (2, 0));
+    presetButton.setBounds (r.removeFromLeft (170).reduced (2, 0));
+    qtButton.setBounds (r.removeFromRight (100).reduced (2, 0));
+    r.removeFromLeft (6);
+    const int w = r.getWidth() / 12;
+    for (auto& c : cells) c.setBounds (r.removeFromLeft (w).reduced (2, 0));
+}
+
+//==============================================================================
 //  LivePage
 //==============================================================================
 LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
 {
     addAndMakeVisible (scenes);
+    addAndMakeVisible (tuning);
     auto big = [this] (LearnButton& b, const juce::String& t, float fs)
     {
         b.setButtonText (t);
@@ -846,6 +941,7 @@ LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), e
 void LivePage::refresh()
 {
     scenes.refresh();
+    tuning.refresh();
     const auto& perf = proc.getPerformance();
     for (int i = 0; i < kNumParts; ++i)
     {
@@ -919,7 +1015,9 @@ void LivePage::resized()
     transDown.setBounds (tb.reduced (0, 2));
     r.removeFromTop (10);
     scenes.setBounds (r.removeFromTop (76));
-    r.removeFromTop (10);
+    r.removeFromTop (8);
+    tuning.setBounds (r.removeFromTop (44));
+    r.removeFromTop (8);
     auto side = r.removeFromRight (170);
     harmButton.setBounds (side.removeFromTop (90).reduced (4));
     lockButton.setBounds (side.removeFromBottom (70).reduced (4));

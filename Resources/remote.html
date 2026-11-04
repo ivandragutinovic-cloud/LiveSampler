@@ -578,6 +578,7 @@ function partKeys(i) {
     rowStep(d2, { label: "MIDI ch", target: "perf", path: P + "@channel", lo: 0, hi: 16, fmt: v => v ? String(v) : "All" });
     knob(r, { label: "Detune", target: "perf", path: P + "@detune", lo: -100, hi: 100, c: 0, def: 0, fmt: F.cents, col });
     const r2 = el("div", "row", "", g); r2.style.marginTop = "10px";
+    toggle(r2, { label: "Follows TUNING", target: "perf", path: P + "@scaleTune", def: true, title: "This part uses the oriental tuning when TUNING is on" });
     el("button", "", "Full keyboard", r2).onclick = () => setMany("perf", [[P + "@keyLow", 0], [P + "@keyHigh", 127]]);
     el("button", "", "Type range (e.g. C2-B3)", r2).onclick = () => {
       const t = prompt("Key range, e.g. C2-B3", noteName(+partOf(i).keyLow || 0) + "-" + noteName(partOf(i).keyHigh ?? 127)); if (!t) return;
@@ -1119,6 +1120,36 @@ function buildLive(m) {
   ctrls.push(() => { const t = +S.status.gtrans || 0; tv.textContent = "TR " + (t > 0 ? "+" : "") + t; tv.style.color = t ? "#ffb340" : "var(--lcd)"; });
 
   sceneBar(m, true);
+
+  // TUNING: orijentalno stimovanje (cetvrttonovi)
+  const tb2 = el("div", "row", "", m); tb2.style.cssText = "margin-top:8px;gap:4px;flex-wrap:nowrap;align-items:stretch";
+  const ton = el("button", "", "TUNING", tb2); ton.style.cssText = "min-height:54px;width:96px";
+  ton.onclick = () => api({ op: "tuneOn", on: !S.status.tuneOn });
+  const tpr = el("button", "", "", tb2); tpr.style.cssText = "min-height:54px;width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+  tpr.onclick = () => { const ps = S.status.tunePresets || [];
+    picker("Maqam", ps.slice(1).map((n, k) => ({ label: n, value: k + 1 })), "", [ps[0] || "Equal"], (a, v) => {
+      if (a === 0) return api({ op: "tunePreset", preset: 0, root: 0 });
+      picker(ps[v] + " — tonic", NN.map((n, r) => ({ label: n, value: r })), "", [], (a2, r) => api({ op: "tunePreset", preset: v, root: r }));
+    }); };
+  const cells = [];
+  for (let pc = 0; pc < 12; pc++) {
+    const c = el("button", "", "", tb2); c.style.cssText = "flex:1;min-width:0;min-height:54px;padding:2px;font-size:13px;line-height:15px";
+    c.onclick = () => { const cur = +((S.status.tuneCents || [])[pc] || 0);
+      // tap: 0 <-> -50; drugo: drzi Shift... na iPad-u: lista vrednosti
+      const vals = [-50, -40, -30, -20, -14, -10, 0, 10, 14, 20, 30, 50];
+      picker(NN[pc] + " (cents)", vals.map(x => ({ label: (x > 0 ? "+" : "") + x, value: x })), cur, [cur ? "0 (reset)" : "−50 (quarter flat)"], (a, x) => api({ op: "tuneCents", pc, cents: a === 0 ? (cur ? 0 : -50) : x })); };
+    cells.push(c);
+  }
+  const qt = el("button", "", "QT EDIT", tb2); qt.style.cssText = "min-height:54px;width:96px";
+  qt.title = "While on, pressed keys switch that note between 0 and -50 cents";
+  qt.onclick = () => api({ op: "qtEdit", on: !S.status.qtEdit });
+  ctrls.push(() => { const st = S.status, on = !!st.tuneOn, tc = st.tuneCents || [];
+    ton.style.background = on ? "#ffb340" : ""; ton.style.color = on ? "#111" : "";
+    tpr.textContent = st.tuneName || "Maqam...";
+    cells.forEach((c, pc) => { const v = +(tc[pc] || 0), mv = Math.abs(v) > 0.5;
+      c.innerHTML = NN[pc] + (mv ? "<br><small>" + (v > 0 ? "+" : "") + Math.round(v) + "</small>" : "");
+      c.style.background = mv ? (on ? "#ffb340" : "#ffb34055") : ""; c.style.color = mv && on ? "#111" : ""; });
+    qt.style.background = st.qtEdit ? "#e5484d" : ""; qt.style.color = st.qtEdit ? "#fff" : ""; });
 
   const body = el("div", "row", "", m); body.style.cssText = "margin-top:8px;align-items:stretch;flex-wrap:nowrap";
   const fd = el("div", "", "", body); fd.style.cssText = "flex:1;display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:4px";
