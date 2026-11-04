@@ -12,6 +12,7 @@ class SettingsPage;
 class KronosPage;
 class ListsPage;
 class SetListPage;
+class LivePage;
 
 namespace Pal
 {
@@ -121,7 +122,7 @@ public:
     static constexpr int baseW = 1280, designH = 860;
     int designW = baseW;      // sire na sirokom ekranu (full screen: svih 16 delova)
 
-    enum Tab { TabPerformance = 0, TabSetList, TabLists, TabUser, TabMapping, TabTerce, TabEffects, TabKronos, TabSettings, NumTabs };
+    enum Tab { TabLive = 0, TabPerformance, TabSetList, TabLists, TabUser, TabMapping, TabTerce, TabEffects, TabKronos, TabSettings, NumTabs };
     void showTab (int tab);
     void armListWrite();       // LISTE: SNIMI ukljucen (dugme SACUVAJ na PERFORMANS)
     void editUser (const juce::String& userName);            // otvori USER stranicu za ovog usera
@@ -174,6 +175,7 @@ private:
     std::unique_ptr<KronosPage> kronosPage;
     std::unique_ptr<ListsPage> listsPage;
     std::unique_ptr<SetListPage> setListPage;
+    std::unique_ptr<LivePage> livePage;
     std::vector<juce::Component*> pages() const;
 
     // brza traka: dugmad trenutne strane set liste

@@ -80,6 +80,11 @@ public:
     juce::String getBankName (int b) const;
     void setBankName (int b, const juce::String& n);
     void clearPerformanceSlot (int slot);
+    // scene u trenutnom performansu (8): pozovi = trenutno, sacuvaj = i u mesto u listi
+    void recallScene (int s);
+    void storeScene (int s);
+    void clearScene (int s);
+    void renameScene (int s, const juce::String& name);
     void swapPerformanceSlots (int a, int b);   // premestanje u listama (prazno mesto = samo premesti); set liste prate
 
     // kategorije performansa (iste kao kategorije uredjaja "Pikaso Workstation" u Live Kontroleru); performans pamti ime kategorije
@@ -222,6 +227,12 @@ public:
     // keepChannels = false: svi delovi primaju sa svih MIDI kanala (jedna klavijatura)
     juce::StringArray loadKronosCombi (const Kronos::Combi& c, bool keepChannels, std::vector<KronosMissing>* missing = nullptr);
 
+    // LIVE: transpose celog instrumenta, zakljucavanje editovanja na bini, sledeci / prethodni performans
+    int getGlobalTranspose() const { return globalTranspose; }
+    void setGlobalTranspose (int st) { globalTranspose = juce::jlimit (-24, 24, st); rebuildConfig(); markSave(); sendChangeMessage(); }
+    bool isLiveLocked() const { return liveLock; }
+    void setLiveLock (bool b) { liveLock = b; markSave(); sendChangeMessage(); }
+    void stepPerformance (int dir);
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }
 
@@ -238,6 +249,7 @@ private:
         std::array<PartRuntime, kNumParts> parts;
         MasterSettings master;
         float globalDb = 0.0f;
+        int globalTranspose = 0;
         TercaSettings terca;
     };
     using ConfigPtr = std::shared_ptr<const EngineConfig>;
@@ -347,6 +359,8 @@ private:
     int currentSetList = 0, setListPage = 0, currentSetListSlot = -1, pcMode = 0;
     bool perfDirty = false;
     TercaSettings terca;
+    int globalTranspose = 0;
+    bool liveLock = false;
     float globalDb = 0.0f;
     bool saveNeeded = false;
     juce::uint32 lastSaveCheck = 0;

@@ -389,7 +389,7 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     fullButton.onClick = [this] { toggleFullScreen(); };
     content.addAndMakeVisible (fullButton);
 
-    const char* tabNames[] = { "PERFORMANCE", "SET LIST", "LISTS", "USER", "MAPPING", "HARMONY", "EFFECTS", "KRONOS", "SETTINGS" };
+    const char* tabNames[] = { "LIVE", "PERFORMANCE", "SET LIST", "LISTS", "USER", "MAPPING", "HARMONY", "EFFECTS", "KRONOS", "SETTINGS" };
     for (int i = 0; i < NumTabs; ++i)
     {
         tabButtons[i].setButtonText (T (tabNames[i]));
@@ -408,6 +408,7 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     kronosPage = std::make_unique<KronosPage> (proc, *this);
     listsPage = std::make_unique<ListsPage> (proc, *this);
     setListPage = std::make_unique<SetListPage> (proc, *this);
+    livePage = std::make_unique<LivePage> (proc, *this);
     mappingEditor->onClose = [this] { showTab (TabUser); };
     for (auto* c : pages())
         content.addChildComponent (c);
@@ -454,7 +455,7 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     setSize (1200, 1200 * designH / baseW);
 
     proc.addChangeListener (this);
-    showTab (TabPerformance);
+    showTab (TabLive);   // program se otvara na ekranu za svirku
     // test / dijagnostika: PIKASO_TAB=3 otvara odmah zadati tab
     if (const auto t = juce::SystemStats::getEnvironmentVariable ("PIKASO_TAB", {}); t.isNotEmpty())
     {
@@ -480,6 +481,7 @@ LiveSamplerEditor::~LiveSamplerEditor()
     kronosPage.reset();
     listsPage.reset();
     setListPage.reset();
+    livePage.reset();
     setLookAndFeel (nullptr);
 }
 
@@ -491,12 +493,14 @@ void LiveSamplerEditor::paint (juce::Graphics& g)
 std::vector<juce::Component*> LiveSamplerEditor::pages() const
 {
     // redosled odgovara enum Tab
-    return { performancePage.get(), setListPage.get(), listsPage.get(), userPage.get(), mappingEditor.get(), tercePage.get(),
+    return { livePage.get(), performancePage.get(), setListPage.get(), listsPage.get(), userPage.get(), mappingEditor.get(), tercePage.get(),
              effectsPage.get(), kronosPage.get(), settingsPage.get() };
 }
 
 void LiveSamplerEditor::showTab (int tab)
 {
+    // LOCK na bini: samo LIVE i SET LIST
+    if (proc.isLiveLocked() && tab != TabLive && tab != TabSetList) tab = TabLive;
     currentTab = juce::jlimit (0, NumTabs - 1, tab);
     // MAPIRANJE prati usera izabranog na strani USER
     if (currentTab == TabMapping && userPage != nullptr && mappingEditor != nullptr
@@ -622,9 +626,13 @@ void LiveSamplerEditor::refreshAll()
     status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" voices"), juce::dontSendNotification);
     keyboard.setOctaveForMiddleC (proc.getC3Is60() ? 3 : 4);
     refreshSlots();
+    for (int i = 0; i < NumTabs; ++i)
+        tabButtons[i].setEnabled (! proc.isLiveLocked() || i == TabLive || i == TabSetList);
+    if (proc.isLiveLocked() && currentTab != TabLive && currentTab != TabSetList) { showTab (TabLive); return; }
 
     switch (currentTab)
     {
+        case TabLive:        livePage->refresh(); break;
         case TabPerformance: performancePage->refresh(); break;
         case TabUser:        userPage->refresh(); break;
         case TabMapping:     mappingEditor->refresh(); break;

@@ -69,6 +69,8 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("version", 3);
     root.setAttribute ("c3Is60", c3Is60);
     root.setAttribute ("globalDb", (double) globalDb);
+    root.setAttribute ("globalTranspose", globalTranspose);
+    root.setAttribute ("liveLock", liveLock);
     root.setAttribute ("currentSlot", currentSlot);
     root.setAttribute ("currentBank", currentBank);
     root.setAttribute ("kronosPcg", kronosFile.getFullPathName());
@@ -172,6 +174,8 @@ void LiveSamplerProcessor::loadData()
 
     c3Is60 = xml->getBoolAttribute ("c3Is60", true);
     globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
+    globalTranspose = juce::jlimit (-24, 24, xml->getIntAttribute ("globalTranspose", 0));
+    liveLock = xml->getBoolAttribute ("liveLock", false);
     currentSlot = xml->getIntAttribute ("currentSlot", -1);
     currentBank = juce::jlimit (0, kNumPerfBanks - 1, xml->getIntAttribute ("currentBank", 0));
     kronosFile = juce::File (xml->getStringAttribute ("kronosPcg"));
@@ -361,11 +365,17 @@ juce::StringArray LiveSamplerProcessor::neededInstruments (bool includeBank) con
     juce::StringArray names;
     auto addPerf = [this, &names] (const Performance& p)
     {
-        for (auto& part : p.parts)
-            if (part.on)
+        // i delovi koje neka scena pali (prelaz na scenu mora biti trenutan)
+        for (size_t i = 0; i < p.parts.size(); ++i)
+        {
+            const auto& part = p.parts[i];
+            bool needed = part.on;
+            for (auto& sc : p.scenes) needed = needed || (sc.used && sc.parts[i].on);
+            if (needed)
                 if (const int u = findUser (part.user); u >= 0)
                     for (auto& n : users[(size_t) u].usedInstruments())
                         names.addIfNotAlreadyThere (n);
+        }
     };
 
     addPerf (perf);
@@ -523,6 +533,7 @@ void LiveSamplerProcessor::rebuildConfig()
     }
     cfg->master = perf.master;
     cfg->globalDb = globalDb;
+    cfg->globalTranspose = globalTranspose;
     cfg->terca = terca;
 
     ConfigPtr old;
@@ -1300,6 +1311,85 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     markSave();
     rebuildConfig();
     loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::stepPerformance (int dir)
+{
+    // sledeci / prethodni zauzet performans u istoj listi
+    dir = dir >= 0 ? 1 : -1;
+    int s = currentSlot;
+    const int bank = s >= 0 ? s / kPerfPerBank : currentBank;
+    if (s < 0) s = bank * kPerfPerBank - dir;
+    for (int k = 0; k < kPerfPerBank; ++k)
+    {
+        s += dir;
+        if (s < bank * kPerfPerBank || s >= (bank + 1) * kPerfPerBank) break;
+        if (slots[(size_t) s].used) { recallPerformance (s); break; }
+    }
+}
+
+void LiveSamplerProcessor::recallScene (int s)
+{
+    if (s < 0 || s >= kNumScenes || ! perf.scenes[(size_t) s].used) return;
+    const auto& sc = perf.scenes[(size_t) s];
+    for (int i = 0; i < kNumParts; ++i)
+    {
+        const auto& a = sc.parts[(size_t) i];
+        auto& p = perf.parts[(size_t) i];
+        p.on = a.on && (p.user.isNotEmpty() || p.isMissing());
+        p.volumeDb = a.volumeDb; p.pan = a.pan;
+        p.transpose = a.transpose; p.octave = a.octave; p.terca = a.terca;
+        p.keyLow = a.keyLow; p.keyHigh = a.keyHigh;
+        p.reverbSend = a.reverb; p.delaySend = a.delay;
+    }
+    perf.scene = s;
+    // scena nije izmena performansa (kao na Montage-u): ne pali "*"
+    markSave();
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::storeScene (int s)
+{
+    if (s < 0 || s >= kNumScenes) return;
+    auto& sc = perf.scenes[(size_t) s];
+    sc.used = true;
+    if (sc.name.isEmpty()) sc.name = "Scene " + juce::String (s + 1);
+    for (int i = 0; i < kNumParts; ++i)
+    {
+        const auto& p = perf.parts[(size_t) i];
+        auto& a = sc.parts[(size_t) i];
+        a.on = p.on; a.volumeDb = p.volumeDb; a.pan = p.pan;
+        a.transpose = p.transpose; a.octave = p.octave; a.terca = p.terca;
+        a.keyLow = p.keyLow; a.keyHigh = p.keyHigh;
+        a.reverb = p.reverbSend; a.delay = p.delaySend;
+    }
+    perf.scene = s;
+    // scena se odmah upisuje i u mesto u listi (ostale izmene performansa cekaju SAVE)
+    if (currentSlot >= 0 && slots[(size_t) currentSlot].used)
+        slots[(size_t) currentSlot].scenes[(size_t) s] = sc;
+    markSave();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::clearScene (int s)
+{
+    if (s < 0 || s >= kNumScenes) return;
+    perf.scenes[(size_t) s] = Scene();
+    if (perf.scene == s) perf.scene = -1;
+    if (currentSlot >= 0) slots[(size_t) currentSlot].scenes[(size_t) s] = Scene();
+    markSave();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::renameScene (int s, const juce::String& name)
+{
+    if (s < 0 || s >= kNumScenes || ! perf.scenes[(size_t) s].used) return;
+    perf.scenes[(size_t) s].name = name.trim().substring (0, 24);
+    if (currentSlot >= 0) slots[(size_t) currentSlot].scenes[(size_t) s].name = perf.scenes[(size_t) s].name;
+    markSave();
     sendChangeMessage();
 }
 
@@ -2127,7 +2217,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
         if (note < part.keyLow || note > part.keyHigh || vel < part.velLow || vel > part.velHigh)
             continue;
 
-        const int shift = part.transpose + part.octave * 12;
+        const int shift = part.transpose + part.octave * 12 + c.globalTranspose;
         parts[p].noteOn (note, note + shift, vel);
         used |= (juce::uint16) (1 << p);
 

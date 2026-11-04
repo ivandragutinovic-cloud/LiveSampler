@@ -339,20 +339,7 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "editUser")   { remoteUser = juce::jlimit (-1, proc.getNumUsers() - 1, (int) v["index"]); dirty = true; }
     else if (op == "store")      { if (proc.getCurrentSlot() >= 0) proc.storePerformance (proc.getCurrentSlot()); }
     else if (op == "recall")     { const int s = (int) v["slot"]; if (s >= 0 && s < kNumPerfSlots) proc.recallPerformance (s); }
-    else if (op == "step")
-    {
-        // sledeci / prethodni zauzet performans u istoj listi
-        const int dir = (int) v["dir"] >= 0 ? 1 : -1;
-        int s = proc.getCurrentSlot();
-        const int bank = s >= 0 ? s / kPerfPerBank : proc.getCurrentBank();
-        if (s < 0) s = bank * kPerfPerBank - dir;
-        for (int k = 0; k < kPerfPerBank; ++k)
-        {
-            s += dir;
-            if (s < bank * kPerfPerBank || s >= (bank + 1) * kPerfPerBank) break;
-            if (proc.getSlot (s).used) { proc.recallPerformance (s); break; }
-        }
-    }
+    else if (op == "step")       proc.stepPerformance ((int) v["dir"]);
     else if (op == "harmony")    proc.setTercaOn ((bool) v["on"]);
     else if (op == "vector")     proc.setVectorXY ((float) (double) v["x"], (float) (double) v["y"]);
     else if (op == "gvol")       proc.setGlobalVolume ((float) (double) v["db"]);
@@ -477,6 +464,12 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "mapSave")    { if (mapInst.isNotEmpty() && proc.saveMap (mapInst)) mapDirty = false; dirty = true; }
     else if (op == "mapRevert")  { if (mapInst.isNotEmpty()) proc.reloadInstrument (mapInst, false); mapDirty = false; dirty = true; }
     else if (op == "mapDelete")  deleteMapZones (v);
+    else if (op == "gtrans")      proc.setGlobalTranspose ((int) v["st"]);
+    else if (op == "lock")        proc.setLiveLock ((bool) v["on"]);
+    else if (op == "sceneRecall") proc.recallScene ((int) v["scene"]);
+    else if (op == "sceneStore")  proc.storeScene ((int) v["scene"]);
+    else if (op == "sceneClear")  proc.clearScene ((int) v["scene"]);
+    else if (op == "sceneName")   proc.renameScene ((int) v["scene"], v["name"].toString());
     else if (op == "newFmUser")
     {
         remoteUser = proc.createFmUser();
@@ -580,6 +573,8 @@ juce::StringPairArray RemoteServer::buildSections()
         st->setProperty ("vx", std::round (proc.getVectorX() * 100.0f) / 100.0f);
         st->setProperty ("vy", std::round (proc.getVectorY() * 100.0f) / 100.0f);
         st->setProperty ("c3", proc.getC3Is60());
+        st->setProperty ("gtrans", proc.getGlobalTranspose());
+        st->setProperty ("locked", proc.isLiveLocked());
         st->setProperty ("status", proc.getStatusText());
         int ru = remoteUser;
         if (ru < 0) ru = proc.findUser (proc.getPerformance().parts[0].user);

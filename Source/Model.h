@@ -168,6 +168,24 @@ struct SetList
     std::array<SetListSlot, kSetListSlots> slots;
 };
 
+// Scena (kao Montage Scene / Genos registracija): stanje delova u istom performansu, prelaz je trenutan (semplovi su vec ucitani)
+constexpr int kNumScenes = 8;
+struct ScenePart
+{
+    bool on = false;
+    float volumeDb = 0.0f, pan = 0.0f;
+    int transpose = 0, octave = 0;
+    bool terca = false;
+    int keyLow = 0, keyHigh = 127;
+    float reverb = 0.2f, delay = 0.0f;
+};
+struct Scene
+{
+    bool used = false;
+    juce::String name;
+    std::array<ScenePart, kNumParts> parts;
+};
+
 struct Performance
 {
     juce::String name { "Init" };
@@ -179,6 +197,8 @@ struct Performance
     bool vectorEqualPower = false;      // pretapanje bez pada jacine u sredini
     juce::String kronosSource;          // kombi sa Kronosa od kog je napravljen: "bankId:broj"
     juce::String kronosPcg;             // ... iz kog PCG fajla (ime fajla)
+    std::array<Scene, kNumScenes> scenes;
+    int scene = -1;                     // poslednja pozvana scena (-1 = nijedna)
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static Performance fromXml (const juce::XmlElement&);

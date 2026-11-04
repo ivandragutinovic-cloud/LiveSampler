@@ -54,6 +54,49 @@ private:
     int dragStartKey = 0, origLo = 0, origHi = 127;
 };
 
+//==============================================================================
+//  SCENE: 8 dugmadi trenutnog performansa (klik = pozovi, STORE + klik = sacuvaj)
+//==============================================================================
+class SceneBar : public juce::Component
+{
+public:
+    SceneBar (LiveSamplerProcessor&, bool big);
+    void refresh();
+    void resized() override;
+private:
+    void clicked (int s);
+    void menu();
+    LiveSamplerProcessor& proc;
+    const bool big;
+    LearnButton scenes[kNumScenes], storeButton, moreButton;
+    juce::Label title;
+};
+
+//==============================================================================
+//  LIVE: ekran za svirku (veliko ime, scene, jacine delova, transpose, harmony, LOCK)
+//==============================================================================
+class LivePage : public juce::Component
+{
+public:
+    LivePage (LiveSamplerProcessor&, LiveSamplerEditor&);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+private:
+    LiveSamplerProcessor& proc;
+    LiveSamplerEditor& editor;
+    SceneBar scenes { proc, true };
+    LearnButton prevButton, nextButton, transDown, transUp, transZero, harmButton, panicButton, lockButton;
+    struct Fader
+    {
+        LearnSlider volume;
+        LearnButton on;
+        juce::Label name;
+    };
+    Fader faders[kNumParts];
+    juce::Rectangle<int> lcd, transArea;
+};
+
 class PerformancePage : public juce::Component
 {
 public:
@@ -68,6 +111,7 @@ private:
     juce::Label nameLabel, nameEdit;
     juce::OwnedArray<PartStrip> strips;
     KeyRangeView ranges;
+    SceneBar sceneBar { proc, false };
     LearnButton pageButtons[2];
     int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
     // vector joystick (kao na Kronosu): ukljuci, equal power, XY polje, CC za X i Y (LEARN)

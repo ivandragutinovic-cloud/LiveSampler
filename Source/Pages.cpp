@@ -770,6 +770,268 @@ void KeyRangeView::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+//  LivePage
+//==============================================================================
+LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
+{
+    addAndMakeVisible (scenes);
+    auto big = [this] (LearnButton& b, const juce::String& t, float fs)
+    {
+        b.setButtonText (t);
+        b.getProperties().set ("fontSize", fs);
+        addAndMakeVisible (b);
+    };
+    big (prevButton, juce::String::fromUTF8 ("\xe2\x97\x80 PERF"), 18.0f);
+    big (nextButton, juce::String::fromUTF8 ("PERF \xe2\x96\xb6"), 18.0f);
+    prevButton.onClick = [this] { proc.stepPerformance (-1); };
+    nextButton.onClick = [this] { proc.stepPerformance (1); };
+    MidiLearn::get().bindButton (prevButton, "live.perfprev");
+    MidiLearn::get().bindButton (nextButton, "live.perfnext");
+    big (transDown, juce::String::fromUTF8 ("\xe2\x88\x92"), 26.0f);
+    big (transUp, "+", 26.0f);
+    big (transZero, "0", 16.0f);
+    transDown.onClick = [this] { proc.setGlobalTranspose (proc.getGlobalTranspose() - 1); };
+    transUp.onClick = [this] { proc.setGlobalTranspose (proc.getGlobalTranspose() + 1); };
+    transZero.onClick = [this] { proc.setGlobalTranspose (0); };
+    transZero.setTooltip (T ("Transpose back to 0"));
+    MidiLearn::get().bindButton (transDown, "live.transdown");
+    MidiLearn::get().bindButton (transUp, "live.transup");
+    MidiLearn::get().bindButton (transZero, "live.transzero");
+    big (harmButton, "HARMONY", 18.0f);
+    harmButton.onClick = [this] { proc.setTercaOn (! proc.isTercaOn()); };
+    MidiLearn::get().bindButton (harmButton, "live.harmony");
+    big (panicButton, "PANIC", 18.0f);
+    panicButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff7a2230));
+    panicButton.onClick = [this] { proc.panic(); };
+    big (lockButton, "LOCK", 18.0f);
+    lockButton.setTooltip (T ("Locks editing on stage: only LIVE, SET LIST, scenes, part volumes and performance change work"));
+    lockButton.onClick = [this] { proc.setLiveLock (! proc.isLiveLocked()); };
+
+    for (int i = 0; i < kNumParts; ++i)
+    {
+        auto& f = faders[i];
+        f.volume.setSliderStyle (juce::Slider::LinearBarVertical);
+        f.volume.setRange (-60.0, 6.0, 0.1);
+        f.volume.setSkewFactorFromMidPoint (-12.0);
+        f.volume.setDoubleClickReturnValue (true, 0.0);
+        f.volume.setTextValueSuffix (" dB");
+        f.volume.setNumDecimalPlacesToDisplay (1);
+        f.volume.setColour (juce::Slider::trackColourId, Pal::part[i].withAlpha (0.75f));
+        f.volume.setColour (juce::Slider::textBoxTextColourId, Pal::text);
+        f.volume.onValueChange = [this, i]
+        {
+            auto perf = proc.getPerformance();
+            perf.parts[(size_t) i].volumeDb = (float) faders[i].volume.getValue();
+            proc.updatePerformance (perf);
+        };
+        MidiLearn::get().bindSlider (f.volume, "perf.part" + juce::String (i + 1) + ".volume");
+        f.on.setClickingTogglesState (true);
+        f.on.setColour (juce::TextButton::buttonOnColourId, Pal::part[i]);
+        f.on.getProperties().set ("fontSize", 14.0f);
+        f.on.onClick = [this, i]
+        {
+            auto perf = proc.getPerformance();
+            perf.parts[(size_t) i].on = faders[i].on.getToggleState();
+            proc.updatePerformance (perf);
+        };
+        MidiLearn::get().bindButton (f.on, "perf.part" + juce::String (i + 1) + ".on");
+        f.name.setJustificationType (juce::Justification::centred);
+        f.name.setFont (juce::FontOptions (12.5f, juce::Font::bold));
+        f.name.setMinimumHorizontalScale (0.6f);
+        for (juce::Component* c : { (juce::Component*) &f.volume, (juce::Component*) &f.on, (juce::Component*) &f.name })
+            addAndMakeVisible (c);
+    }
+}
+
+void LivePage::refresh()
+{
+    scenes.refresh();
+    const auto& perf = proc.getPerformance();
+    for (int i = 0; i < kNumParts; ++i)
+    {
+        const auto& pp = perf.parts[(size_t) i];
+        auto& f = faders[i];
+        const bool has = pp.user.isNotEmpty() || pp.isMissing();
+        f.volume.setValue (pp.volumeDb, juce::dontSendNotification);
+        f.on.setToggleState (pp.on, juce::dontSendNotification);
+        f.on.setButtonText (juce::String (i + 1));
+        f.name.setText (pp.isMissing() ? juce::String::fromUTF8 ("\xe2\x9a\xa0 ") + pp.missingName : pp.user, juce::dontSendNotification);
+        f.name.setColour (juce::Label::textColourId, pp.on ? Pal::text : Pal::dim);
+        for (juce::Component* c : { (juce::Component*) &f.volume, (juce::Component*) &f.on, (juce::Component*) &f.name })
+            c->setAlpha (has ? 1.0f : 0.25f);
+        f.volume.setEnabled (has);
+        f.on.setEnabled (has);
+    }
+    harmButton.setToggleState (proc.isTercaOn(), juce::dontSendNotification);
+    harmButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3ddc84));
+    harmButton.setButtonText ("HARMONY\n" + proc.getTercaText());
+    lockButton.setToggleState (proc.isLiveLocked(), juce::dontSendNotification);
+    lockButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffffb340));
+    lockButton.setButtonText (proc.isLiveLocked() ? juce::String::fromUTF8 ("LOCKED") : juce::String ("LOCK"));
+    repaint();
+}
+
+void LivePage::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 8.0f);
+    // veliki displej: performans, mesto, scena
+    g.setColour (Pal::lcdBg);
+    g.fillRoundedRectangle (lcd.toFloat(), 10.0f);
+    const auto& perf = proc.getPerformance();
+    const int slot = proc.getCurrentSlot();
+    auto r = lcd.reduced (18, 8);
+    g.setColour (Pal::lcdText.withAlpha (0.7f));
+    g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    juce::String top = (slot >= 0 ? proc.getBankName (slot / kPerfPerBank) + "   " + juce::String (slot % kPerfPerBank).paddedLeft ('0', 3) : juce::String ("---"));
+    if (perf.scene >= 0 && perf.scenes[(size_t) perf.scene].used)
+        top << "   |   SCENE " << (perf.scene + 1) << ": " << perf.scenes[(size_t) perf.scene].name;
+    if (proc.isLiveLocked()) top << "   |   LOCKED";
+    g.drawText (top, r.removeFromTop (22), juce::Justification::centredLeft, true);
+    g.setColour (Pal::lcdText);
+    g.setFont (juce::FontOptions ((float) juce::jmin (60, r.getHeight()), juce::Font::bold));
+    g.drawFittedText (perf.name + (proc.isPerformanceDirty() ? " *" : ""), r, juce::Justification::centredLeft, 1, 0.6f);
+    // transpose
+    g.setColour (Pal::lcdBg);
+    g.fillRoundedRectangle (transArea.toFloat(), 8.0f);
+    const int t = proc.getGlobalTranspose();
+    g.setColour (t != 0 ? juce::Colour (0xffffb340) : Pal::lcdText);
+    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.drawText ("TRANSPOSE", transArea.withHeight (20).translated (0, 4), juce::Justification::centred);
+    g.setFont (juce::FontOptions (34.0f, juce::Font::bold));
+    g.drawText ((t > 0 ? "+" : "") + juce::String (t), transArea.withTrimmedTop (18), juce::Justification::centred);
+}
+
+void LivePage::resized()
+{
+    auto r = getLocalBounds().reduced (10);
+    auto top = r.removeFromTop (110);
+    auto right = top.removeFromRight (430);
+    lcd = top.reduced (0, 0);
+    // desno: prethodni / sledeci performans, transpose
+    auto pr = right.removeFromLeft (150).reduced (6, 0);
+    prevButton.setBounds (pr.removeFromTop (52).reduced (0, 2));
+    nextButton.setBounds (pr.reduced (0, 2));
+    transArea = right.removeFromLeft (130).reduced (4, 0);
+    auto tb = right.reduced (4, 0);
+    transUp.setBounds (tb.removeFromTop (36).reduced (0, 2));
+    transZero.setBounds (tb.removeFromTop (34).reduced (0, 2));
+    transDown.setBounds (tb.reduced (0, 2));
+    r.removeFromTop (10);
+    scenes.setBounds (r.removeFromTop (76));
+    r.removeFromTop (10);
+    auto side = r.removeFromRight (170);
+    harmButton.setBounds (side.removeFromTop (90).reduced (4));
+    lockButton.setBounds (side.removeFromBottom (70).reduced (4));
+    panicButton.setBounds (side.removeFromBottom (70).reduced (4));
+    r.removeFromRight (8);
+    const int w = r.getWidth() / kNumParts;
+    for (int i = 0; i < kNumParts; ++i)
+    {
+        auto col = r.removeFromLeft (w).reduced (3, 0);
+        faders[i].name.setBounds (col.removeFromTop (34));
+        faders[i].on.setBounds (col.removeFromBottom (36).reduced (0, 2));
+        faders[i].volume.setBounds (col.reduced (4, 2));
+    }
+}
+
+//==============================================================================
+//  SceneBar
+//==============================================================================
+SceneBar::SceneBar (LiveSamplerProcessor& p, bool b) : proc (p), big (b)
+{
+    title.setText ("SCENES", juce::dontSendNotification);
+    title.setFont (juce::FontOptions (big ? 14.0f : 12.0f, juce::Font::bold));
+    title.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (title);
+    for (int i = 0; i < kNumScenes; ++i)
+    {
+        scenes[i].setClickingTogglesState (false);
+        scenes[i].getProperties().set ("fontSize", big ? 16.0f : 12.0f);
+        scenes[i].onClick = [this, i] { clicked (i); };
+        addAndMakeVisible (scenes[i]);
+        MidiLearn::get().bindButton (scenes[i], "scene." + juce::String (i + 1));
+    }
+    storeButton.setButtonText ("STORE");
+    storeButton.setClickingTogglesState (true);
+    storeButton.setColour (juce::TextButton::buttonOnColourId, Pal::red);
+    storeButton.setTooltip (T ("Turn on, then click a scene: it remembers which parts are on, their volume, pan, transpose, octave, harmony, keys and sends."));
+    addAndMakeVisible (storeButton);
+    moreButton.setButtonText (juce::String::fromUTF8 ("\xe2\x8b\xaf"));
+    moreButton.setTooltip (T ("Rename / clear a scene"));
+    moreButton.onClick = [this] { menu(); };
+    addAndMakeVisible (moreButton);
+}
+
+void SceneBar::clicked (int s)
+{
+    if (storeButton.getToggleState())
+    {
+        proc.storeScene (s);
+        storeButton.setToggleState (false, juce::dontSendNotification);
+    }
+    else
+        proc.recallScene (s);
+    refresh();
+}
+
+void SceneBar::menu()
+{
+    juce::PopupMenu m, ren, clr;
+    const auto& p = proc.getPerformance();
+    for (int i = 0; i < kNumScenes; ++i)
+        if (p.scenes[(size_t) i].used)
+        {
+            ren.addItem (100 + i, juce::String (i + 1) + "  " + p.scenes[(size_t) i].name);
+            clr.addItem (200 + i, juce::String (i + 1) + "  " + p.scenes[(size_t) i].name);
+        }
+    m.addSubMenu (T ("Rename scene"), ren, ren.getNumItems() > 0);
+    m.addSubMenu (T ("Clear scene"), clr, clr.getNumItems() > 0);
+    juce::Component::SafePointer<SceneBar> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&moreButton), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r >= 200) { safe->proc.clearScene (r - 200); safe->refresh(); return; }
+        const int s = r - 100;
+        auto* w = new juce::AlertWindow (T ("Scene name"), {}, juce::MessageBoxIconType::NoIcon);
+        w->addTextEditor ("n", safe->proc.getPerformance().scenes[(size_t) s].name);
+        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton (T ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, s, w] (int ok)
+        {
+            if (safe == nullptr || ok == 0) return;
+            safe->proc.renameScene (s, w->getTextEditorContents ("n"));
+            safe->refresh();
+        }), true);
+    });
+}
+
+void SceneBar::refresh()
+{
+    const auto& p = proc.getPerformance();
+    for (int i = 0; i < kNumScenes; ++i)
+    {
+        const auto& sc = p.scenes[(size_t) i];
+        const bool cur = p.scene == i && sc.used;
+        scenes[i].setButtonText (sc.used ? (big ? juce::String (i + 1) + "\n" + sc.name : juce::String (i + 1) + " " + sc.name) : juce::String (i + 1));
+        scenes[i].setColour (juce::TextButton::buttonColourId, cur ? Pal::accent : sc.used ? juce::Colour (0xff2f5d8a) : Pal::panelHi.darker (0.3f));
+        scenes[i].setColour (juce::TextButton::textColourOffId, cur ? juce::Colours::black : sc.used ? Pal::text : Pal::dim);
+    }
+    moreButton.setEnabled (std::any_of (p.scenes.begin(), p.scenes.end(), [] (const Scene& s) { return s.used; }));
+}
+
+void SceneBar::resized()
+{
+    auto r = getLocalBounds();
+    title.setBounds (r.removeFromLeft (big ? 86 : 64));
+    moreButton.setBounds (r.removeFromRight (big ? 56 : 34).reduced (2, 0));
+    storeButton.setBounds (r.removeFromRight (big ? 110 : 72).reduced (2, 0));
+    r.removeFromRight (6);
+    const int w = r.getWidth() / kNumScenes;
+    for (auto& b : scenes) b.setBounds (r.removeFromLeft (w).reduced (2, 0));
+}
+
+//==============================================================================
 //  PerformancePage
 //==============================================================================
 PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
@@ -793,6 +1055,7 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     for (int i = 0; i < kNumParts; ++i)
         addChildComponent (strips.add (new PartStrip (p, e, i)));
     addAndMakeVisible (ranges);
+    addAndMakeVisible (sceneBar);
 
     const char* pageNames[] = { "PARTS 1-8", "PARTS 9-16" };
     for (int b = 0; b < 2; ++b)
@@ -851,6 +1114,7 @@ void PerformancePage::updateVectorButtons()
 
 void PerformancePage::refresh()
 {
+    sceneBar.refresh();
     if (! nameEdit.isBeingEdited())
         nameEdit.setText (proc.getPerformance().name, juce::dontSendNotification);
     for (auto* s : strips)
@@ -887,6 +1151,8 @@ void PerformancePage::resized()
     vectorPad->setBounds (top.removeFromLeft (56).reduced (2, 0));
     vectorCcX.setBounds (top.removeFromLeft (76).reduced (1, 2));
     vectorCcY.setBounds (top.removeFromLeft (76).reduced (1, 2));
+    r.removeFromTop (4);
+    sceneBar.setBounds (r.removeFromTop (30));
 
     // sirok ekran (ceo ekran): svih 16 delova odjednom
     const bool all16 = r.getWidth() >= 1440;

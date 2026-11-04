@@ -309,6 +309,21 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
     if (category.isNotEmpty()) e->setAttribute ("categoryName", category);
     if (kronosSource.isNotEmpty()) e->setAttribute ("kronosSource", kronosSource);
     if (kronosPcg.isNotEmpty()) e->setAttribute ("kronosPcg", kronosPcg);
+    if (scene >= 0) e->setAttribute ("scene", scene);
+    for (int s = 0; s < kNumScenes; ++s)
+    {
+        const auto& sc = scenes[(size_t) s];
+        if (! sc.used) continue;
+        auto* x = e->createNewChildElement ("Scene");
+        x->setAttribute ("index", s);
+        x->setAttribute ("name", sc.name);
+        juce::StringArray ps;
+        for (auto& p : sc.parts)
+            ps.add (juce::String (p.on ? 1 : 0) + "," + juce::String (p.volumeDb, 2) + "," + juce::String (p.pan, 3) + "," + juce::String (p.transpose) + ","
+                    + juce::String (p.octave) + "," + juce::String (p.terca ? 1 : 0) + "," + juce::String (p.keyLow) + "," + juce::String (p.keyHigh) + ","
+                    + juce::String (p.reverb, 3) + "," + juce::String (p.delay, 3));
+        x->setAttribute ("parts", ps.joinIntoString (";"));
+    }
     masterToXml (master, *e->createNewChildElement ("Master"));
 
     for (int i = 0; i < kNumParts; ++i)
@@ -351,6 +366,26 @@ Performance Performance::fromXml (const juce::XmlElement& e)
     perf.vectorEqualPower = e.getBoolAttribute ("vectorEqualPower", false);
     perf.category = e.getStringAttribute ("categoryName");
     perf.kronosSource = e.getStringAttribute ("kronosSource");
+    perf.scene = juce::jlimit (-1, kNumScenes - 1, e.getIntAttribute ("scene", -1));
+    for (auto* x : e.getChildWithTagNameIterator ("Scene"))
+    {
+        const int s = x->getIntAttribute ("index", -1);
+        if (s < 0 || s >= kNumScenes) continue;
+        auto& sc = perf.scenes[(size_t) s];
+        sc.used = true;
+        sc.name = x->getStringAttribute ("name");
+        const auto ps = juce::StringArray::fromTokens (x->getStringAttribute ("parts"), ";", "");
+        for (int i = 0; i < kNumParts && i < ps.size(); ++i)
+        {
+            const auto v = juce::StringArray::fromTokens (ps[i], ",", "");
+            if (v.size() < 10) continue;
+            auto& p = sc.parts[(size_t) i];
+            p.on = v[0].getIntValue() != 0; p.volumeDb = v[1].getFloatValue(); p.pan = v[2].getFloatValue();
+            p.transpose = v[3].getIntValue(); p.octave = v[4].getIntValue(); p.terca = v[5].getIntValue() != 0;
+            p.keyLow = juce::jlimit (0, 127, v[6].getIntValue()); p.keyHigh = juce::jlimit (0, 127, v[7].getIntValue());
+            p.reverb = v[8].getFloatValue(); p.delay = v[9].getFloatValue();
+        }
+    }
     perf.kronosPcg = e.getStringAttribute ("kronosPcg");
     if (auto* m = e.getChildByName ("Master"))
         perf.master = masterFromXml (*m);

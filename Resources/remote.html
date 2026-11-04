@@ -122,7 +122,7 @@ table.zt tr.sel{background:#ff8a3d40}
   <button id="harm"><small>HARMONY</small><span id="harmText">—</span></button>
   <button id="panic" style="background:#7a2230">PANIC</button>
 </div>
-<div id="tabs"><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button><button data-tab="lists">LISTS</button><button data-tab="map">MAPPING</button><button data-tab="harm">HARMONY</button></div>
+<div id="tabs"><button data-tab="live">LIVE</button><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button><button data-tab="lists">LISTS</button><button data-tab="map">MAPPING</button><button data-tab="harm">HARMONY</button></div>
 <div id="main"></div>
 <div id="off"><div>Pikaso Workstation is not connected</div><div class="hint">Start Pikaso Workstation on the mini PC (port 8091).</div></div>
 <div id="modal"><div id="box"></div></div>
@@ -132,7 +132,7 @@ const $ = id => document.getElementById(id);
 const PCOL = ["#ff8a3d","#3dc5ff","#7ddf64","#ff5c8a","#c58aff","#ffd23d","#3dffd0","#ff9be0","#d9a066","#6f9dff","#b8e05a","#ff7a6b","#9be7ff","#e8c9ff","#5fd39b","#ffb36b"];
 let S = { status:{}, perf:null, users:{list:[],cats:[]}, user:{index:-1}, meta:{fx:[]}, lists:null, setlist:null, terca:null, map:null };
 let listMode = "recall", listSub = "perf", slPage = 0, slMode = "play", mapSel = -1, mapOpt = { neighbours: true, files: false }, tScale = 0;
-let tab = "perf", partPage = 0, osc = 0, section = "filter", built = "", ctrls = [], instruments = [], instVer = "";
+let tab = "live", partPage = 0, osc = 0, section = "filter", built = "", ctrls = [], instruments = [], instVer = "";
 const holdUntil = {};           // control path -> time until incoming values are ignored (while touching)
 
 // ---------- formatting ----------
@@ -423,6 +423,33 @@ function userIndexOf(name) { return S.users.list.findIndex(u => u[0] === name); 
 // ---------- pages ----------
 function partOf(i) { return nodeOf(S.perf, "Part[" + i + "]@x", false) || {}; }
 
+
+let sceneStore = false;
+function sceneBar(m, big) {
+  const row = el("div", "row", "", m); row.style.marginTop = "6px";
+  el("span", "lab", "SCENES", row).style.minWidth = "56px";
+  const bs = [];
+  for (let s = 0; s < 8; s++) {
+    const b = el("button", "", "", row); b.style.flex = "1"; b.style.minWidth = "0"; if (big) { b.style.minHeight = "70px"; b.style.fontSize = "17px"; }
+    b.onclick = () => { api({ op: sceneStore ? "sceneStore" : "sceneRecall", scene: s }); if (sceneStore) { sceneStore = false; st.classList.remove("on"); } };
+    bs.push(b);
+  }
+  const st = el("button", "", "STORE", row); st.onclick = () => { sceneStore = !sceneStore; st.classList.toggle("on", sceneStore); st.style.background = sceneStore ? "#b8343f" : ""; };
+  const mo = el("button", "", "⋯", row);
+  mo.onclick = () => {
+    const used = (S.perf.Scene || []).map(x => ({ label: (+x.index + 1) + "  " + x.name, value: +x.index }));
+    picker("Scene: rename or clear", used, -1, [], (a, v) => {
+      picker("Scene " + (v + 1), [], "", ["Rename...", "Clear"], a2 => { if (a2 === 0) { const n = prompt("Scene name", (S.perf.Scene.find(x => +x.index === v) || {}).name || ""); if (n) api({ op: "sceneName", scene: v, name: n }); } else api({ op: "sceneClear", scene: v }); });
+    });
+  };
+  ctrls.push(() => {
+    const list = S.perf.Scene || [];
+    bs.forEach((b, s) => { const sc = list.find(x => +x.index === s); const cur = sc && +S.perf.scene === s;
+      b.innerHTML = (s + 1) + (sc ? (big ? "<br>" : " ") + esc(sc.name) : "");
+      b.style.background = cur ? "#ff8a3d" : sc ? "#2f5d8a" : ""; b.style.color = cur ? "#111" : sc ? "" : "#8a91a0"; });
+  });
+}
+
 function buildPerf(m) {
   const top = el("div", "row", "", m);
   [0, 1].forEach(p => { const b = el("button", partPage === p ? "on" : "", p ? "PARTS 9-16" : "PARTS 1-8", top); b.onclick = () => { partPage = p; built = ""; render(); }; });
@@ -447,6 +474,7 @@ function buildPerf(m) {
   const padUpd = () => { dot.style.left = ((+S.status.vx || 0) + 1) * 50 + "%"; dot.style.top = (1 - (+S.status.vy || 0)) * 50 + "%"; };
   ctrls.push(() => { if (padHold < Date.now()) padUpd(); }); padUpd();
 
+  sceneBar(m, false);
   const grid = el("div", "parts", "", m);
   for (let i = partPage * 8; i < partPage * 8 + 8; i++) {
     const col = PCOL[i], P = "Part[" + i + "]";
@@ -1069,6 +1097,61 @@ function buildHarm(m) {
   el("button", "", "+ Add rule", rl).onclick = () => { RU().push({ mask: 1 | 16 | 128, scale: 0, rootShift: 0 }); tSend(); built = ""; render(); };
 }
 
+
+// ---------- LIVE: ekran za svirku ----------
+function buildLive(m) {
+  const top = el("div", "row", "", m);
+  const lcd = el("div", "", "", top); lcd.style.cssText = "flex:1;min-width:0;background:var(--lcdbg);border-radius:12px;padding:10px 16px";
+  const l1 = el("div", "lab", "", lcd), l2 = el("div", "", "", lcd); l2.style.cssText = "color:var(--lcd);font-size:44px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+  ctrls.push(() => { const st = S.status; const sc = (S.perf.Scene || []).find(x => +x.index === +S.perf.scene);
+    l1.textContent = (st.list || "") + "  " + (st.slotText || "") + (sc ? "   |   SCENE " + (+sc.index + 1) + ": " + sc.name : "") + (st.locked ? "   |   LOCKED" : "");
+    l2.textContent = (st.name || "—") + (st.dirty ? " *" : ""); });
+  const nav = el("div", "", "", top); nav.style.cssText = "display:flex;flex-direction:column;gap:6px;width:130px";
+  const pv = el("button", "", "◀ PERF", nav), nx = el("button", "", "PERF ▶", nav);
+  for (const b of [pv, nx]) { b.style.minHeight = "52px"; b.style.fontSize = "18px"; }
+  pv.onclick = () => api({ op: "step", dir: -1 }); nx.onclick = () => api({ op: "step", dir: 1 });
+  const tr = el("div", "", "", top); tr.style.cssText = "display:flex;flex-direction:column;gap:6px;width:150px";
+  const tv = el("div", "", "", tr); tv.style.cssText = "background:var(--lcdbg);border-radius:10px;text-align:center;padding:4px 0;font-size:30px;font-weight:800";
+  const tb = el("div", "row", "", tr);
+  const tm = el("button", "", "−", tb), t0 = el("button", "", "0", tb), tp = el("button", "", "+", tb);
+  for (const b of [tm, t0, tp]) { b.style.flex = "1"; b.style.fontSize = "22px"; b.style.minHeight = "48px"; }
+  tm.onclick = () => api({ op: "gtrans", st: (+S.status.gtrans || 0) - 1 }); tp.onclick = () => api({ op: "gtrans", st: (+S.status.gtrans || 0) + 1 }); t0.onclick = () => api({ op: "gtrans", st: 0 });
+  ctrls.push(() => { const t = +S.status.gtrans || 0; tv.textContent = "TR " + (t > 0 ? "+" : "") + t; tv.style.color = t ? "#ffb340" : "var(--lcd)"; });
+
+  sceneBar(m, true);
+
+  const body = el("div", "row", "", m); body.style.cssText = "margin-top:8px;align-items:stretch;flex-wrap:nowrap";
+  const fd = el("div", "", "", body); fd.style.cssText = "flex:1;display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:4px";
+  for (let i = 0; i < 16; i++) {
+    const P = "Part[" + i + "]", col = PCOL[i];
+    const c = el("div", "", "", fd); c.style.cssText = "display:flex;flex-direction:column;gap:3px;align-items:stretch";
+    const nm = el("div", "", "", c); nm.style.cssText = "font-size:10px;font-weight:700;text-align:center;height:26px;overflow:hidden;line-height:13px";
+    const bar = el("div", "", "", c); bar.style.cssText = "position:relative;height:260px;background:var(--bg);border-radius:6px;touch-action:none;overflow:hidden";
+    const fill = el("div", "", "", bar); fill.style.cssText = "position:absolute;left:0;right:0;bottom:0;background:" + col + "aa";
+    const val = el("div", "", "", bar); val.style.cssText = "position:absolute;left:0;right:0;top:4px;text-align:center;font-size:10px;color:var(--text)";
+    const key = "perf:" + P + "@volume";
+    const toP = db => Math.pow(Math.max(0, (db + 60) / 66), 1.6), fromP = p => -60 + 66 * Math.pow(Math.min(1, Math.max(0, p)), 1 / 1.6);
+    let sy = 0, sp = 0, lastTap = 0;
+    bar.addEventListener("pointerdown", e => { e.preventDefault(); bar.setPointerCapture(e.pointerId); sy = e.clientY; sp = toP(+getV("perf", P + "@volume", 0)); holdUntil[key] = Date.now() + 60000;
+      const t = Date.now(); if (t - lastTap < 300) setP("perf", P + "@volume", 0); lastTap = t; });
+    bar.addEventListener("pointermove", e => { if (!bar.hasPointerCapture(e.pointerId)) return; const v = Math.round(fromP(sp + (sy - e.clientY) / 260) * 10) / 10; setP("perf", P + "@volume", v); upd(); });
+    const up = () => { holdUntil[key] = Date.now() + 700; }; bar.addEventListener("pointerup", up); bar.addEventListener("pointercancel", up);
+    const on = toggle(c, { label: String(i + 1), target: "perf", path: P + "@on", onCol: col });
+    on.style.minHeight = "44px";
+    const upd = () => { const pp = partOf(i), has = !!(pp.user || pp.missingName), v = +getV("perf", P + "@volume", 0);
+      nm.textContent = pp.user || (pp.missingName ? "⚠ " + pp.missingName : ""); fill.style.height = (toP(v) * 100) + "%"; val.textContent = v <= -59.5 ? "-inf" : v.toFixed(1);
+      c.style.opacity = has ? 1 : 0.25; c.style.pointerEvents = has ? "" : "none"; };
+    ctrls.push(upd);
+  }
+  const side = el("div", "", "", body); side.style.cssText = "width:150px;display:flex;flex-direction:column;gap:8px";
+  const hb = el("button", "", "", side); hb.style.minHeight = "90px"; hb.onclick = () => api({ op: "harmony", on: !S.status.harm });
+  ctrls.push(() => { hb.innerHTML = "HARMONY<br><small>" + esc(S.status.harmText || "") + "</small>"; hb.style.background = S.status.harm ? "#3ddc84" : ""; hb.style.color = S.status.harm ? "#111" : ""; });
+  el("span", "", "", side).style.flex = "1";
+  const pn = el("button", "", "PANIC", side); pn.style.cssText = "min-height:70px;background:#7a2230"; pn.onclick = () => api({ op: "panic" });
+  const lk = el("button", "", "", side); lk.style.minHeight = "70px"; lk.onclick = () => api({ op: "lock", on: !S.status.locked });
+  ctrls.push(() => { lk.textContent = S.status.locked ? "LOCKED" : "LOCK"; lk.style.background = S.status.locked ? "#ffb340" : ""; lk.style.color = S.status.locked ? "#111" : ""; });
+}
+
 // ---------- render ----------
 function render() {
   const st = S.status || {};
@@ -1076,7 +1159,8 @@ function render() {
   $("perfName").textContent = (st.name || "—") + (st.dirty ? " *" : "");
   $("harm").classList.toggle("on", !!st.harm);
   $("harmText").textContent = (st.harm ? "ON  " : "OFF  ") + (st.harmText || "");
-  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  if (st.locked && tab !== "live") { tab = "live"; built = ""; }
+  document.querySelectorAll("#tabs button").forEach(b => { b.classList.toggle("on", b.dataset.tab === tab); b.disabled = !!st.locked && b.dataset.tab !== "live"; b.style.opacity = b.disabled ? .35 : 1; });
   if (!S.perf) return;
   let key = tab + "|" + partPage + "|" + osc + "|" + section + "|" + (tab === "user" ? S.user.index + "|" + (S.user.data ? 1 : 0) + "|" + S.users.list.length + "|" + (S.user.data ? S.user.data.name + S.user.data.category : "") : "") + "|" + (tab === "perf" ? S.users.list.length : "");
   // stranice koje se crtaju iz stanja: ponovo kad se promeni ono sto vidis
@@ -1086,7 +1170,7 @@ function render() {
   if (key !== built) {
     built = key; ctrls = [];
     const m = $("main"); const sc = m.scrollTop; m.innerHTML = "";
-    if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else if (tab === "lists") buildLists(m); else if (tab === "map") buildMap(m); else if (tab === "harm") buildHarm(m); else buildFx(m);
+    if (tab === "live") buildLive(m); else if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else if (tab === "lists") buildLists(m); else if (tab === "map") buildMap(m); else if (tab === "harm") buildHarm(m); else buildFx(m);
     m.scrollTop = sc;
   }
   ctrls.forEach(f => f());
