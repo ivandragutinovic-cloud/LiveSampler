@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Pikaso Workstation</title>
+<style>
+:root{--bg:#0f1115;--panel:#1a1d24;--hi:#262a33;--text:#e8eaee;--dim:#8a91a0;--lcd:#8fe9ff;--lcdbg:#0b1a20;--acc:#ff8a3d;--red:#ff4d5e;--green:#3ddc84;--master:#c58aff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px -apple-system,system-ui,Segoe UI,Roboto,sans-serif;overflow:hidden;touch-action:manipulation}
+button{font:inherit;color:var(--text);background:var(--hi);border:0;border-radius:8px;padding:0 10px;min-height:40px;font-weight:700;cursor:pointer}
+button.on{background:var(--acc);color:#111}
+button:active{filter:brightness(1.25)}
+#top{display:flex;gap:8px;align-items:stretch;padding:8px;background:var(--panel);border-bottom:1px solid var(--hi);height:72px}
+#lcd{flex:1 1 auto;min-width:0;background:linear-gradient(var(--lcdbg),#081216);border:1px solid #8fe9ff33;border-radius:10px;padding:4px 12px;display:flex;flex-direction:column;justify-content:center;overflow:hidden}
+#lcd small{color:#8fe9ffaa;font-size:11px;font-weight:700;letter-spacing:.5px}
+#lcd b{color:var(--lcd);font-size:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#harm{min-width:150px;text-align:left;line-height:1.1;border:1px solid var(--dim)}
+#harm.on{background:#3ddc8440;border-color:var(--green);color:var(--text)}
+#harm small{display:block;font-size:11px;color:var(--dim)}
+#dot{width:12px;height:12px;border-radius:50%;background:var(--red);align-self:center;flex:0 0 12px}
+#dot.ok{background:var(--green)}
+#tabs{display:flex;gap:6px;padding:6px 8px}
+#tabs button{flex:1;min-height:44px;background:var(--bg);border:1px solid var(--hi)}
+#tabs button.on{background:var(--acc);color:#111;border-color:var(--acc)}
+#main{position:absolute;top:136px;left:0;right:0;bottom:0;overflow:auto;padding:6px 8px 20px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.parts{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px;margin-top:6px}
+.part{background:var(--panel);border-radius:10px;padding:6px;display:flex;flex-direction:column;gap:5px;position:relative}
+.part.off{opacity:.55}
+.part .bar{height:4px;border-radius:2px;margin:0 4px 2px}
+.usr{display:flex;gap:3px}
+.usr button{min-height:44px}
+.usr .nm{flex:1;min-width:0;background:var(--bg);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
+.usr .st{flex:0 0 26px;padding:0}
+.knobs{display:grid;grid-template-columns:1fr 1fr;gap:2px}
+.knob{display:flex;flex-direction:column;align-items:center;touch-action:none;padding:2px 0}
+.knob label{font-size:11px;font-weight:700;color:#e8eaeedd;white-space:nowrap;overflow:hidden;max-width:100%}
+.knob svg{width:52px;height:52px}
+.knob span{font-size:11px;color:var(--dim);white-space:nowrap}
+.knob.active span{color:var(--lcd)}
+.step{display:flex;align-items:center;gap:3px}
+.step label{flex:0 0 38px;font-size:10px;color:var(--dim);font-weight:700;overflow:hidden}
+.step b{flex:1 1 20px;min-width:20px;text-align:center;background:var(--bg);border-radius:6px;padding:7px 0;font-size:13px}
+.step button{flex:0 0 26px;padding:0;min-height:34px;min-width:0}
+.step{min-width:0}
+.tg3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
+.tg3 button{font-size:11px;padding:0;min-height:36px}
+.small{font-size:11px;min-height:32px}
+.sect{background:var(--panel);border-radius:10px;padding:8px;margin-top:8px}
+.sect h3{margin:0 0 6px;font-size:12px;color:var(--dim);letter-spacing:.5px}
+.kgrid{display:flex;flex-wrap:wrap;gap:4px}
+.kgrid .knob{width:84px}
+.ms{display:grid;grid-template-columns:62px 30px minmax(120px,1fr) 30px 70px 70px 120px 70px 44px 44px;gap:4px;align-items:center;background:var(--panel);border-radius:8px;padding:3px 4px;margin-top:4px}
+.ms .knob svg{width:36px;height:36px}
+.ms .knob label{display:none}
+.ms .nm{background:var(--bg);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;min-height:40px}
+.msh{display:grid;grid-template-columns:62px 30px minmax(120px,1fr) 30px 70px 70px 120px 70px 44px 44px;gap:4px;font-size:11px;color:var(--dim);font-weight:700;padding:6px 4px 0;text-align:center}
+.seg{display:flex;gap:3px;flex-wrap:wrap}
+.seg button{min-height:40px}
+select{font:inherit;color:var(--text);background:var(--hi);border:0;border-radius:8px;min-height:40px;padding:0 8px}
+#modal{position:fixed;inset:0;background:#000a;display:none;z-index:10;align-items:flex-start;justify-content:center;padding-top:40px}
+#modal.open{display:flex}
+#box{background:var(--panel);border-radius:12px;width:min(640px,94vw);max-height:84vh;display:flex;flex-direction:column;padding:10px;gap:8px}
+#box input{font:inherit;font-size:18px;padding:10px;border-radius:8px;border:1px solid var(--hi);background:var(--bg);color:var(--text);-webkit-user-select:text;user-select:text}
+#list{overflow:auto;flex:1;display:flex;flex-direction:column;gap:2px}
+#list button{text-align:left;background:var(--bg);font-weight:500;min-height:44px}
+#list button.cur{background:#ff8a3d55}
+#list button.act{color:var(--lcd)}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chips button{min-height:34px;font-size:12px}
+#pad{width:110px;height:72px;background:var(--bg);border:1px solid #ff8a3d88;border-radius:8px;position:relative;touch-action:none}
+#pad i{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--lcd);margin:-6px 0 0 -6px}
+#pad:before,#pad:after{content:"";position:absolute;background:var(--hi)}
+#pad:before{left:50%;top:0;bottom:0;width:1px}#pad:after{top:50%;left:0;right:0;height:1px}
+.hint{color:var(--dim);font-size:12px}
+#off{position:fixed;inset:136px 0 0 0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--dim);font-size:18px;background:var(--bg);z-index:5}
+#off.show{display:flex}
+@media (max-width:1000px){.parts{grid-template-columns:repeat(4,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<div id="top">
+  <button id="back" title="Back to Live Kontroler">◀</button>
+  <div id="dot"></div>
+  <div id="lcd"><small id="slotLine">PERFORMANCE</small><b id="perfName">—</b></div>
+  <button id="prev" title="Previous performance in the list">◀ PERF</button>
+  <button id="next" title="Next performance in the list">PERF ▶</button>
+  <button id="save" style="background:#b8343f" title="Save to the current slot">SAVE</button>
+  <button id="harm"><small>HARMONY</small><span id="harmText">—</span></button>
+  <button id="panic" style="background:#7a2230">PANIC</button>
+</div>
+<div id="tabs"><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button></div>
+<div id="main"></div>
+<div id="off"><div>Pikaso Workstation is not connected</div><div class="hint">Start Pikaso Workstation on the mini PC (port 8091).</div></div>
+<div id="modal"><div id="box"></div></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const PCOL = ["#ff8a3d","#3dc5ff","#7ddf64","#ff5c8a","#c58aff","#ffd23d","#3dffd0","#ff9be0","#d9a066","#6f9dff","#b8e05a","#ff7a6b","#9be7ff","#e8c9ff","#5fd39b","#ffb36b"];
+let S = { status:{}, perf:null, users:{list:[],cats:[]}, user:{index:-1}, meta:{fx:[]} };
+let tab = "perf", partPage = 0, osc = 0, section = "filter", built = "", ctrls = [], instruments = [], instVer = "";
+const holdUntil = {};           // control path -> time until incoming values are ignored (while touching)
+
+// ---------- formatting ----------
+const F = {
+  db: v => v <= -59.5 ? "-inf" : v.toFixed(1) + " dB",
+  dbs: v => (v > 0 ? "+" : "") + v.toFixed(1) + " dB",
+  pan: v => { const x = Math.round(v * 50); return x === 0 ? "C" : (x < 0 ? "L" + (-x) : "R" + x); },
+  pct: v => Math.round(v * 100) + "%",
+  hz: v => v < 1000 ? Math.round(v) + " Hz" : (v / 1000).toFixed(1) + " kHz",
+  hz2: v => v.toFixed(2) + " Hz",
+  time: v => v < 1 ? Math.round(v * 1000) + " ms" : v.toFixed(2) + " s",
+  ms: v => Math.round(v) + " ms",
+  sec: v => v.toFixed(1) + " s",
+  st: v => (v > 0 ? "+" : "") + v.toFixed(1) + " st",
+  oct: v => (v > 0 ? "+" : "") + v.toFixed(1) + " oct",
+  cents: v => Math.round(v) + " c",
+  lvl: v => String(Math.round(v * 100)),
+  n2: v => v.toFixed(2),
+  ratio: v => v.toFixed(1) + ":1",
+  semis: v => { const x = Math.round(v); return x > 0 ? "+" + x : String(x); },
+  int: v => String(Math.round(v))
+};
+
+// ---------- state paths: "Part[3]@volume", "Block[1]/AmpEG@aTime", "@voiceMode" ----------
+function nodeOf(root, path, create) {
+  const ep = path.split("@")[0];
+  let o = root;
+  if (!o) return null;
+  for (const seg of ep.split("/").filter(Boolean)) {
+    const m = seg.match(/^(\w+)(?:\[(\d+)\])?$/); if (!m) return null;
+    let arr = o[m[1]];
+    if (!Array.isArray(arr)) { if (!create) return null; arr = o[m[1]] = []; }
+    let n = m[2] !== undefined ? arr.find(x => x.index == +m[2]) : arr[0];
+    if (!n) { if (!create) return null; n = m[2] !== undefined ? { index: +m[2] } : {}; arr.push(n); }
+    o = n;
+  }
+  return o;
+}
+function rootOf(target) { return target === "perf" ? S.perf : (S.user && S.user.data); }
+function getV(target, path, def) {
+  const n = nodeOf(rootOf(target), path, false); if (!n) return def;
+  const v = n[path.split("@")[1]];
+  return v === undefined ? def : v;
+}
+function setLocal(target, path, v) {
+  const n = nodeOf(rootOf(target), path, true); if (n) n[path.split("@")[1]] = v;
+}
+
+// ---------- server ----------
+let es = null, connected = false;
+function connect() {
+  try { es && es.close(); } catch (e) {}
+  es = new EventSource("/events");
+  es.onopen = () => setConn(true);
+  es.onerror = () => { setConn(false); };
+  es.onmessage = e => { try { onState(JSON.parse(e.data)); } catch (x) {} };
+}
+function setConn(ok) { connected = ok; $("dot").className = ok ? "ok" : ""; $("off").classList.toggle("show", !ok && !S.perf); }
+const queue = []; let posting = false;
+function api(obj) {
+  queue.push(obj);
+  if (posting) return;
+  posting = true;
+  setTimeout(flush, 0);
+}
+function flush() {
+  if (!queue.length) { posting = false; return; }
+  // isti cilj+putanja: samo poslednja vrednost
+  const merged = [], seen = {};
+  for (const q of queue.splice(0)) {
+    if (q.op === "set" && q.sets.length === 1) { const k = q.target + q.sets[0][0] + (q.index ?? ""); if (seen[k] !== undefined) { merged[seen[k]] = q; continue; } seen[k] = merged.length; }
+    merged.push(q);
+  }
+  fetch("/api", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(merged) })
+    .catch(() => {}).finally(() => setTimeout(flush, 30));
+}
+function setP(target, path, v) {
+  setLocal(target, path, v);
+  const o = { op: "set", target, sets: [[path, v]] };
+  if (target === "user") o.index = S.user.index;
+  api(o);
+}
+function setMany(target, sets) {
+  sets.forEach(s => setLocal(target, s[0], s[1]));
+  const o = { op: "set", target, sets }; if (target === "user") o.index = S.user.index;
+  api(o);
+}
+
+function onState(m) {
+  const now = Date.now();
+  if (m.status) S.status = m.status;
+  if (m.meta) { S.meta = m.meta; if (m.meta.instVer !== instVer) { instVer = m.meta.instVer; loadInstruments(); } }
+  if (m.users) S.users = m.users;
+  // vrednosti koje korisnik upravo pomera ne vracaj nazad (da knob ne skace)
+  const keep = (target, fresh) => {
+    const old = rootOf(target);
+    if (!old) return fresh;
+    for (const k in holdUntil) if (holdUntil[k] > now && k.startsWith(target + ":")) {
+      const p = k.slice(target.length + 1), v = getV(target, p, undefined);
+      if (v !== undefined) { const n = nodeOf(fresh, p, true); if (n) n[p.split("@")[1]] = v; }
+    }
+    return fresh;
+  };
+  if (m.perf) S.perf = keep("perf", m.perf);
+  if (m.user) { if (S.user && m.user.index === S.user.index && m.user.data) m.user.data = keep("user", m.user.data); S.user = m.user; }
+  $("off").classList.remove("show");
+  render();
+}
+function loadInstruments() { fetch("/instruments").then(r => r.json()).then(a => { instruments = a; }).catch(() => {}); }
+
+// ---------- controls ----------
+function skewOf(lo, hi, c) { return (c > lo && c < hi) ? Math.log(0.5) / Math.log((c - lo) / (hi - lo)) : 1; }
+function toProp(v, lo, hi, sk) { const p = Math.min(1, Math.max(0, (v - lo) / (hi - lo))); return sk === 1 ? p : Math.pow(p, sk); }
+function fromProp(p, lo, hi, sk) { p = Math.min(1, Math.max(0, p)); return lo + (hi - lo) * (sk === 1 ? p : Math.exp(Math.log(Math.max(p, 1e-9)) / sk)); }
+function arc(p, col, bip, pz) {
+  const a0 = -135, a1 = 135, R = 20, cx = 26, cy = 26;
+  const pt = a => { const r = (a - 90) * Math.PI / 180; return [cx + R * Math.cos(r), cy + R * Math.sin(r)]; };
+  const path = (from, to) => { const [x0, y0] = pt(from), [x1, y1] = pt(to); return `M${x0} ${y0} A${R} ${R} 0 ${Math.abs(to - from) > 180 ? 1 : 0} ${to > from ? 1 : 0} ${x1} ${y1}`; };
+  const av = a0 + p * (a1 - a0), az = bip ? a0 + pz * (a1 - a0) : a0;
+  const [px, py] = pt(av);
+  return `<svg viewBox="0 0 52 52"><path d="${path(a0, a1)}" stroke="#3a3f4a" stroke-width="5" fill="none" stroke-linecap="round"/>` +
+    (Math.abs(av - az) > 0.5 ? `<path d="${path(Math.min(av, az), Math.max(av, az))}" stroke="${col}" stroke-width="5" fill="none" stroke-linecap="round"/>` : "") +
+    `<circle cx="26" cy="26" r="13" fill="#262a33"/><line x1="26" y1="26" x2="${26 + (px - 26) * 0.62}" y2="${26 + (py - 26) * 0.62}" stroke="#e8eaee" stroke-width="3" stroke-linecap="round"/></svg>`;
+}
+// knob: drag up/down (or left/right), double tap = default
+function knob(parent, o) {
+  const el = document.createElement("div"); el.className = "knob";
+  el.innerHTML = `<label>${o.label || ""}</label><div class="k"></div><span></span>`;
+  parent.appendChild(el);
+  const sk = skewOf(o.lo, o.hi, o.c ?? o.lo), key = o.target + ":" + o.path;
+  const bip = o.lo < 0 && o.hi > 0;
+  let cur = o.def;
+  const draw = v => { cur = v; el.querySelector(".k").innerHTML = arc(toProp(v, o.lo, o.hi, sk), o.col || "#ff8a3d", bip, toProp(0, o.lo, o.hi, sk)); el.querySelector("span").textContent = (o.fmt || F.n2)(v); };
+  const read = () => o.get ? o.get() : getV(o.target, o.path, o.def);
+  let sy = 0, sx = 0, sp = 0, lastTap = 0, lastSend = 0;
+  const send = (v, force) => { const t = Date.now(); if (!force && t - lastSend < 35) { clearTimeout(el._t); el._t = setTimeout(() => send(v, true), 40); return; } lastSend = t; o.set ? o.set(v) : setP(o.target, o.path, v); };
+  el.addEventListener("pointerdown", e => {
+    e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add("active");
+    sy = e.clientY; sx = e.clientX; sp = toProp(read(), o.lo, o.hi, sk); holdUntil[key] = Date.now() + 60000;
+    const t = Date.now(); if (t - lastTap < 300 && o.def !== undefined) { draw(o.def); send(o.def, true); } lastTap = t;
+  });
+  el.addEventListener("pointermove", e => {
+    if (!el.hasPointerCapture(e.pointerId)) return;
+    const d = ((sy - e.clientY) + (e.clientX - sx) * 0.5) / 220;
+    let v = fromProp(sp + d, o.lo, o.hi, sk);
+    if (o.step) v = Math.round(v / o.step) * o.step;
+    if (v !== cur) { draw(v); send(v); }
+  });
+  const up = e => { el.classList.remove("active"); holdUntil[key] = Date.now() + 700; if (el._t) { clearTimeout(el._t); send(cur, true); } };
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  ctrls.push(() => { if (!(holdUntil[key] > Date.now())) draw(+read()); });
+  draw(+read());
+  return el;
+}
+function toggle(parent, o) {
+  const b = document.createElement("button"); b.textContent = o.label; if (o.cls) b.className = o.cls;
+  if (o.title) b.title = o.title;
+  parent.appendChild(b);
+  const read = () => o.get ? !!o.get() : !!+getV(o.target, o.path, o.def ? 1 : 0);
+  b.onclick = () => { const v = !read(); o.set ? o.set(v) : setP(o.target, o.path, v); upd(); };
+  const upd = () => { const v = read(); b.classList.toggle("on", v); if (o.onCol) { b.style.background = v ? o.onCol : ""; b.style.color = v ? "#111" : ""; } };
+  ctrls.push(upd); upd();
+  return b;
+}
+function stepper(parent, o) {
+  const d = document.createElement("div"); d.className = "step";
+  d.innerHTML = `<label>${o.label}</label><button>-</button><b></b><button>+</button>`;
+  parent.appendChild(d);
+  const read = () => +getV(o.target, o.path, o.def || 0);
+  const [mi, pl] = d.querySelectorAll("button");
+  const chg = s => { const v = Math.min(o.hi, Math.max(o.lo, read() + s)); setP(o.target, o.path, v); upd(); };
+  mi.onclick = () => chg(-1); pl.onclick = () => chg(1);
+  const upd = () => { d.querySelector("b").textContent = (o.fmt || F.semis)(read()); };
+  ctrls.push(upd); upd();
+  return d;
+}
+function seg(parent, o) {
+  const d = document.createElement("div"); d.className = "seg"; parent.appendChild(d);
+  const bs = o.items.map((t, i) => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => { setP(o.target, o.path, i); upd(); }; d.appendChild(b); return b; });
+  const upd = () => { const v = +getV(o.target, o.path, o.def || 0); bs.forEach((b, i) => b.classList.toggle("on", i === v)); };
+  ctrls.push(upd); upd();
+  return d;
+}
+function el(tag, cls, html, parent) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; if (parent) parent.appendChild(e); return e; }
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---------- picker (search) ----------
+function picker(title, items, current, actions, onPick, chips) {
+  // items: [{label, value, cat}]
+  const box = $("box");
+  box.innerHTML = `<div class="row"><b style="flex:1;font-size:16px">${esc(title)}</b><button id="pkx">✕</button></div><input id="pkq" placeholder="Search..." autocomplete="off"><div class="chips" id="pkc"></div><div id="list"></div>`;
+  let cat = null;
+  const q = $("pkq"), list = $("list");
+  const draw = () => {
+    const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    list.innerHTML = "";
+    if (!words.length && !cat) (actions || []).forEach((a, i) => { const b = el("button", "act", esc(a), list); b.onclick = () => { close(); onPick(i, null); }; });
+    let n = 0;
+    for (const it of items) {
+      if (cat !== null && (it.cat || "") !== cat) continue;
+      const lab = it.label.toLowerCase();
+      if (words.some(w => !lab.includes(w))) continue;
+      if (++n > 400) break;
+      const b = el("button", it.value === current ? "cur" : "", esc(it.label), list);
+      b.onclick = () => { close(); onPick(-1, it.value); };
+    }
+    const c = list.querySelector(".cur"); if (c && !words.length) c.scrollIntoView({ block: "center" });
+  };
+  if (chips && chips.length) {
+    const pc = $("pkc");
+    const mk = (t, v) => { const b = el("button", "", esc(t), pc); b.onclick = () => { cat = cat === v ? null : v; pc.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b && cat !== null)); draw(); }; };
+    mk("No category", ""); chips.forEach(c => mk(c, c));
+  }
+  const close = () => $("modal").classList.remove("open");
+  $("pkx").onclick = close;
+  q.oninput = draw;
+  q.onkeydown = e => { if (e.key === "Enter") { const b = list.querySelector("button:not(.act)"); if (b) b.click(); } if (e.key === "Escape") close(); };
+  $("modal").classList.add("open");
+  draw();
+  setTimeout(() => q.focus(), 50);
+}
+$("modal").addEventListener("pointerdown", e => { if (e.target.id === "modal") $("modal").classList.remove("open"); });
+function userItems() { return S.users.list.map((u, i) => ({ label: String(i + 1).padStart(3, "0") + "  " + u[0] + (u[1] ? "   [" + u[1] + "]" : ""), value: u[0], cat: u[1] || "" })); }
+function userIndexOf(name) { return S.users.list.findIndex(u => u[0] === name); }
+
+// ---------- pages ----------
+function partOf(i) { return nodeOf(S.perf, "Part[" + i + "]@x", false) || {}; }
+
+function buildPerf(m) {
+  const top = el("div", "row", "", m);
+  [0, 1].forEach(p => { const b = el("button", partPage === p ? "on" : "", p ? "PARTS 9-16" : "PARTS 1-8", top); b.onclick = () => { partPage = p; built = ""; render(); }; });
+  el("span", "", "", top).style.flex = "1";
+  toggle(top, { label: "VECTOR", target: "perf", path: "@vector", title: "Vector joystick changes part volumes" });
+  toggle(top, { label: "EQ.POW", target: "perf", path: "@vectorEqualPower" });
+  const pad = el("div", "", "<i></i>", top); pad.id = "pad";
+  const dot = pad.querySelector("i");
+  let padHold = 0;
+  const padMove = e => {
+    const r = pad.getBoundingClientRect();
+    const x = Math.max(-1, Math.min(1, ((e.clientX - r.left) / r.width) * 2 - 1)), y = Math.max(-1, Math.min(1, 1 - ((e.clientY - r.top) / r.height) * 2));
+    padHold = Date.now() + 600; S.status.vx = x; S.status.vy = y; padUpd(); api({ op: "vector", x, y });
+  };
+  pad.addEventListener("pointerdown", e => { e.preventDefault(); pad.setPointerCapture(e.pointerId); padMove(e); });
+  pad.addEventListener("pointermove", e => { if (pad.hasPointerCapture(e.pointerId)) padMove(e); });
+  pad.addEventListener("dblclick", () => api({ op: "vector", x: 0, y: 0 }));
+  const padUpd = () => { dot.style.left = ((+S.status.vx || 0) + 1) * 50 + "%"; dot.style.top = (1 - (+S.status.vy || 0)) * 50 + "%"; };
+  ctrls.push(() => { if (padHold < Date.now()) padUpd(); }); padUpd();
+
+  const grid = el("div", "parts", "", m);
+  for (let i = partPage * 8; i < partPage * 8 + 8; i++) {
+    const col = PCOL[i], P = "Part[" + i + "]";
+    const c = el("div", "part", "", grid);
+    const bar = el("div", "bar", "", c); bar.style.background = col;
+    toggle(c, { label: "PART " + (i + 1), target: "perf", path: P + "@on", onCol: col });
+    const u = el("div", "usr", "", c);
+    const mi = el("button", "st", "-", u), nm = el("button", "nm", "", u), pl = el("button", "st", "+", u);
+    const step = d => {
+      const n = S.users.list.length; if (!n) return;
+      const cur = userIndexOf(partOf(i).user || "");
+      const nx = cur < 0 ? (d > 0 ? 0 : n - 1) : Math.max(0, Math.min(n - 1, cur + d));
+      setMany("perf", [[P + "@user", S.users.list[nx][0]], [P + "@on", true]]); render();
+    };
+    mi.onclick = () => step(-1); pl.onclick = () => step(1);
+    nm.onclick = () => picker("Part " + (i + 1) + ": user", userItems(), partOf(i).user || "", ["+ New user from multisample...", "+ Empty new user", "(no user)"], (a, v) => {
+      if (a === 0) return pickInstrument("New user from multisample", "", inst => { if (inst) api({ op: "newUser", instrument: inst, part: i }); });
+      if (a === 1) return api({ op: "newUser", instrument: "", part: i });
+      if (a === 2) return setMany("perf", [[P + "@user", ""], [P + "@on", false]]);
+      setMany("perf", [[P + "@user", v], [P + "@on", true]]); render();
+    }, S.users.cats);
+    ctrls.push(() => { const pp = partOf(i); nm.textContent = pp.user || "— choose user —"; c.classList.toggle("off", !+pp.on); });
+    const k = el("div", "knobs", "", c);
+    knob(k, { label: "Volume", target: "perf", path: P + "@volume", lo: -60, hi: 6, c: -12, def: 0, fmt: F.db, col });
+    knob(k, { label: "Pan", target: "perf", path: P + "@pan", lo: -1, hi: 1, c: 0, def: 0, fmt: F.pan, col });
+    knob(k, { label: "Reverb", target: "perf", path: P + "@reverb", lo: 0, hi: 1, def: 0.2, fmt: F.pct, col });
+    knob(k, { label: "Delay", target: "perf", path: P + "@delay", lo: 0, hi: 1, def: 0, fmt: F.pct, col });
+    stepper(c, { label: "Transp", target: "perf", path: P + "@transpose", lo: -24, hi: 24 });
+    stepper(c, { label: "Octave", target: "perf", path: P + "@octave", lo: -3, hi: 3 });
+    const t3 = el("div", "tg3", "", c);
+    toggle(t3, { label: "HARM", target: "perf", path: P + "@terca", onCol: "#3ddc84" });
+    toggle(t3, { label: "SUST", target: "perf", path: P + "@sustain", def: true, onCol: "#8a91a0" });
+    toggle(t3, { label: "EXPR", target: "perf", path: P + "@expression", def: true, onCol: "#8a91a0" });
+    const t2 = el("div", "tg3", "", c); t2.style.gridTemplateColumns = "1fr 1fr";
+    const eq = el("button", "", "EQ", t2);
+    eq.onclick = () => eqBox("Part " + (i + 1) + " EQ (added to the user EQ)", "perf", P, [["Low", "eqLow", -15, 15], ["Mid", "eqMid", -15, 15], ["High", "eqHigh", -15, 15]], col);
+    const ed = el("button", "", "EDIT", t2);
+    ed.onclick = () => { const ui = userIndexOf(partOf(i).user || ""); if (ui < 0) return; api({ op: "editUser", index: ui }); S.user = { index: ui }; tab = "user"; built = ""; render(); };
+  }
+}
+
+function eqBox(title, target, P, bands, col) {
+  const box = $("box");
+  box.innerHTML = `<div class="row"><b style="flex:1;font-size:16px">${esc(title)}</b><button id="eqx">✕</button></div><div class="kgrid" id="eqk"></div>`;
+  const g = $("eqk");
+  const before = ctrls.length;
+  bands.forEach(b => knob(g, { label: b[0], target, path: P + "@" + b[1], lo: b[2], hi: b[3], c: b[4] ?? 0, def: b[5] ?? 0, fmt: b[6] || F.dbs, col }));
+  const mine = ctrls.splice(before);
+  const tick = setInterval(() => mine.forEach(f => f()), 150);
+  const close = () => { clearInterval(tick); $("modal").classList.remove("open"); };
+  $("eqx").onclick = close;
+  $("modal").classList.add("open");
+  $("modal").onpointerdown = e => { if (e.target.id === "modal") close(); };
+}
+
+function pickInstrument(title, current, cb) {
+  const go = () => picker(title, instruments.map(n => ({ label: n, value: n })), current, ["(empty)"], (a, v) => cb(a === 0 ? "" : v));
+  if (instruments.length) go(); else fetch("/instruments").then(r => r.json()).then(a => { instruments = a; go(); }).catch(go);
+}
+
+// parametri zvuka (isti kao na stranici USER u programu)
+const ENVK = [["Start", "start", 0, 1, 0, "lvl"], ["Attack", "aTime", 0.001, 10, 0.6, "time"], ["Attack lvl", "aLevel", 0, 1, 1, "lvl"], ["Decay", "dTime", 0.001, 10, 0.6, "time"], ["Break lvl", "bLevel", 0, 1, 1, "lvl"],
+  ["Slope", "sTime", 0.001, 10, 0.6, "time"], ["Sustain", "sustain", 0, 1, 1, "lvl"], ["Release", "rTime", 0.001, 10, 0.6, "time"], ["Release lvl", "rLevel", 0, 1, 0, "lvl"]];
+const SECT = {
+  pitch: { title: "PITCH", eg: "PitchEG", bip: true, k: [["EG int.", "pitchEgInt", -12, 12, 0, 0, "st"], ["Vibrato rate", "vibRate", 0.1, 12, 4, 5.5, "hz2"], ["Vibrato depth", "vibDepth", 0, 300, 50, 0, "cents"], ["Delay", "vibDelay", 0, 5, 0.5, 0.3, "time"],
+    ["Fade", "vibFade", 0, 5, 0.5, 0.25, "time"], ["Offset", "vibOffset", -1, 1, 0, 0, "pct"], ["ModWh→vib", "mwToVib", 0, 300, 50, 30, "cents"], ["Aftert→vib", "atToVib", 0, 100, 0, 0, "cents"]] },
+  filter: { title: "FILTER", eg: "FilterEG", bip: true, k: [["Cutoff", "cutoff", 40, 20000, 1500, 20000, "hz"], ["Resonance", "resonance", 0, 1, 0, 0, "pct"], ["Key track", "keyTrack", 0, 2, 0, 0, "pct"], ["Velocity", "velToCutoff", -4, 4, 0, 0, "oct"],
+    ["EG int.", "filterEgInt", -10, 10, 0, 0, "oct"], ["Vel→EG", "velToFilterEg", -10, 10, 0, 0, "oct"], ["Bend→cut", "bendToCutoff", -6, 6, 0, 0, "oct"], ["LFO rate", "filterLfoRate", 0.05, 15, 3, 2, "hz2"],
+    ["LFO depth", "filterLfoDepth", 0, 3, 0, 0, "oct"], ["ModWh→cut", "mwToCutoff", -4, 4, 0, 0, "oct"], ["Aftert→cut", "atToCutoff", -4, 4, 0, 0, "oct"]] },
+  amp: { title: "AMP", eg: "AmpEG", bip: false, k: [["Velocity", "velSens", 0, 1, 0, 0.8, "pct"], ["Vel curve", "velCurve", 0.3, 4, 1.4, 1.6, "n2"], ["Aftert→amp", "atToAmp", 0, 12, 0, 0, "dbs"]] }
+};
+
+function buildUser(m) {
+  const ui = S.user.index, d = S.user.data;
+  const top = el("div", "row", "", m);
+  const mi = el("button", "", "-", top), nm = el("button", "", "", top), pl = el("button", "", "+", top);
+  nm.style.flex = "1"; nm.style.fontSize = "18px"; nm.style.textAlign = "left";
+  const go = i => { if (i < 0 || i >= S.users.list.length) return; api({ op: "editUser", index: i }); S.user = { index: i }; built = ""; render(); };
+  mi.onclick = () => go(ui - 1); pl.onclick = () => go(ui + 1);
+  nm.onclick = () => picker("Edit user", userItems(), ui >= 0 && S.users.list[ui] ? S.users.list[ui][0] : "", [], (a, v) => go(userIndexOf(v)), S.users.cats);
+  nm.textContent = ui >= 0 && S.users.list[ui] ? String(ui + 1).padStart(3, "0") + "  " + S.users.list[ui][0] + (S.users.list[ui][1] ? "   [" + S.users.list[ui][1] + "]" : "") : "— choose user —";
+  if (!d) { el("div", "hint", "Choose a user to edit.", m); return; }
+
+  const orow = el("div", "row", "", m); orow.style.marginTop = "8px";
+  for (let b = 0; b < 8; b++) {
+    const any = (d.Osc || []).some(o => (+o.on || o.instrument) && Math.floor(o.index / 8) === b);
+    const bt = el("button", osc === b ? "on" : "", "OSC" + (b + 1), orow);
+    if (osc === b) { bt.style.background = PCOL[b]; bt.style.color = "#111"; } else if (!any) bt.style.opacity = ".5";
+    bt.onclick = () => { osc = b; built = ""; render(); };
+  }
+  toggle(orow, { label: "OSC ON", target: "user", path: "Block[" + osc + "]@oscOn", def: true, onCol: PCOL[osc], title: "Selected OSC on / off (all its MS)" });
+
+  el("div", "msh", "<span>MS</span><span></span><span style='text-align:left'>Multisample</span><span></span><span>Level</span><span>Pan</span><span>Transp</span><span>Fine</span><span>KO</span><span>EQ</span>", m);
+  for (let r = 0; r < 8; r++) {
+    const oi = osc * 8 + r, O = "Osc[" + oi + "]";
+    const row = el("div", "ms", "", m);
+    toggle(row, { label: "MS" + (r + 1), target: "user", path: O + "@on", onCol: PCOL[osc] });
+    const mi2 = el("button", "", "-", row), nm2 = el("button", "nm", "", row), pl2 = el("button", "", "+", row);
+    const setInst = n => { setMany("user", [[O + "@instrument", n], [O + "@on", !!n], [O + "@block", osc]]); render(); };
+    const stepI = dd => { if (!instruments.length) return; const cur = instruments.indexOf(getV("user", O + "@instrument", "")); const nx = cur < 0 ? (dd > 0 ? 0 : instruments.length - 1) : Math.max(0, Math.min(instruments.length - 1, cur + dd)); setInst(instruments[nx]); };
+    mi2.onclick = () => stepI(-1); pl2.onclick = () => stepI(1);
+    nm2.onclick = () => pickInstrument("MS" + (r + 1) + " multisample", getV("user", O + "@instrument", ""), setInst);
+    ctrls.push(() => { const n = getV("user", O + "@instrument", ""); nm2.textContent = n ? n.split("/").slice(1).join("/") || n : "— multisample —"; row.style.opacity = +getV("user", O + "@on", 0) ? 1 : 0.55; });
+    knob(row, { target: "user", path: O + "@level", lo: -40, hi: 12, def: 0, fmt: v => v.toFixed(1) + " dB", col: PCOL[osc] });
+    knob(row, { target: "user", path: O + "@pan", lo: -1, hi: 1, c: 0, def: 0, fmt: F.pan, col: PCOL[osc] });
+    stepper(row, { label: "", target: "user", path: O + "@transpose", lo: -48, hi: 48 }).querySelector("label").remove();
+    knob(row, { target: "user", path: O + "@fine", lo: -100, hi: 100, c: 0, def: 0, fmt: F.cents, col: PCOL[osc] });
+    toggle(row, { label: "KO", target: "user", path: O + "@keyOff", onCol: "#ffb340", title: "Key off: plays when the key is released" });
+    const eq = el("button", "", "EQ", row);
+    eq.onclick = () => eqBox("MS" + (r + 1) + " EQ", "user", O, [["Low", "eqLow", -15, 15], ["Mid", "eqMid", -15, 15], ["Mid Hz", "eqMidFreq", 100, 8000, 1000, 1000, F.hz], ["High", "eqHigh", -15, 15]], PCOL[osc]);
+  }
+
+  const srow = el("div", "row", "", m); srow.style.marginTop = "10px";
+  [["pitch", "PITCH"], ["filter", "FILTER"], ["amp", "AMP"], ["common", "COMMON"], ["effect", "EFFECT / EQ"]].forEach(([k, t]) => {
+    const b = el("button", section === k ? "on" : "", t, srow); b.style.flex = "1"; b.onclick = () => { section = k; built = ""; render(); };
+  });
+  const box = el("div", "sect", "", m), B = "Block[" + osc + "]", col = PCOL[osc];
+  if (SECT[section]) {
+    const s = SECT[section];
+    if (section === "filter") { el("h3", "", "FILTER TYPE", box); seg(box, { target: "user", path: B + "@filterType", items: ["Off", "LP 24 dB", "LP 12 dB", "Highpass", "Bandpass"], def: 1 }); }
+    el("h3", "", s.title, box).style.marginTop = "8px";
+    const g = el("div", "kgrid", "", box);
+    s.k.forEach(k => knob(g, { label: k[0], target: "user", path: B + "@" + k[1], lo: k[2], hi: k[3], c: k[4], def: k[5], fmt: F[k[6]], col }));
+    el("h3", "", s.title + " EG", box).style.marginTop = "10px";
+    const g2 = el("div", "kgrid", "", box);
+    ENVK.forEach(e => { if (e[1] === "rLevel" && !s.bip) return; const lo = (e[5] === "lvl" && s.bip) ? -1 : e[2]; knob(g2, { label: e[0], target: "user", path: B + "/" + s.eg + "@" + e[1], lo, hi: e[3], c: e[5] === "time" ? e[4] : (lo < 0 ? 0 : undefined), def: e[4] === 0.6 ? 0.3 : e[4], fmt: F[e[5]], col }); });
+  } else if (section === "common") {
+    el("h3", "", "VOICE", box); seg(box, { target: "user", path: "@voiceMode", items: ["Poly", "Mono", "Mono legato"] });
+    el("h3", "", "PRIORITY", box).style.marginTop = "8px"; seg(box, { target: "user", path: "@priority", items: ["Last note", "Highest note", "Lowest note"] });
+    el("h3", "", "PORTAMENTO", box).style.marginTop = "8px";
+    const r = el("div", "row", "", box);
+    toggle(r, { label: "PORTAMENTO", target: "user", path: "@portaOn" });
+    toggle(r, { label: "Fingered only", target: "user", path: "@portaFingered" });
+    toggle(r, { label: "Constant rate", target: "user", path: "@portaConstRate" });
+    knob(r, { label: "Time", target: "user", path: "@portamento", lo: 0.001, hi: 3, c: 0.3, def: 0.1, fmt: F.time, col });
+    const r2 = el("div", "row", "", box); r2.style.marginTop = "8px";
+    stepper(r2, { label: "Bend up", target: "user", path: "@bendUp", lo: 0, hi: 24, fmt: F.int, def: 2 }).style.width = "200px";
+    stepper(r2, { label: "Bend down", target: "user", path: "@bendDown", lo: 0, hi: 24, fmt: F.int, def: 2 }).style.width = "200px";
+  } else {
+    el("h3", "", "INSERT EFFECT", box);
+    seg(box, { target: "user", path: "@fxType", items: S.meta.fx && S.meta.fx.length ? S.meta.fx : ["No effect"] });
+    const g = el("div", "kgrid", "", box); g.style.marginTop = "8px";
+    [["FX rate", "fxRate", 0, 1, 0, 0.3, "pct"], ["FX depth", "fxDepth", 0, 1, 0, 0.5, "pct"], ["FX mix", "fxMix", 0, 1, 0, 0.5, "pct"], ["Send reverb", "send1", 0, 1, 0, 1, "pct"], ["Send delay", "send2", 0, 1, 0, 1, "pct"],
+     ["EQ low", "eqLow", -15, 15, 0, 0, "dbs"], ["EQ mid", "eqMid", -15, 15, 0, 0, "dbs"], ["Mid Hz", "eqMidFreq", 100, 8000, 1000, 1000, "hz"], ["EQ high", "eqHigh", -15, 15, 0, 0, "dbs"]]
+      .forEach(k => knob(g, { label: k[0], target: "user", path: "@" + k[1], lo: k[2], hi: k[3], c: k[4], def: k[5], fmt: F[k[6]], col }));
+  }
+}
+
+function buildFx(m) {
+  const M = "Master", col = "#c58aff";
+  const sec = (title, ks) => { const b = el("div", "sect", "", m); el("h3", "", title, b); const g = el("div", "kgrid", "", b); ks.forEach(k => knob(g, { label: k[0], target: "perf", path: M + "@" + k[1], lo: k[2], hi: k[3], c: k[4], def: k[5], fmt: F[k[6]], col })); return g; };
+  sec("PLATE REVERB", [["Size", "revSize", 0, 1, 0, 0.5, "pct"], ["Decay", "revDecay", 0.3, 10, 2, 2.2, "sec"], ["Predelay", "revPre", 0, 150, 30, 20, "ms"], ["Damping", "revDamp", 0, 1, 0, 0.5, "pct"],
+    ["Low cut", "revLowCut", 20, 1000, 150, 150, "hz"], ["High cut", "revHighCut", 1000, 16000, 5000, 6000, "hz"], ["Density", "revDiff", 0, 1, 0, 0.7, "pct"], ["Modulation", "revMod", 0, 1, 0, 0.3, "pct"],
+    ["Width", "revWidth", 0, 1, 0, 1, "pct"], ["Level", "revLevel", 0, 1, 0, 0.8, "pct"]]);
+  sec("DELAY", [["Time", "dlyTime", 20, 1500, 350, 350, "ms"], ["Feedback", "dlyFb", 0, 0.95, 0, 0.35, "pct"], ["Level", "dlyLevel", 0, 1, 0, 0.6, "pct"]]);
+  sec("EQ", [["Low", "eqLow", -12, 12, 0, 0, "dbs"], ["Mid", "eqMid", -12, 12, 0, 0, "dbs"], ["High", "eqHigh", -12, 12, 0, 0, "dbs"]]);
+  sec("COMPRESSOR", [["Threshold", "compThr", -40, 0, 0, -12, "dbs"], ["Ratio (1 = off)", "compRatio", 1, 10, 3, 1, "ratio"]]);
+  const g = sec("VOLUME", [["Performance", "volume", -60, 6, -12, 0, "db"]]);
+  knob(g, { label: "MASTER (all)", target: "status", path: "gvol", lo: -60, hi: 6, c: -12, def: 0, fmt: F.db, col: "#ffffff", get: () => +S.status.gvol || 0, set: v => { S.status.gvol = v; api({ op: "gvol", db: v }); } });
+  el("div", "hint", "Effects are saved in the performance (SAVE). The master volume is for all performances.", m).style.marginTop = "8px";
+}
+
+// ---------- render ----------
+function render() {
+  const st = S.status || {};
+  $("slotLine").textContent = "PERFORMANCE " + (st.slotText || "---") + (st.list ? "  ·  " + st.list : "") + "  ·  " + (st.voices || 0) + " voices";
+  $("perfName").textContent = (st.name || "—") + (st.dirty ? " *" : "");
+  $("harm").classList.toggle("on", !!st.harm);
+  $("harmText").textContent = (st.harm ? "ON  " : "OFF  ") + (st.harmText || "");
+  document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  if (!S.perf) return;
+  const key = tab + "|" + partPage + "|" + osc + "|" + section + "|" + (tab === "user" ? S.user.index + "|" + (S.user.data ? 1 : 0) + "|" + S.users.list.length : "") + "|" + (tab === "perf" ? S.users.list.length : "");
+  if (key !== built) {
+    built = key; ctrls = [];
+    const m = $("main"); const sc = m.scrollTop; m.innerHTML = "";
+    if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else buildFx(m);
+    m.scrollTop = sc;
+  }
+  ctrls.forEach(f => f());
+}
+
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  tab = b.dataset.tab; built = "";
+  if (tab === "user" && S.user.index < 0 && S.status.remoteUser >= 0) api({ op: "editUser", index: S.status.remoteUser });
+  render();
+});
+$("prev").onclick = () => api({ op: "step", dir: -1 });
+$("next").onclick = () => api({ op: "step", dir: 1 });
+$("save").onclick = () => { if (!(S.status.slot >= 0)) return alert("This performance has no slot yet: save it once on the PC (LISTS)."); if (confirm("Save \"" + S.status.name + "\" to " + S.status.slotText + "?")) api({ op: "store" }); };
+$("harm").onclick = () => api({ op: "harmony", on: !S.status.harm });
+$("panic").onclick = () => api({ op: "panic" });
+$("back").onclick = () => { try { window.parent.postMessage("pikaso-close", "*"); } catch (e) {} };
+if (window.parent === window) $("back").style.display = "none";
+connect();
+setInterval(() => { if (!connected) connect(); }, 4000);
+setConn(false);
+</script>
+</body>
+</html>

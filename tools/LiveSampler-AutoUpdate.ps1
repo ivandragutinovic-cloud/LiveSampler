@@ -43,14 +43,26 @@ foreach ($a in $rel.assets) {
     Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp 'files') -Force
 }
 
-# kopiraj preko starih fajlova; ako je program otvoren (fajl zakljucan), probaj ponovo za 15 minuta
+# ostaci prethodne zamene (program je bio otvoren)
+Get-ChildItem $target -Filter '*.old-*' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+
+# kopiraj preko starih fajlova. Ako je program otvoren (fajl zakljucan), stari .exe se preimenuje
+# (Windows to dozvoljava i dok program radi), pa nova verzija radi od sledeceg pokretanja.
 $locked = $false
+$renamed = $false
 Get-ChildItem (Join-Path $tmp 'files') | ForEach-Object {
     $dest = Join-Path $target $_.Name
     try {
         if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
         Copy-Item $_.FullName $dest -Recurse -Force
-    } catch { $locked = $true }
+    } catch {
+        try {
+            $old = $dest + '.old-' + (Get-Date -Format 'yyyyMMddHHmmss')
+            Rename-Item -Path $dest -NewName (Split-Path $old -Leaf) -Force
+            Copy-Item $_.FullName $dest -Recurse -Force
+            $renamed = $true
+        } catch { $locked = $true }
+    }
 }
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -68,4 +80,5 @@ if ($locked) {
 }
 Set-Content -Path $state -Value $id
 Say ('Instalirano u ' + $target)
+if ($renamed) { Say 'Program je bio otvoren: nova verzija radi kad ga zatvoris i ponovo pokrenes.' }
 Set-Content -Path (Join-Path $target 'NOVA VERZIJA.txt') -Value ("Instalirano: $stamp`r`n`r`n" + $rel.body)

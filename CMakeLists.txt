@@ -47,7 +47,11 @@ target_sources(LiveSampler PRIVATE
     Source/Model.cpp
     Source/Pages.cpp
     Source/MidiLearn.cpp
+    Source/RemoteServer.cpp
     Source/KronosPcg.cpp)
+
+# stranica za iPad (Live Kontroler, tab PIKASO) ugradjena u program
+juce_add_binary_data(PikasoRemoteData SOURCES Resources/remote.html)
 
 target_compile_definitions(LiveSampler PUBLIC
     JUCE_WEB_BROWSER=0
@@ -62,6 +66,7 @@ endif()
 
 target_link_libraries(LiveSampler
     PRIVATE
+        PikasoRemoteData
         juce::juce_audio_utils
         juce::juce_audio_formats
         juce::juce_dsp

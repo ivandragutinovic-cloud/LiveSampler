@@ -313,6 +313,7 @@ private:
     juce::String kontrolerStatus;
     friend class BackupThread;
     std::unique_ptr<juce::Thread> backupThread;
+    std::unique_ptr<class RemoteServer> remote;     // iPad (Live Kontroler, tab PIKASO), port 8091
     bool restorePending = false;   // backup vracen: ne snimaj preko njega dok se program ne pokrene ponovo
     bool kontrolerLinked = false, kontrolerChecked = false;
     juce::File kontrolerFile;

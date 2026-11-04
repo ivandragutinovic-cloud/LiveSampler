@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "MidiLearn.h"
+#include "RemoteServer.h"
 #include "PluginEditor.h"
 #include "Text.h"
 #include "AutoLoop.h"
@@ -28,6 +29,7 @@ LiveSamplerProcessor::~LiveSamplerProcessor()
 {
     alive->store (false);
     stopTimer();
+    remote.reset();
     if (saveNeeded)
         saveNow();
     loadPool.removeAllJobs (true, 10000);
@@ -522,6 +524,10 @@ void LiveSamplerProcessor::rebuildConfig()
 
 void LiveSamplerProcessor::timerCallback()
 {
+    // daljinsko upravljanje sa iPad-a: samo u samostalnom programu (ne u VST3 instanci)
+    if (remote == nullptr && wrapperType == wrapperType_Standalone)
+        remote = std::make_unique<RemoteServer> (*this);
+
     // Live Kontroler: prvi put se sam poveze ako fajl postoji; posle se prati izmena fajla
     if (++kontrolerTick >= 4)
     {
