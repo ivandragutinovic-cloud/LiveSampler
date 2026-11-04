@@ -1891,7 +1891,8 @@ private:
             const double earlier = avg (offB - 150, offB - 100);
             const double dropDb = 20.0 * std::log10 (endHold / peak);
             const double slope = 20.0 * std::log10 (endHold / earlier);     // dB za ~1.25 s
-            const bool sustained = dropDb > -15.0 && slope > -3.0;
+            // drzi: na kraju vise ne opada (i kad je posle attack-a pao na nizi nivo, npr. zvonca / pad sa loop-om)
+            const bool sustained = dropDb > -40.0 && slope > -3.0;
             double hold;
             if (sustained)
             {
