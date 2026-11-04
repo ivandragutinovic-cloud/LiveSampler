@@ -1821,6 +1821,22 @@ void LiveSamplerProcessor::clearPerformanceSlot (int slot)
     kontrolerChanged();
 }
 
+void LiveSamplerProcessor::swapPerformanceSlots (int a, int b)
+{
+    if (a < 0 || b < 0 || a >= kNumPerfSlots || b >= kNumPerfSlots || a == b) return;
+    std::swap (slots[(size_t) a], slots[(size_t) b]);
+    if (currentSlot == a) currentSlot = b;
+    else if (currentSlot == b) currentSlot = a;
+    // dugmad set lista pokazuju na isti performans i posle premestanja
+    for (auto& sl : setLists)
+        for (auto& s : sl.slots)
+            if (s.perf == a) s.perf = b;
+            else if (s.perf == b) s.perf = a;
+    markSave();
+    sendChangeMessage();
+    kontrolerChanged();
+}
+
 void LiveSamplerProcessor::updateSetList (int i, const SetList& s)
 {
     setLists[(size_t) juce::jlimit (0, kNumSetLists - 1, i)] = s;

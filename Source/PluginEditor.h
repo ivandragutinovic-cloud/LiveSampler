@@ -84,7 +84,30 @@ public:
 };
 
 //==============================================================================
+// dugme set liste na koje se prevuce performans iz LISTS
+class SetListDropButton : public LearnButton, public juce::DragAndDropTarget
+{
+public:
+    std::function<void (int perfSlot)> onDropPerf;
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("perf:"); }
+    void itemDragEnter (const SourceDetails&) override { hot = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { hot = false; repaint(); }
+    void itemDropped (const SourceDetails& d) override
+    {
+        hot = false; repaint();
+        if (onDropPerf) onDropPerf (d.description.toString().fromFirstOccurrenceOf ("perf:", false, false).getIntValue());
+    }
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        LearnButton::paintOverChildren (g);
+        if (hot) { g.setColour (juce::Colours::white); g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 4.0f, 3.0f); }
+    }
+private:
+    bool hot = false;
+};
+
 class LiveSamplerEditor : public juce::AudioProcessorEditor,
+                          public juce::DragAndDropContainer,
                           private juce::ChangeListener,
                           private juce::Timer
 {
@@ -154,7 +177,8 @@ private:
     std::vector<juce::Component*> pages() const;
 
     // brza traka: dugmad trenutne strane set liste
-    LearnButton slotButtons[16], pagePrev, pageNext;
+    SetListDropButton slotButtons[16];
+    LearnButton pagePrev, pageNext;
     juce::Label setListLabel;
 
     juce::MidiKeyboardComponent keyboard;

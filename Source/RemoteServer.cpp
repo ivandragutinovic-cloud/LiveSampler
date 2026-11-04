@@ -550,7 +550,7 @@ juce::StringPairArray RemoteServer::buildSections()
         auto* st = new juce::DynamicObject();
         const int slot = proc.getCurrentSlot();
         st->setProperty ("slot", slot);
-        st->setProperty ("slotText", slot >= 0 ? juce::String (slot / kPerfPerBank + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3) : juce::String ("---"));
+        st->setProperty ("slotText", slot >= 0 ? juce::String (slot / kPerfPerBank + 1) + "-" + juce::String (slot % kPerfPerBank).paddedLeft ('0', 3) : juce::String ("---"));
         st->setProperty ("list", slot >= 0 ? proc.getBankName (slot / kPerfPerBank) : proc.getBankName (proc.getCurrentBank()));
         st->setProperty ("name", proc.getPerformance().name);
         st->setProperty ("dirty", proc.isPerformanceDirty());

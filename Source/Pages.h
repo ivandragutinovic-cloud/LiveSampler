@@ -362,7 +362,7 @@ private:
 //==============================================================================
 //  LISTE: 16 lista po 128 performansa (kao Kronos banke kombija)
 //==============================================================================
-class ListsPage : public juce::Component
+class ListsPage : public juce::Component, public juce::DragAndDropTarget
 {
 public:
     ListsPage (LiveSamplerProcessor&, LiveSamplerEditor&);
@@ -370,8 +370,18 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    // prevlacenje performansa: na drugo mesto (zamena), na dugme liste (druga lista), dole na set listu
+    bool isInterestedInDragSource (const SourceDetails& d) override { return d.description.toString().startsWith ("perf:"); }
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override { dropCell = -1; repaint(); }
+    void itemDropped (const SourceDetails&) override;
 
 private:
+    int pressCell = -1, dropCell = -1;
+    bool dragStarted = false;
+    juce::Rectangle<float> cellRect (int i) const;
     juce::Rectangle<int> gridArea() const;
     int cellAt (juce::Point<int> p) const;
     void cellMenu (int index);

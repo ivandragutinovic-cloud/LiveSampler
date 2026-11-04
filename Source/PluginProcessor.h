@@ -79,6 +79,7 @@ public:
     juce::String getBankName (int b) const;
     void setBankName (int b, const juce::String& n);
     void clearPerformanceSlot (int slot);
+    void swapPerformanceSlots (int a, int b);   // premestanje u listama (prazno mesto = samo premesti); set liste prate
 
     // kategorije performansa (iste kao kategorije uredjaja "Pikaso Workstation" u Live Kontroleru); performans pamti ime kategorije
     const juce::StringArray& getCategories() const { return categories; }

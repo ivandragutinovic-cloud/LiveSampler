@@ -746,7 +746,7 @@ function buildLists(m) {
     const b = el("button", "cell" + (v ? "" : " empty") + (s === L.cur ? " cur" : ""), "", g);
     const cat = v && v[1] >= 0 && L.cats[v[1]];
     if (cat) b.style.borderLeftColor = cat[1];
-    b.innerHTML = `<small>${String(i + 1).padStart(3, "0")}${cat ? " · " + esc(cat[0]) : ""}</small>${v ? esc(v[0]) : "—"}`;
+    b.innerHTML = `<small>${String(i).padStart(3, "0")}${cat ? " · " + esc(cat[0]) : ""}</small>${v ? esc(v[0]) : "—"}`;
     b.onclick = () => {
       if (listMode === "recall") { if (v) api({ op: "recall", slot: s }); return; }
       if (listMode === "store") { if (!v || confirm("Overwrite \"" + v[0] + "\" with \"" + S.status.name + "\"?")) api({ op: "storeTo", slot: s }); return; }
@@ -780,7 +780,7 @@ function buildSetList(m) {
         const r = el("div", "row", "", bx);
         el("button", "", "Put the current performance", r).onclick = () => { if (!(S.status.slot >= 0)) return alert("The current performance has no slot yet."); api({ op: "setListEdit", slot: i, perf: S.status.slot }); close(); };
         el("button", "", "Choose performance...", r).onclick = () => {
-          const items = []; S.lists.slots.forEach((v, s) => { if (v) items.push({ label: S.lists.banks[Math.floor(s / 128)] + "  " + String(s % 128 + 1).padStart(3, "0") + "  " + v[0], value: s }); });
+          const items = []; S.lists.slots.forEach((v, s) => { if (v) items.push({ label: S.lists.banks[Math.floor(s / 128)] + "  " + String(s % 128).padStart(3, "0") + "  " + v[0], value: s }); });
           picker("Performance for button " + (i + 1), items, x[2], [], (a, s) => api({ op: "setListEdit", slot: i, perf: s }));
         };
         el("button", "", "Label...", r).onclick = () => { const t = prompt("Button text (empty = performance name)", x[0] || ""); if (t !== null) { api({ op: "setListEdit", slot: i, label: t }); close(); } };

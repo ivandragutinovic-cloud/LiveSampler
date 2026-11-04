@@ -296,7 +296,7 @@ void LiveSamplerEditor::Display::paint (juce::Graphics& g)
     g.drawText ("PERFORM", left.removeFromTop (16), juce::Justification::centredLeft);
     g.setColour (Pal::lcdText);
     g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
-    const juce::String slotText = slot >= 0 ? juce::String (slot / kPerfPerBank + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3)
+    const juce::String slotText = slot >= 0 ? juce::String (slot / kPerfPerBank + 1) + "-" + juce::String (slot % kPerfPerBank).paddedLeft ('0', 3)
                                             : juce::String ("---");
     g.drawText (slotText, left, juce::Justification::centredLeft);
 
@@ -416,6 +416,14 @@ LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     {
         slotButtons[i].getProperties().set ("fontSize", 12.0f);
         slotButtons[i].onClick = [this, i] { proc.recallSetListSlot (proc.getSetListPage() * 16 + i); };
+        slotButtons[i].onDropPerf = [this, i] (int perfSlot)
+        {
+            // performans prevucen iz LISTS na dugme set liste
+            const int cur = proc.getCurrentSetList();
+            auto sl = proc.getSetList (cur);
+            sl.slots[(size_t) (proc.getSetListPage() * 16 + i)].perf = perfSlot;
+            proc.updateSetList (cur, sl);
+        };
         content.addAndMakeVisible (slotButtons[i]);
     }
     for (int i = 0; i < 16; ++i)

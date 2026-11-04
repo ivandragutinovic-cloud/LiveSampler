@@ -3335,7 +3335,7 @@ void KronosPage::loadCombiRow (int row)
             };
             if (pr.getSlot (slot).used)
                 juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("Save performance"),
-                    T ("Slot ") + juce::String (list + 1) + "-" + juce::String (slot % kPerfPerBank + 1).paddedLeft ('0', 3)
+                    T ("Slot ") + juce::String (list + 1) + "-" + juce::String (slot % kPerfPerBank).paddedLeft ('0', 3)
                         + T (" is \"") + pr.getSlot (slot).name + T ("\". Replace?"),
                     T ("Replace"), T ("Cancel"), nullptr, juce::ModalCallbackFunction::create ([store] (int ok) { if (ok) store(); }));
             else store();
@@ -3576,7 +3576,7 @@ void KronosPage::paintCell (juce::Graphics& g, int row, int col, int w, int h, b
                     // samo iz ovog PCG-a (stariji performansi bez oznake PCG-a: po kombiju ili imenu)
                     const bool samePcg = ps.kronosPcg.isEmpty() || ps.kronosPcg == pcg->file.getFileName();
                     if (ps.used && samePcg && (ps.kronosSource == key || (ps.kronosSource.isEmpty() && ps.name == cb.name)))
-                        where.add (juce::String (sl / kPerfPerBank + 1) + "-" + juce::String (sl % kPerfPerBank + 1).paddedLeft ('0', 3));
+                        where.add (juce::String (sl / kPerfPerBank + 1) + "-" + juce::String (sl % kPerfPerBank).paddedLeft ('0', 3));
                 }
                 const auto& cur = proc.getPerformance();
                 if (where.isEmpty() && cur.kronosSource == key && (cur.kronosPcg.isEmpty() || cur.kronosPcg == pcg->file.getFileName()))
@@ -3729,7 +3729,7 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
     missingLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff8a3d));
     addAndMakeVisible (missingLabel);
 
-    help.setText (T ("Click: load. WRITE + click: save the current performance. Right-click: menu (category, write, add to set list, delete). "
+    help.setText (T ("Click: load. Drag: move (onto a taken slot = swap, onto a list button = other list, down onto a set list button = put it there). WRITE + click: save. Right-click: menu. "
                      "Orange frame = performance without a category. "
                      "MIDI: Bank Select (CC0) selects the list, Program Change 0-127 the performance."), juce::dontSendNotification);
     help.setFont (juce::FontOptions (12.0f));
@@ -3862,17 +3862,63 @@ void ListsPage::paint (juce::Graphics& g)
             g.setFont (juce::FontOptions (12.5f));
         }
         g.setColour (current ? juce::Colours::black : (s.used ? (dimmed ? Pal::dim.withAlpha (0.5f) : Pal::text) : Pal::dim.withAlpha (0.6f)));
-        g.drawText (juce::String (i + 1).paddedLeft ('0', 3) + "  " + (s.used ? s.name : juce::String()),
+        g.drawText (juce::String (i).paddedLeft ('0', 3) + "  " + (s.used ? s.name : juce::String()),
                     textArea, juce::Justification::centredLeft, true);
+        if (i == dropCell)
+        {
+            g.setColour (juce::Colours::white);
+            g.drawRoundedRectangle (cell, 3.0f, 2.5f);
+        }
     }
+}
+
+juce::Rectangle<float> ListsPage::cellRect (int i) const
+{
+    auto area = gridArea();
+    const int cols = 8, rows = 16;
+    const float cw = area.getWidth() / (float) cols, ch = area.getHeight() / (float) rows;
+    return juce::Rectangle<float> (area.getX() + (i / rows) * cw, area.getY() + (i % rows) * ch, cw, ch).reduced (1.5f);
 }
 
 void ListsPage::mouseDown (const juce::MouseEvent& e)
 {
+    dragStarted = false;
+    pressCell = -1;
     const int i = cellAt (e.getPosition());
     if (i < 0) return;
-    const int slot = proc.getCurrentBank() * kPerfPerBank + i;
     if (e.mods.isPopupMenu()) { cellMenu (i); return; }
+    pressCell = i;   // klik = ucitaj (na pustanje), povlacenje = premesti
+}
+
+void ListsPage::mouseDrag (const juce::MouseEvent& e)
+{
+    if (pressCell < 0 || dragStarted || e.getDistanceFromDragStart() < 8 || writeButton.getToggleState()) return;
+    const int slot = proc.getCurrentBank() * kPerfPerBank + pressCell;
+    if (! proc.getSlot (slot).used) return;
+    auto* dc = juce::DragAndDropContainer::findParentDragContainerFor (this);
+    if (dc == nullptr) return;
+    dragStarted = true;
+    // slika koja prati mis: ime performansa
+    const auto r = cellRect (pressCell).toNearestInt();
+    juce::Image img (juce::Image::ARGB, juce::jmax (1, r.getWidth()), juce::jmax (1, r.getHeight()), true);
+    {
+        juce::Graphics g (img);
+        g.setColour (Pal::accent.withAlpha (0.9f));
+        g.fillRoundedRectangle (img.getBounds().toFloat(), 4.0f);
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText (juce::String (pressCell).paddedLeft ('0', 3) + "  " + proc.getSlot (slot).name, img.getBounds().reduced (6, 0), juce::Justification::centredLeft, true);
+    }
+    const juce::Point<int> offset (r.getX() - e.getMouseDownX(), r.getY() - e.getMouseDownY());
+    dc->startDragging ("perf:" + juce::String (slot), this, juce::ScaledImage (img), false, &offset);
+}
+
+void ListsPage::mouseUp (const juce::MouseEvent& e)
+{
+    const int i = pressCell;
+    pressCell = -1;
+    if (i < 0 || dragStarted || e.mods.isPopupMenu() || cellAt (e.getPosition()) != i) { dragStarted = false; return; }
+    const int slot = proc.getCurrentBank() * kPerfPerBank + i;
     if (writeButton.getToggleState())
     {
         proc.storePerformance (slot);
@@ -3881,6 +3927,33 @@ void ListsPage::mouseDown (const juce::MouseEvent& e)
     else
     {
         proc.recallPerformance (slot);
+    }
+    repaint();
+}
+
+void ListsPage::itemDragMove (const SourceDetails& d)
+{
+    // preko dugmeta liste: prebaci se na tu listu, pa moze da se spusti tamo
+    for (int b = 0; b < kNumPerfBanks; ++b)
+        if (bankButtons[b].getBounds().contains (d.localPosition) && proc.getCurrentBank() != b)
+        {
+            proc.setCurrentBank (b);
+            refresh();
+        }
+    const int c = cellAt (d.localPosition);
+    if (c != dropCell) { dropCell = c; repaint(); }
+}
+
+void ListsPage::itemDropped (const SourceDetails& d)
+{
+    const int from = d.description.toString().fromFirstOccurrenceOf ("perf:", false, false).getIntValue();
+    const int c = cellAt (d.localPosition);
+    dropCell = -1;
+    dragStarted = false;
+    if (c >= 0)
+    {
+        const int to = proc.getCurrentBank() * kPerfPerBank + c;
+        proc.swapPerformanceSlots (from, to);   // zauzeto mesto: zamene se
     }
     repaint();
 }
@@ -4345,7 +4418,7 @@ void SetListPage::paint (juce::Graphics& g)
         g.drawFittedText (s.label.isNotEmpty() ? s.label : perfName, cell.reduced (12.0f, 24.0f).toNearestInt(), juce::Justification::centred, 2);
         g.setColour (juce::Colours::white.withAlpha (0.6f));
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText (proc.getBankName (s.perf / kPerfPerBank) + " " + juce::String (s.perf % kPerfPerBank + 1).paddedLeft ('0', 3)
+        g.drawText (proc.getBankName (s.perf / kPerfPerBank) + " " + juce::String (s.perf % kPerfPerBank).paddedLeft ('0', 3)
                         + (s.label.isNotEmpty() ? "  " + perfName : juce::String()),
                     cell.reduced (12.0f, 8.0f), juce::Justification::bottomLeft, true);
     }
@@ -4370,7 +4443,7 @@ void SetListPage::editSlot (int slot)
         juce::PopupMenu sub;
         for (int i = 0; i < kPerfPerBank; ++i)
             if (const auto& s = proc.getSlot (b * kPerfPerBank + i); s.used)
-                sub.addItem (1000 + b * kPerfPerBank + i, juce::String (i + 1).paddedLeft ('0', 3) + "  " + s.name);
+                sub.addItem (1000 + b * kPerfPerBank + i, juce::String (i).paddedLeft ('0', 3) + "  " + s.name);
         if (sub.getNumItems() > 0)
             pick.addSubMenu (proc.getBankName (b), sub);
     }
