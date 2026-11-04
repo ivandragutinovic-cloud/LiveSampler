@@ -957,6 +957,12 @@ private:
                                                        + juce::String (i).paddedLeft ('0', 4) + "  " + nm });
                     }
                 }
+            // vec presemplovani (u folderu za semplove postoji kronos-ms.txt sa tim kljucem): zelenim slovima
+            for (auto& d : owner.outFolder.findChildFiles (juce::File::findDirectories, false))
+            {
+                const auto tag = d.getChildFile ("kronos-ms.txt");
+                if (tag.existsAsFile()) done.insert (juce::StringArray::fromLines (tag.loadFileAsString())[0].trim().toLowerCase());
+            }
             search.setTextToShowWhenEmpty ("Search (e.g. trumpet, sax, guitar)...", juce::Colours::grey);
             search.onTextChange = [this] { filter(); };
             addAndMakeVisible (search);
@@ -974,7 +980,7 @@ private:
                 info.setText (juce::String (sel.size()) + " added", juce::dontSendNotification);
             };
             addAndMakeVisible (add);
-            info.setText ("Ctrl / Shift + click to select several. EXs: only the expansions installed on your Kronos will sound.", juce::dontSendNotification);
+            info.setText ("Green = already resampled. Ctrl / Shift + click to select several. EXs: only the expansions installed on your Kronos will sound.", juce::dontSendNotification);
             addAndMakeVisible (info);
             filter();
             setSize (620, 640);
@@ -996,9 +1002,11 @@ private:
         {
             if (row < 0 || row >= (int) shown.size()) return;
             if (sel) g.fillAll (juce::Colour (0xff3a5f8a));
-            g.setColour (juce::Colours::white);
-            g.setFont (juce::FontOptions (14.0f));
-            g.drawText (all[(size_t) shown[(size_t) row]].label, 6, 0, w - 8, h, juce::Justification::centredLeft, true);
+            const auto& it = all[(size_t) shown[(size_t) row]];
+            const bool isDone = done.count (MainComponent::romKeyFor (it.bankByte, it.index).toLowerCase()) > 0;
+            g.setColour (isDone ? juce::Colour (0xff5fd36b) : juce::Colours::white);
+            g.setFont (juce::FontOptions (14.0f, isDone ? juce::Font::bold : juce::Font::plain));
+            g.drawText (it.label + (isDone ? juce::String::fromUTF8 ("   \xe2\x9c\x93 resampled") : juce::String()), 6, 0, w - 8, h, juce::Justification::centredLeft, true);
         }
         void listBoxItemDoubleClicked (int, const juce::MouseEvent&) override { add.triggerClick(); }
         void resized() override
@@ -1015,6 +1023,7 @@ private:
         MainComponent& owner;
         std::vector<Item> all;
         std::vector<int> shown;
+        std::set<juce::String> done;
         juce::TextEditor search;
         juce::ListBox list;
         juce::TextButton add;
