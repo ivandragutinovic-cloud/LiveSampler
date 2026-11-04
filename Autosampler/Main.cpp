@@ -204,14 +204,25 @@ public:
         addButton.onClick = [this] { addSelected(); };
         addAndMakeVisible (addButton);
         clearButton.setButtonText (juce::String::fromUTF8 ("Clear list"));
-        clearButton.onClick = [this] { needed.clear(); neededList.updateContent(); neededList.repaint(); updateInfo(); };
+        clearButton.onClick = [this]
+        {
+            if (isThreadRunning()) { busyInfo(); return; }
+            const juce::ScopedLock sl (jobsLock);
+            needed.clear(); exiVels.clear(); neededList.updateContent(); neededList.repaint(); updateInfo();
+        };
         addAndMakeVisible (clearButton);
         removeButton.setButtonText ("Remove selected");
         removeButton.onClick = [this]
         {
+            if (isThreadRunning()) { busyInfo(); return; }
             auto sel = neededList.getSelectedRows();
+            const juce::ScopedLock sl (jobsLock);
             for (int i = sel.size(); --i >= 0;)
-                if (sel[i] < (int) needed.size()) needed.erase (needed.begin() + sel[i]);
+                if (sel[i] < (int) needed.size())
+                {
+                    needed.erase (needed.begin() + sel[i]);
+                    if (sel[i] < (int) exiVels.size()) exiVels.erase (exiVels.begin() + sel[i]);
+                }
             neededList.deselectAllRows();
             neededList.updateContent();
             updateInfo();
@@ -717,7 +728,7 @@ private:
             n.romKey = "ext:" + name.toLowerCase() + ":" + juce::String (n.msb) + ":" + juce::String (n.lsb) + ":" + juce::String (n.pc);
             n.usedBy = (n.pc >= 0 ? "PC " + juce::String (n.pc + 1) : juce::String ("no PC")) + (n.msb >= 0 || n.lsb >= 0 ? " / bank " + juce::String (n.msb) + "-" + juce::String (n.lsb) : juce::String());
             for (auto& x : safe->needed) if (x.romKey == n.romKey) return;
-            safe->needed.push_back (n);
+            safe->pushJob (n);
             safe->neededList.updateContent();
             safe->neededList.repaint();
             safe->updateInfo();
@@ -881,7 +892,7 @@ private:
             n.progNum = p.number;
             n.usedBy = p.name;
             n.program.assign (raw, raw + Kronos::programSize);
-            needed.push_back (std::move (n));
+            pushJob (std::move (n));
             return;
         }
         if (p.drumKit)
@@ -895,7 +906,7 @@ private:
             n.progBank = p.bankId;
             n.progNum = p.number;
             n.usedBy = p.name;
-            needed.push_back (std::move (n));
+            pushJob (std::move (n));
             return;
         }
         for (int o = 0; o < (p.doubleMode ? 2 : 1); ++o)
@@ -913,7 +924,7 @@ private:
                 hex.loadFromHexString (zone.romKey.fromFirstOccurrenceOf ("rom:", false, false));
                 for (int k = 0; k < 20 && k < (int) hex.getSize(); ++k) n.zone[(size_t) k] = ((const juce::uint8*) hex.getData())[k];
                 n.usedBy = p.name;
-                needed.push_back (n);
+                pushJob (n);
             }
     }
 
@@ -936,7 +947,7 @@ private:
         hex.loadFromHexString (key.fromFirstOccurrenceOf ("rom:", false, false));
         for (int k = 0; k < 20 && k < (int) hex.getSize(); ++k) n.zone[(size_t) k] = ((const juce::uint8*) hex.getData())[k];
         n.usedBy = "manual";
-        needed.push_back (n);
+        pushJob (n);
     }
 
     struct RomPicker : public juce::Component, private juce::ListBoxModel
@@ -1542,8 +1553,11 @@ private:
         settings.xfadeMs = xfadeMs.getValue();
         settings.minLoopMs = minLoopMs.getValue();
         settings.zones = zoneToggle.getToggleState();
-        exiVels.clear();
-        for (auto& n : needed) exiVels.push_back (n.exi || n.external || n.drum ? exiVelocities (n) : std::vector<int> {});
+        {
+            const juce::ScopedLock sl (jobsLock);
+            exiVels.clear();
+            for (auto& n : needed) exiVels.push_back (n.exi || n.external || n.drum ? exiVelocities (n) : std::vector<int> {});
+        }
         outFolder.createDirectory();
         saveSettings();
         analyzeOnly = false;
@@ -1750,8 +1764,12 @@ private:
             for (size_t k = 0; k < analyzeRows.size() && ! threadShouldExit(); ++k)
             {
                 const int i = analyzeRows[k];
-                if (i < 0 || i >= total) continue;
-                auto n = needed[(size_t) i];
+                NeededMs n;
+                {
+                    const juce::ScopedLock sl (jobsLock);
+                    if (i < 0 || i >= (int) needed.size()) continue;
+                    n = needed[(size_t) i];
+                }
                 juce::String err; bool fatal = false;
                 setStatus ("Analysis " + juce::String ((int) k + 1) + "/" + juce::String ((int) analyzeRows.size()) + "  " + n.label());
                 if (! selectJob (n, err, fatal))
@@ -1776,9 +1794,20 @@ private:
             return;
         }
 
-        for (int i = 0; i < total && ! threadShouldExit(); ++i)
+        for (int i = 0; ! threadShouldExit(); ++i)
         {
-            auto n = needed[(size_t) i];
+            // lista moze da raste dok se snima (dodato na kraj se snima posle)
+            NeededMs n;
+            std::vector<int> jobVels;
+            int total = 0;
+            {
+                const juce::ScopedLock sl (jobsLock);
+                total = (int) needed.size();
+                if (i >= total) break;
+                n = needed[(size_t) i];
+                if (i < (int) exiVels.size()) jobVels = exiVels[(size_t) i];
+            }
+            if ((n.exi || n.external || n.drum) && jobVels.empty()) jobVels = exiVelocities (n);
             if (isDone (n)) continue;
             setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  (" + n.usedBy + ")");
             juce::String err; bool fatal = false;
@@ -1808,11 +1837,11 @@ private:
                 settings.autoLoop = false;
                 settings.hold = 0.3;
                 settings.release = 15.0;
-                recordDrum (n, i, total, exiVels[(size_t) i]);
+                recordDrum (n, i, total, jobVels);
             }
             else if (n.exi || n.external)
             {
-                auto vels = exiVels[(size_t) i];
+                auto vels = jobVels;
                 if (n.analyzed && n.anVelFlat) vels = { 127 };   // dinamika ne menja zvuk
                 recordExi (n, i, total, vels);
             }
@@ -2447,6 +2476,22 @@ private:
     juce::Label exiVelLabel;
     juce::ComboBox exiVelBox;
     std::vector<std::vector<int>> exiVels;
+    // lista se moze dopunjavati dok traje snimanje: nit uzima posao po posao pod ovom bravom
+    juce::CriticalSection jobsLock;
+    void pushJob (NeededMs n)
+    {
+        auto vels = n.exi || n.external || n.drum ? exiVelocities (n) : std::vector<int> {};
+        const juce::ScopedLock sl (jobsLock);
+        if (exiVels.size() < needed.size()) exiVels.resize (needed.size());
+        needed.push_back (std::move (n));
+        exiVels.push_back (std::move (vels));
+    }
+    void busyInfo()
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Autosampler",
+            juce::String::fromUTF8 ("Sampling is running: you can add sounds to the list now (they are sampled at the end), "
+                                    "but removing or clearing works only after STOP or when it is done."));
+    }
     juce::Slider xfadeMs, minLoopMs;
     juce::Label xfadeLabel, minLoopLabel;
     juce::TextButton readTemplateButton;
