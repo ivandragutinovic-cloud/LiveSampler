@@ -313,6 +313,13 @@ public:
         autoLoopToggle.setButtonText (juce::String::fromUTF8 ("Auto loop (for sustained sounds)"));
         autoLoopToggle.setToggleState (true, juce::dontSendNotification);
         addAndMakeVisible (autoLoopToggle);
+        zoneToggle.setButtonText ("ROM: one note per zone");
+        zoneToggle.setTooltip ("For ROM multisamples: first plays every key briefly and finds where the multisample changes to the next "
+                               "Kronos sample (zone). Then it records only one note per zone (instead of every 3rd note) and writes the "
+                               "exact zone map for Pikaso Workstation. Needs a dry Init Program template (no key tracking, LFO or effects).");
+        zoneToggle.setToggleState (true, juce::dontSendNotification);
+        zoneToggle.onClick = [this] { updateInfo(); };
+        addAndMakeVisible (zoneToggle);
         for (auto [s, l, name, lo, hi, def] : { std::tuple<juce::Slider*, juce::Label*, const char*, double, double, double> { &xfadeMs, &xfadeLabel, "Crossfade (ms)", 0, 1000, 80 },
                                                 { &minLoopMs, &minLoopLabel, "Min loop (ms)", 30, 5000, 300 } })
         {
@@ -468,6 +475,7 @@ public:
         props->setValue ("step", (int) step.getValue());
         props->setValue ("hold", hold.getValue());
         props->setValue ("release", release.getValue());
+        props->setValue ("zones", zoneToggle.getToggleState());
         props->saveIfNeeded();
     }
 
@@ -479,6 +487,7 @@ public:
         step.setValue (props->getIntValue ("step", (int) step.getValue()), juce::dontSendNotification);
         hold.setValue (props->getDoubleValue ("hold", hold.getValue()), juce::dontSendNotification);
         release.setValue (props->getDoubleValue ("release", release.getValue()), juce::dontSendNotification);
+        zoneToggle.setToggleState (props->getBoolValue ("zones", true), juce::dontSendNotification);
         const auto f = props->getValue ("folder");
         if (f.isNotEmpty()) { outFolder = juce::File (f); folderLabel.setText (outFolder.getFullPathName(), juce::dontSendNotification); }
         auto pick = [] (juce::ComboBox& b, const juce::String& name)
@@ -597,6 +606,8 @@ public:
         rl.removeFromLeft (10);
         minLoopLabel.setBounds (rl.removeFromLeft (110));
         minLoopMs.setBounds (rl.removeFromLeft (110).reduced (0, 2));
+        rl.removeFromLeft (20);
+        zoneToggle.setBounds (rl.removeFromLeft (260));
         c.removeFromTop (4);
         auto re = c.removeFromTop (30);
         exiIfxToggle.setBounds (re.removeFromLeft (300));
@@ -909,7 +920,10 @@ private:
         {
             if (isDone (n)) { ++done; continue; }
             if (n.exi || n.external) ++exi;
-            seconds += estimateSecondsPerMs() * (n.exi || n.external ? (n.analyzed && n.anVelFlat ? 1 : (int) exiVelocities (n).size()) : 1);
+            if (! n.exi && ! n.external && zoneToggle.getToggleState())
+                seconds += (int) ((highNote.getValue() - lowNote.getValue() + 1) * 1.1 + 12 * (hold.getValue() + release.getValue() * 0.6 + 0.4));   // ~12 zona
+            else
+                seconds += estimateSecondsPerMs() * (n.exi || n.external ? (n.analyzed && n.anVelFlat ? 1 : (int) exiVelocities (n).size()) : 1);
         }
         info.setText (juce::String ((int) needed.size() - exi) + " multisamples + " + juce::String (exi) + " EXi/other sounds, done " + juce::String (done)
                       + juce::String::fromUTF8 ("  (remaining: ~") + juce::String (seconds / 60) + " min)",
@@ -1373,6 +1387,7 @@ private:
         settings.autoLoop = autoLoopToggle.getToggleState();
         settings.xfadeMs = xfadeMs.getValue();
         settings.minLoopMs = minLoopMs.getValue();
+        settings.zones = zoneToggle.getToggleState();
         exiVels.clear();
         for (auto& n : needed) exiVels.push_back (n.exi || n.external ? exiVelocities (n) : std::vector<int> {});
         outFolder.createDirectory();
@@ -1415,7 +1430,7 @@ private:
     }
 
     struct Settings { int channel = 1, low = 24, high = 108, step = 3, velocity = 127; double hold = 6, release = 3;
-                      bool autoLoop = true; double xfadeMs = 80, minLoopMs = 300; } settings;
+                      bool autoLoop = true, zones = true; double xfadeMs = 80, minLoopMs = 300; } settings;
 
     void setStatus (const juce::String& s)
     {
@@ -1630,16 +1645,51 @@ private:
                 const auto folder = msFolder (n);
                 folder.createDirectory();
                 int written = 0;
-                for (int note = settings.low; note <= settings.high && ! threadShouldExit(); note += settings.step)
+                // ROM multisempl: prvo nadji zone (gde Kronos prelazi na sledeci sempl), pa po jedan ton u zoni
+                std::vector<Zone> zones;
+                if (settings.zones)
                 {
-                    setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  note " + noteName (note));
-                    if (recordNote (note, folder.getChildFile (n.label().replaceCharacter (' ', '_') + " " + juce::String (note).paddedLeft ('0', 3) + ".wav")))
+                    setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  finding zones...");
+                    zones = detectZones (n, folder, i, total);
+                }
+                std::vector<int> notes;
+                if (! zones.empty()) for (auto& z : zones) notes.push_back (z.root);
+                else for (int note = settings.low; note <= settings.high; note += settings.step) notes.push_back (note);
+                const auto fileOf = [&] (int note) { return n.label().replaceCharacter (' ', '_') + " " + juce::String (note).paddedLeft ('0', 3) + ".wav"; };
+                for (size_t k = 0; k < notes.size() && ! threadShouldExit(); ++k)
+                {
+                    const int note = notes[k];
+                    setStatus (juce::String (i + 1) + "/" + juce::String (total) + "  " + n.label() + "  note " + noteName (note)
+                               + (zones.empty() ? juce::String() : "  (zone " + juce::String ((int) k + 1) + "/" + juce::String ((int) zones.size()) + ")"));
+                    if (recordNote (note, folder.getChildFile (fileOf (note))))
                         ++written;
                 }
                 if (! threadShouldExit())
                 {
                     if (written > 0)
+                    {
                         folder.getChildFile ("kronos-ms.txt").replaceWithText (n.romKey + "\n" + n.label() + "\n" + n.usedBy + "\n");
+                        if (! zones.empty())
+                        {
+                            // tacna mapa zona za Pikaso Workstation (LiveSampler-mapa.xml u folderu)
+                            juce::XmlElement map ("LiveSamplerMap");
+                            map.setAttribute ("version", 1);
+                            for (size_t k = 0; k < zones.size(); ++k)
+                            {
+                                if (! folder.getChildFile (fileOf (zones[k].root)).existsAsFile()) continue;
+                                auto* e = map.createNewChildElement ("Zone");
+                                e->setAttribute ("sample", fileOf (zones[k].root));
+                                e->setAttribute ("enabled", 1);
+                                e->setAttribute ("lowKey", k == 0 ? 0 : zones[k].lo);
+                                e->setAttribute ("highKey", k + 1 == zones.size() ? 127 : zones[k].hi);
+                                e->setAttribute ("lowVel", 1);
+                                e->setAttribute ("highVel", 127);
+                                e->setAttribute ("root", zones[k].root);
+                                e->setAttribute ("loop", 1);
+                            }
+                            map.writeTo (folder.getChildFile ("LiveSampler-mapa.xml"));
+                        }
+                    }
                     else
                         folder.deleteRecursively();   // nista se ne cuje (npr. EXs nije instaliran)
                 }
@@ -1691,6 +1741,109 @@ private:
         wait (100);
         recorder.recording = false;
         return recorder.writePos.load();
+    }
+
+    struct Zone { int lo, hi, root; };
+
+    // Zone ROM multisempla: svaki taster se kratko odsvira. Unutar iste zone Kronos svira isti sempl samo
+    // ubrzan za polustepen, pa je snimak tona k+1 skoro isti kao snimak tona k ubrzan 2^(1/12) puta.
+    // Gde se to ne poklapa, pocinje sledeci sempl (nova zona). Za svaku zonu se snima jedan ton (sredina zone).
+    std::vector<Zone> detectZones (const NeededMs& n, const juce::File& folder, int jobIndex, int total)
+    {
+        const double sr = recorder.sampleRate;
+        const int lo = settings.low, hi = settings.high;
+        const int pre = (int) (sr * 0.004), win = (int) (sr * 0.10), extra = (int) (sr * 0.03);
+        std::vector<std::vector<float>> rec ((size_t) 128);
+        for (int note = lo; note <= hi && ! threadShouldExit(); ++note)
+        {
+            setStatus (juce::String (jobIndex + 1) + "/" + juce::String (total) + "  " + n.label() + "  finding zones: " + noteName (note));
+            int offPos = 0;
+            const int len = captureNote (note, 127, 0.35, 0.35, offPos);
+            const auto& buf = recorder.buffer;
+            float peak = 0.0f;
+            for (int k = 0; k < juce::jmin (len, offPos); ++k)
+                peak = juce::jmax (peak, std::abs (buf.getSample (0, k) + buf.getSample (1, k)));
+            if (peak < 2.0e-4f) continue;                     // ne cuje se
+            int on = 0;
+            while (on < len && std::abs (buf.getSample (0, on) + buf.getSample (1, on)) < peak * 0.05f) ++on;
+            const int start = juce::jmax (0, on - pre), need = pre + win + 2 * extra;
+            if (start + need > len) continue;
+            std::vector<float> m ((size_t) need);
+            for (int k = 0; k < need; ++k)
+            {
+                // mono, blago izravnato (manja razlika u interpolaciji visokih tonova)
+                float acc = 0.0f;
+                for (int d = -1; d <= 1; ++d)
+                {
+                    const int idx = juce::jlimit (0, len - 1, start + k + d);
+                    acc += buf.getSample (0, idx) + buf.getSample (1, idx);
+                }
+                m[(size_t) k] = acc / 6.0f;
+            }
+            rec[(size_t) note] = std::move (m);
+        }
+        if (threadShouldExit()) return {};
+
+        // slicnost susednih tonova: b (ton k+1) prema a (ton k) ubrzanom za polustepen, najbolji pomak +-3 ms
+        const double ratio = std::pow (2.0, 1.0 / 12.0);
+        const int maxLag = (int) (sr * 0.003);
+        auto similarity = [&] (const std::vector<float>& a, const std::vector<float>& b)
+        {
+            const int n2 = pre + win;
+            std::vector<float> as ((size_t) (n2 + 2 * maxLag + 2));
+            for (size_t k = 0; k < as.size(); ++k)
+            {
+                const double pos = (double) k * ratio;
+                const int i0 = (int) pos;
+                const float f = (float) (pos - i0);
+                as[k] = (i0 + 1 < (int) a.size()) ? a[(size_t) i0] * (1.0f - f) + a[(size_t) i0 + 1] * f : 0.0f;
+            }
+            double best = -1.0;
+            for (int lag = -maxLag; lag <= maxLag; ++lag)
+            {
+                double sab = 0, saa = 0, sbb = 0;
+                for (int k = 0; k < n2; ++k)
+                {
+                    const int ia = k + maxLag + lag, ib = k + maxLag;
+                    if (ia < 0 || ia >= (int) as.size() || ib >= (int) b.size()) continue;
+                    const double x = as[(size_t) ia], y = b[(size_t) ib];
+                    sab += x * y; saa += x * x; sbb += y * y;
+                }
+                if (saa > 0 && sbb > 0) best = juce::jmax (best, sab / std::sqrt (saa * sbb));
+            }
+            return best;
+        };
+
+        juce::String log = "note -> similarity with the previous note (1.0 = same sample)\n";
+        std::vector<Zone> zones;
+        int zoneStart = -1, prev = -1;
+        // izmereno na Kronos snimcima: isti sempl >= 0.9994, susedni razliciti semplovi <= 0.988
+        const double threshold = 0.995;
+        for (int note = lo; note <= hi; ++note)
+        {
+            if (rec[(size_t) note].empty()) continue;
+            if (zoneStart < 0) { zoneStart = note; prev = note; continue; }
+            const double sim = prev == note - 1 ? similarity (rec[(size_t) prev], rec[(size_t) note]) : 0.0;
+            log << noteName (note) << " (" << note << "): " << juce::String (sim, 3) << (sim < threshold ? "   <- new zone" : "") << "\n";
+            if (sim < threshold)
+            {
+                zones.push_back ({ zoneStart, prev, (zoneStart + prev) / 2 });
+                zoneStart = note;
+            }
+            prev = note;
+        }
+        if (zoneStart >= 0) zones.push_back ({ zoneStart, prev, (zoneStart + prev) / 2 });
+        for (auto& z : zones) log << "zone " << noteName (z.lo) << "-" << noteName (z.hi) << "  record " << noteName (z.root) << "\n";
+
+        // ako skoro svaki ton izgleda kao nova zona, detekcija ne radi za ovaj zvuk (npr. LFO): snimaj na svaki korak
+        const int span = hi - lo + 1;
+        if (zones.empty() || (int) zones.size() > span / 2)
+        {
+            log << "zone detection not reliable (" << (int) zones.size() << " zones): recording every " << settings.step << " notes\n";
+            zones.clear();
+        }
+        folder.getChildFile ("kronos-zones.txt").replaceWithText (log);
+        return zones;
     }
 
     // procena na tri tona (nisko, sredina, visoko): drzi li zvuk (loop), koliko traje, koliki je release
@@ -1991,7 +2144,7 @@ private:
     juce::TextEditor search;
     juce::ListBox sourceList, neededList;
     juce::ComboBox templateBox, bankBox, midiOut, midiInBox;
-    juce::ToggleButton sysexMode, autoLoopToggle, exiIfxToggle;
+    juce::ToggleButton sysexMode, autoLoopToggle, exiIfxToggle, zoneToggle;
     juce::Label exiVelLabel;
     juce::ComboBox exiVelBox;
     std::vector<std::vector<int>> exiVels;
