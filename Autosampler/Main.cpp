@@ -1764,8 +1764,13 @@ private:
             for (int k = 0; k < juce::jmin (len, offPos); ++k)
                 peak = juce::jmax (peak, std::abs (buf.getSample (0, k) + buf.getSample (1, k)));
             if (peak < 2.0e-4f) continue;                     // ne cuje se
+            // pocetak sempla (ne pocetak glasnog dela): unutar zone se ceo sempl ubrzava od note-on-a, pa poredimo od tog trenutka
+            float noise = 0.0f;
+            for (int k = 0; k < juce::jmin (len, (int) (sr * 0.03)); ++k)
+                noise = juce::jmax (noise, std::abs (buf.getSample (0, k) + buf.getSample (1, k)));
+            const float th = juce::jmax (peak * 0.003f, noise * 4.0f, 2.0e-5f);
             int on = 0;
-            while (on < len && std::abs (buf.getSample (0, on) + buf.getSample (1, on)) < peak * 0.05f) ++on;
+            while (on < len && std::abs (buf.getSample (0, on) + buf.getSample (1, on)) < th) ++on;
             const int start = juce::jmax (0, on - pre), need = pre + win + 2 * extra;
             if (start + need > len) continue;
             std::vector<float> m ((size_t) need);
@@ -1793,10 +1798,10 @@ private:
             std::vector<float> as ((size_t) (n2 + 2 * maxLag + 2));
             for (size_t k = 0; k < as.size(); ++k)
             {
-                const double pos = (double) k * ratio;
+                const double pos = pre + ((double) k - pre) * ratio;   // ubrzano oko pocetka sempla
                 const int i0 = (int) pos;
                 const float f = (float) (pos - i0);
-                as[k] = (i0 + 1 < (int) a.size()) ? a[(size_t) i0] * (1.0f - f) + a[(size_t) i0 + 1] * f : 0.0f;
+                as[k] = (i0 >= 0 && i0 + 1 < (int) a.size()) ? a[(size_t) i0] * (1.0f - f) + a[(size_t) i0 + 1] * f : 0.0f;
             }
             double best = -1.0;
             for (int lag = -maxLag; lag <= maxLag; ++lag)
@@ -1817,14 +1822,14 @@ private:
         juce::String log = "note -> similarity with the previous note (1.0 = same sample)\n";
         std::vector<Zone> zones;
         int zoneStart = -1, prev = -1;
-        // izmereno na Kronos snimcima: isti sempl >= 0.9994, susedni razliciti semplovi <= 0.988
-        const double threshold = 0.995;
+        // izmereno na Kronos snimcima: isti sempl >= 0.996 (i 0.9998 kod EP-a), susedni razliciti semplovi <= 0.988
+        const double threshold = 0.992;
         for (int note = lo; note <= hi; ++note)
         {
             if (rec[(size_t) note].empty()) continue;
             if (zoneStart < 0) { zoneStart = note; prev = note; continue; }
             const double sim = prev == note - 1 ? similarity (rec[(size_t) prev], rec[(size_t) note]) : 0.0;
-            log << noteName (note) << " (" << note << "): " << juce::String (sim, 3) << (sim < threshold ? "   <- new zone" : "") << "\n";
+            log << noteName (note) << " (" << note << "): " << juce::String (sim, 4) << (sim < threshold ? "   <- new zone" : "") << "\n";
             if (sim < threshold)
             {
                 zones.push_back ({ zoneStart, prev, (zoneStart + prev) / 2 });
