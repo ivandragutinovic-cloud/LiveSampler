@@ -47,6 +47,7 @@ namespace Kronos
         juce::String exiKey;   // "exi:" + otisak celog programa: presemplovan EXi program (Kronos Autosampler)
         juce::String drumKey;  // "drum:" + otisak: presemplovan drum kit program (svaki taster posebno)
         int exiSend1 = 127, exiSend2 = 127;
+        std::vector<juce::uint8> raw;   // ceo program (samo EXi programi sa MOD-7: FM sinteza ih svira uzivo)
         std::array<std::array<Zone, 8>, 2> osc;
         std::array<OscParams, 2> params;
         bool doubleMode = false, mono = false, legato = false;

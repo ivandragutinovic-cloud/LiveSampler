@@ -3370,7 +3370,7 @@ void KronosPage::loadCombiRow (int row)
         for (int b = 0; b < kNumPerfBanks; ++b) lists.add (juce::String (b + 1) + "  " + proc.getBankName (b));
         aw->addComboBox ("list", lists, T ("List:"));
         aw->getComboBoxComponent ("list")->setSelectedItemIndex (bank);
-        aw->addTextEditor ("slot", juce::String (juce::jmin (kPerfPerBank, firstFree + 1)), T ("Slot (1-128):"));
+        aw->addTextEditor ("slot", juce::String (juce::jmin (kPerfPerBank - 1, firstFree)).paddedLeft ('0', 3), T ("Slot (000-127):"));
         aw->addButton (T ("Save"), 1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton (T ("Load only"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
         juce::Component::SafePointer<KronosPage> safe (this);
@@ -3379,7 +3379,7 @@ void KronosPage::loadCombiRow (int row)
             if (safe == nullptr || r != 1) return;
             auto& pr = safe->proc;
             const int list = aw->getComboBoxComponent ("list")->getSelectedItemIndex();
-            const int slot = list * kPerfPerBank + juce::jlimit (1, kPerfPerBank, aw->getTextEditorContents ("slot").getIntValue()) - 1;
+            const int slot = list * kPerfPerBank + juce::jlimit (0, kPerfPerBank - 1, aw->getTextEditorContents ("slot").getIntValue());
             auto store = [safe, slot, list]
             {
                 if (safe == nullptr) return;
@@ -3416,7 +3416,7 @@ void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
     for (int b = 0; b < kNumPerfBanks; ++b) lists.add (juce::String (b + 1) + "  " + proc.getBankName (b));
     aw->addComboBox ("list", lists, T ("List:"));
     aw->getComboBoxComponent ("list")->setSelectedItemIndex (proc.getCurrentBank());
-    aw->addTextEditor ("from", "1", T ("From slot (1-128):"));
+    aw->addTextEditor ("from", "000", T ("From slot (000-127):"));
     aw->addComboBox ("mode", { T ("Only empty slots (used ones are skipped)"), T ("In order, over existing ones") }, T ("Slots:"));
     aw->getComboBoxComponent ("mode")->setSelectedItemIndex (0);
     aw->addButton (T ("Load"), 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -3430,7 +3430,7 @@ void KronosPage::loadCombisToList (const juce::SparseSet<int>& sel)
         if (pcg2 == nullptr) return;
         const int list = aw->getComboBoxComponent ("list")->getSelectedItemIndex();
         const bool onlyEmpty = aw->getComboBoxComponent ("mode")->getSelectedItemIndex() == 0;
-        int slot = list * kPerfPerBank + juce::jlimit (1, kPerfPerBank, aw->getTextEditorContents ("from").getIntValue()) - 1;
+        int slot = list * kPerfPerBank + juce::jlimit (0, kPerfPerBank - 1, aw->getTextEditorContents ("from").getIntValue());
         const int end = (list + 1) * kPerfPerBank;
         int loaded = 0;
         juce::StringArray skippedAll, notPlaced;

@@ -302,6 +302,8 @@ namespace Kronos
                             p.exiSend1 = item[2864];
                             p.exiSend2 = item[2865];
                             readTrackEq (p, item + 2580);
+                            if (p.exiAlg[0] == 7 || p.exiAlg[1] == 7)
+                                p.raw.assign (item, item + programSize);
                         }
                         if (p.hd1)
                         {
