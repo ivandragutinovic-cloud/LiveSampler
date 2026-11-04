@@ -279,16 +279,26 @@ SamplerPart::Voice* SamplerPart::findFreeVoice()
 {
     Voice* oldestReleased = nullptr;
     Voice* oldest = nullptr;
+    Voice* freeOne = nullptr;
+    int busy = 0;
+    const int limit = cfg != nullptr ? juce::jlimit (1, maxVoices, cfg->maxVoices) : maxVoices;
     for (auto& v : voices)
     {
         if (! v.active)
-            return &v;
+        {
+            if (freeOne == nullptr) freeOne = &v;
+            continue;
+        }
+        ++busy;
         if ((! v.keyDown || v.fadingOut) && (oldestReleased == nullptr || v.age < oldestReleased->age))
             oldestReleased = &v;
         if (oldest == nullptr || v.age < oldest->age)
             oldest = &v;
     }
-    return oldestReleased != nullptr ? oldestReleased : oldest;
+    if (freeOne != nullptr && busy < limit)
+        return freeOne;
+    if (oldestReleased != nullptr) return oldestReleased;
+    return oldest != nullptr ? oldest : freeOne;
 }
 
 void SamplerPart::setGlide (Voice& v, double fromPitch, bool glide)

@@ -586,6 +586,12 @@ function partKeys(i) {
       setMany("perf", [[P + "@keyLow", Math.max(0, Math.min(a, b))], [P + "@keyHigh", Math.min(127, Math.max(a, b))]]);
     };
     el("button", "", "All velocities", r2).onclick = () => setMany("perf", [[P + "@velLow", 1], [P + "@velHigh", 127]]);
+    const r3 = el("div", "row", "", g); r3.style.marginTop = "10px";
+    const kl = el("button", "", "Range by playing (low, high)", r3), ks = el("button", "", "SPLIT at key I press", r3);
+    kl.onclick = () => api({ op: "keyLearn", part: i, mode: +S.status.keyLearn ? 0 : 1 });
+    ks.onclick = () => api({ op: "keyLearn", part: i, mode: +S.status.keyLearn ? 0 : 2 });
+    ctrls.push(() => { const m = +S.status.keyLearn; kl.style.background = m === 1 ? "#e5484d" : ""; ks.style.background = m === 2 ? "#e5484d" : "";
+      kl.textContent = m === 1 ? "Play the keys on the keyboard..." : "Range by playing (low, high)"; ks.textContent = m === 2 ? "Press the split key..." : "SPLIT at key I press"; });
   });
 }
 
@@ -1177,6 +1183,11 @@ function buildLive(m) {
   const side = el("div", "", "", body); side.style.cssText = "width:150px;display:flex;flex-direction:column;gap:8px";
   const hb = el("button", "", "", side); hb.style.minHeight = "90px"; hb.onclick = () => api({ op: "harmony", on: !S.status.harm });
   ctrls.push(() => { hb.innerHTML = "HARMONY<br><small>" + esc(S.status.harmText || "") + "</small>"; hb.style.background = S.status.harm ? "#3ddc84" : ""; hb.style.color = S.status.harm ? "#111" : ""; });
+  const gg = el("button", "", "GIG MODE", side); gg.style.minHeight = "54px"; gg.onclick = () => api({ op: "gig", on: !S.status.gig });
+  const cpu = el("div", "", "", side); cpu.style.cssText = "text-align:center;font-size:12px;font-weight:700;line-height:16px";
+  ctrls.push(() => { const st = S.status; gg.style.background = st.gig ? "#3ddc84" : ""; gg.style.color = st.gig ? "#111" : "";
+    cpu.innerHTML = "CPU " + (st.cpu || 0) + "%" + (st.latency ? " · " + st.latency + " ms" : "") + "<br>" + esc(st.driver || "");
+    cpu.style.color = st.audioWarn ? "#ffb340" : "var(--dim)"; cpu.title = st.audioAdvice || "Audio OK"; });
   el("span", "", "", side).style.flex = "1";
   const pn = el("button", "", "PANIC", side); pn.style.cssText = "min-height:70px;background:#7a2230"; pn.onclick = () => api({ op: "panic" });
   const lk = el("button", "", "", side); lk.style.minHeight = "70px"; lk.onclick = () => api({ op: "lock", on: !S.status.locked });

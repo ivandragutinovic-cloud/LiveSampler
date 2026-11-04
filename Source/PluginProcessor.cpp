@@ -4,6 +4,9 @@
 #include "PluginEditor.h"
 #include "Text.h"
 #include "AutoLoop.h"
+#if JucePlugin_Build_Standalone
+ #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#endif
 
 juce::Colour LiveSamplerProcessor::partColour (int i)
 {
@@ -71,6 +74,8 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("globalDb", (double) globalDb);
     root.setAttribute ("globalTranspose", globalTranspose);
     root.setAttribute ("liveLock", liveLock);
+    root.setAttribute ("maxPolyphony", maxPolyphony);
+    root.setAttribute ("gigMode", gigMode);
     root.setAttribute ("currentSlot", currentSlot);
     root.setAttribute ("currentBank", currentBank);
     root.setAttribute ("kronosPcg", kronosFile.getFullPathName());
@@ -176,6 +181,8 @@ void LiveSamplerProcessor::loadData()
     globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
     globalTranspose = juce::jlimit (-24, 24, xml->getIntAttribute ("globalTranspose", 0));
     liveLock = xml->getBoolAttribute ("liveLock", false);
+    maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
+    gigMode = xml->getBoolAttribute ("gigMode", false);
     currentSlot = xml->getIntAttribute ("currentSlot", -1);
     currentBank = juce::jlimit (0, kNumPerfBanks - 1, xml->getIntAttribute ("currentBank", 0));
     kronosFile = juce::File (xml->getStringAttribute ("kronosPcg"));
@@ -529,6 +536,7 @@ void LiveSamplerProcessor::rebuildConfig()
         }
         pr.active = pr.part.on && u >= 0;
         if (perf.tuneOn && pr.part.scaleTune) pr.scaleCents = perf.tuneCents;
+        pr.maxVoices = maxPolyphony;
         pr.vectorOn = perf.vectorOn;
         pr.vectorEqualPower = perf.vectorEqualPower;
     }
@@ -548,8 +556,105 @@ void LiveSamplerProcessor::rebuildConfig()
         configGraveyard.push_back (old);
 }
 
+LiveSamplerProcessor::AudioInfo LiveSamplerProcessor::getAudioInfo() const
+{
+    AudioInfo a;
+    a.rate = getSampleRate();
+    a.buffer = getBlockSize();
+   #if JucePlugin_Build_Standalone
+    if (auto* holder = juce::StandalonePluginHolder::getInstance())
+    {
+        auto& dm = holder->deviceManager;
+        a.driver = dm.getCurrentAudioDeviceType();
+        if (auto* dev = dm.getCurrentAudioDevice())
+        {
+            a.device = dev->getName();
+            a.buffer = dev->getCurrentBufferSizeSamples();
+            a.rate = dev->getCurrentSampleRate();
+            if (a.rate > 0)
+                a.latencyMs = 1000.0 * (a.buffer + dev->getOutputLatencyInSamples()) / a.rate;
+        }
+    }
+   #endif
+    if (a.latencyMs <= 0 && a.rate > 0) a.latencyMs = 1000.0 * a.buffer / a.rate;
+    juce::StringArray adv;
+   #if JUCE_WINDOWS
+    if (a.driver.isNotEmpty() && a.driver != "ASIO")
+        adv.add (T ("Driver is ") + a.driver + T (": choose ASIO in Options > Audio settings for low latency"));
+   #endif
+    if (a.latencyMs > 12.0) adv.add (T ("Latency over 12 ms: lower the buffer (128 or 256 samples)"));
+    if (dropouts.load() > 0) adv.add (juce::String (dropouts.load()) + T (" audio dropouts: raise the buffer, or lower polyphony"));
+    if (audioLoad.load() > 0.8f) adv.add (T ("Audio load is high (over 80%)"));
+    a.warn = ! adv.isEmpty();
+    a.advice = adv.joinIntoString ("\n");
+    return a;
+}
+
+juce::String LiveSamplerProcessor::getAudioShortText() const
+{
+    const auto a = getAudioInfo();
+    juce::String s = "CPU " + juce::String (juce::roundToInt (audioLoad.load() * 100.0f)) + "%";
+    if (a.latencyMs > 0) s << " | " << juce::String (a.latencyMs, 1) << " ms";
+    if (a.driver.isNotEmpty()) s << " " << a.driver;
+    if (dropouts.load() > 0) s << " | " << dropouts.load() << " drop";
+    return s;
+}
+
+void LiveSamplerProcessor::setMaxPolyphony (int n)
+{
+    maxPolyphony = juce::jlimit (8, 128, n);
+    rebuildConfig(); markSave(); sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setGigMode (bool on)
+{
+    gigMode = on;
+    applyGigMode();
+    markSave(); sendChangeMessage();
+}
+
+void LiveSamplerProcessor::applyGigMode()
+{
+    // GIG: ekran se ne gasi, program dobija visi prioritet (Windows: HIGH_PRIORITY_CLASS), manje crtanja u editoru
+    juce::Desktop::setScreenSaverEnabled (! gigMode);
+    juce::Process::setPriority (gigMode ? juce::Process::HighPriority : juce::Process::NormalPriority);
+}
+
 void LiveSamplerProcessor::timerCallback()
 {
+    if (const int kn = keyLearnNote.exchange (-1); kn >= 0 && keyLearnMode.load() != 0)
+    {
+        const int pi = juce::jlimit (0, kNumParts - 1, keyLearnPart.load());
+        auto p = perf;
+        if (keyLearnMode.load() == 2)
+        {
+            // SPLIT: ovaj part od tastera navise, ostali ukljuceni partovi koji su prelazili preko tastera se skracuju ispod njega
+            p.parts[(size_t) pi].keyLow = kn;
+            if (p.parts[(size_t) pi].keyHigh < kn) p.parts[(size_t) pi].keyHigh = 127;
+            for (int i = 0; i < kNumParts; ++i)
+            {
+                auto& o = p.parts[(size_t) i];
+                if (i == pi || ! o.on || o.user.isEmpty()) continue;
+                if (o.keyLow < kn && o.keyHigh >= kn) o.keyHigh = kn - 1;
+            }
+            keyLearnMode = 0;
+            updatePerformance (p);
+        }
+        else if (keyLearnFirst.load() < 0)
+        {
+            keyLearnFirst = kn;
+            sendChangeMessage();
+        }
+        else
+        {
+            const int a = keyLearnFirst.load();
+            p.parts[(size_t) pi].keyLow = juce::jmin (a, kn);
+            p.parts[(size_t) pi].keyHigh = juce::jmax (a, kn);
+            keyLearnMode = 0;
+            keyLearnFirst = -1;
+            updatePerformance (p);
+        }
+    }
     if (const int qm = qtMask.exchange (0); qm != 0)
     {
         auto p = perf;
@@ -562,7 +667,10 @@ void LiveSamplerProcessor::timerCallback()
     }
     // daljinsko upravljanje sa iPad-a: samo u samostalnom programu (ne u VST3 instanci)
     if (remote == nullptr && wrapperType == wrapperType_Standalone)
+    {
         remote = std::make_unique<RemoteServer> (*this);
+        if (gigMode) applyGigMode();
+    }
 
     // Live Kontroler: prvi put se sam poveze ako fajl postoji; posle se prati izmena fajla
     if (++kontrolerTick >= 4)
@@ -2361,6 +2469,12 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         return;
     }
 
+    if (m.isNoteOn() && keyLearnMode.load() != 0)
+    {
+        // opseg / split sviranjem: taster se ne cuje, samo se zapamti
+        keyLearnNote = m.getNoteNumber();
+        return;
+    }
     if (m.isNoteOn() && qtEdit.load())
     {
         // QT EDIT (kao Korg Pa / Ketron): pritisnut taster menja ton izmedju 0 i -50 centi, ne svira
@@ -2447,6 +2561,21 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
     const int n = buffer.getNumSamples();
     buffer.clear();
+    const auto t0 = juce::Time::getHighResolutionTicks();
+    struct LoadMeter
+    {
+        LiveSamplerProcessor& p; juce::int64 t0; int n;
+        ~LoadMeter()
+        {
+            const double sr = p.getSampleRate();
+            if (sr <= 0 || n <= 0) return;
+            const double used = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
+            const float load = (float) (used / (n / sr));
+            if (load > 0.95f) p.dropouts.fetch_add (1);
+            const float prev = p.audioLoad.load();
+            p.audioLoad = load > prev ? load : prev * 0.995f + load * 0.005f;
+        }
+    } loadMeter { *this, t0, n };
 
     {
         const juce::SpinLock::ScopedLockType sl (configLock);
@@ -2612,6 +2741,13 @@ void LiveSamplerProcessor::panic()
 
 juce::String LiveSamplerProcessor::getStatusText() const
 {
+    if (keyLearnMode.load() == 2)
+        return T ("SPLIT: press the key where part ") + juce::String (keyLearnPart.load() + 1) + T (" starts");
+    if (keyLearnMode.load() == 1)
+        return keyLearnFirst.load() < 0 ? T ("RANGE: press the LOWEST key of part ") + juce::String (keyLearnPart.load() + 1)
+                                        : T ("RANGE: now press the HIGHEST key of part ") + juce::String (keyLearnPart.load() + 1);
+    if (qtEdit.load())
+        return T ("QT EDIT: keys switch notes between 0 and -50 cents");
     if (libraryFolders.isEmpty())
         return T ("Add a sample folder (SETTINGS)");
     if (scanning)

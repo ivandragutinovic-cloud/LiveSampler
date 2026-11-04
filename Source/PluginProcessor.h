@@ -237,6 +237,24 @@ public:
     void setTuning (bool on);
     void setTuningPreset (int preset, int root);
     void setTuneCents (int pitchClass, float cents);
+    // LIVE alati: opterecenje zvuka, polifonija, GIG rezim, split / opseg sviranjem tastera
+    float getAudioLoad() const { return audioLoad.load(); }          // 0..1 (deo vremena bloka koji trosi zvuk), vrh sa padom
+    int getDropouts() const { return dropouts.load(); }              // blokovi koji su zakasnili (pucketanje)
+    void resetDropouts() { dropouts = 0; }
+    // zvucna kartica (samostalni program): drajver, bafer, ukupna latencija; warn = nije ASIO / velika latencija / pucketanje
+    struct AudioInfo { juce::String driver, device; int buffer = 0; double rate = 0, latencyMs = 0; bool warn = false; juce::String advice; };
+    AudioInfo getAudioInfo() const;
+    juce::String getAudioShortText() const;     // "CPU 12% | 5.8 ms ASIO"
+    int getMaxPolyphony() const { return maxPolyphony; }
+    void setMaxPolyphony (int n);
+    bool isGigMode() const { return gigMode; }
+    void setGigMode (bool on);
+    void applyGigMode();
+    // mode 1: sledeca dva tastera = najnizi i najvisi; mode 2: sledeci taster = split (ovaj part od tog tastera navise)
+    void armKeyLearn (int part, int mode) { keyLearnFirst = -1; keyLearnPart = part; keyLearnMode = mode; sendChangeMessage(); }
+    void cancelKeyLearn() { keyLearnMode = 0; sendChangeMessage(); }
+    int getKeyLearnMode() const { return keyLearnMode.load(); }
+    int getKeyLearnPart() const { return keyLearnPart.load(); }
     bool isQtEdit() const { return qtEdit.load(); }
     void setQtEdit (bool b) { qtEdit = b; sendChangeMessage(); }
     float getGlobalVolume() const { return globalDb; }
@@ -256,6 +274,7 @@ private:
         MasterSettings master;
         float globalDb = 0.0f;
         int globalTranspose = 0;
+        int maxVoices = 128;
         juce::uint32 perfSerial = 0;    // menja se kad se pozove drugi performans (SST)
         TercaSettings terca;
     };
@@ -382,6 +401,11 @@ private:
     bool liveLock = false;
     std::atomic<bool> qtEdit { false };
     std::atomic<int> qtMask { 0 };
+    std::atomic<float> audioLoad { 0.0f };
+    std::atomic<int> dropouts { 0 };
+    int maxPolyphony = 128;
+    bool gigMode = false;
+    std::atomic<int> keyLearnMode { 0 }, keyLearnPart { 0 }, keyLearnFirst { -1 }, keyLearnNote { -1 };
     float globalDb = 0.0f;
     bool saveNeeded = false;
     juce::uint32 lastSaveCheck = 0;

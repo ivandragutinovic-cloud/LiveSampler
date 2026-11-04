@@ -130,6 +130,7 @@ public:
     void showMapping (bool show) { showTab (show ? TabMapping : TabPerformance); }
 
 private:
+    int meterTick = 0;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
     void refreshAll();

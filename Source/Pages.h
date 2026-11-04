@@ -103,7 +103,11 @@ private:
     LiveSamplerEditor& editor;
     SceneBar scenes { proc, true };
     TuningBar tuning { proc };
-    LearnButton prevButton, nextButton, transDown, transUp, transZero, harmButton, panicButton, lockButton;
+    LearnButton prevButton, nextButton, transDown, transUp, transZero, harmButton, panicButton, lockButton, gigButton;
+    juce::Label cpuLabel;
+public:
+    void updateMeter();
+private:
     struct Fader
     {
         LearnSlider volume;
@@ -406,9 +410,11 @@ private:
     LiveSamplerProcessor& proc;
     juce::ListBox folders;
     LearnButton addButton, removeButton, rescanButton, backupButton, restoreButton;
-    juce::ToggleButton c3Toggle;
-    juce::Label info, backupStatus, velCurveLabel;
+    juce::ToggleButton c3Toggle, gigToggle;
+    juce::Label info, backupStatus, velCurveLabel, polyLabel, audioLabel;
     LearnCombo velCurveBox;
+    juce::ComboBox polyBox;
+    juce::TextButton resetDrops;
     void timerCallback() override;
     std::unique_ptr<juce::FileChooser> chooser;
 };

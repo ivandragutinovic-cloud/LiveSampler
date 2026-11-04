@@ -399,12 +399,16 @@ void PartStrip::showPartMenu()
         m.addSeparator();
         m.addSubMenu (T ("Vector joystick (") + Vector::dirName (pp.vectorDir) + ")", vm);
         m.addItem (300, T ("Follows the oriental tuning (TUNING)"), true, pp.scaleTune);
+        m.addSeparator();
+        m.addItem (301, T ("Set key range by playing (lowest, then highest key)"));
+        m.addItem (302, T ("SPLIT: this part from the key you press upward, others below"));
     }
     juce::Component::SafePointer<PartStrip> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&partMenu), [safe] (int r)
     {
         if (safe == nullptr || r == 0) return;
         if (r == 300) { safe->edit ([] (PerfPart& pp) { pp.scaleTune = ! pp.scaleTune; }); return; }
+        if (r == 301 || r == 302) { safe->proc.armKeyLearn (safe->index, r == 301 ? 1 : 2); return; }
         if (r == 200)
         {
             const auto& pp = safe->proc.getPerformance().parts[(size_t) safe->index];
@@ -868,6 +872,17 @@ void TuningBar::resized()
 //==============================================================================
 LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
 {
+    gigButton.setButtonText ("GIG MODE");
+    gigButton.setClickingTogglesState (true);
+    gigButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3ddc84));
+    gigButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    gigButton.setTooltip (T ("For the stage: the screen does not sleep, the program runs at high priority, less drawing"));
+    gigButton.onClick = [this] { proc.setGigMode (gigButton.getToggleState()); };
+    addAndMakeVisible (gigButton);
+    cpuLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    cpuLabel.setJustificationType (juce::Justification::centred);
+    cpuLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (cpuLabel);
     addAndMakeVisible (scenes);
     addAndMakeVisible (tuning);
     auto big = [this] (LearnButton& b, const juce::String& t, float fs)
@@ -940,6 +955,8 @@ LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), e
 
 void LivePage::refresh()
 {
+    gigButton.setToggleState (proc.isGigMode(), juce::dontSendNotification);
+    updateMeter();
     scenes.refresh();
     tuning.refresh();
     const auto& perf = proc.getPerformance();
@@ -998,6 +1015,17 @@ void LivePage::paint (juce::Graphics& g)
     g.drawText ((t > 0 ? "+" : "") + juce::String (t), transArea.withTrimmedTop (18), juce::Justification::centred);
 }
 
+void LivePage::updateMeter()
+{
+    const auto a = proc.getAudioInfo();
+    juce::String t = "CPU " + juce::String (juce::roundToInt (proc.getAudioLoad() * 100.0f)) + "%";
+    if (a.latencyMs > 0) t << "  " << juce::String (a.latencyMs, 1) << " ms";
+    t << "\n" << (a.driver.isNotEmpty() ? a.driver : juce::String ("-")) << "  " << a.buffer << " smp";
+    cpuLabel.setText (t, juce::dontSendNotification);
+    cpuLabel.setColour (juce::Label::textColourId, a.warn ? juce::Colour (0xffffb340) : Pal::dim);
+    cpuLabel.setTooltip (a.advice.isNotEmpty() ? a.advice : T ("Audio OK"));
+}
+
 void LivePage::resized()
 {
     auto r = getLocalBounds().reduced (10);
@@ -1019,9 +1047,12 @@ void LivePage::resized()
     tuning.setBounds (r.removeFromTop (44));
     r.removeFromTop (8);
     auto side = r.removeFromRight (170);
-    harmButton.setBounds (side.removeFromTop (90).reduced (4));
-    lockButton.setBounds (side.removeFromBottom (70).reduced (4));
-    panicButton.setBounds (side.removeFromBottom (70).reduced (4));
+    const int sh = side.getHeight();
+    harmButton.setBounds (side.removeFromTop (juce::jmin (90, sh * 28 / 100)).reduced (4));
+    gigButton.setBounds (side.removeFromTop (juce::jmin (54, sh * 17 / 100)).reduced (4));
+    cpuLabel.setBounds (side.removeFromTop (36).reduced (4, 0));
+    lockButton.setBounds (side.removeFromBottom (juce::jmin (70, sh * 20 / 100)).reduced (4));
+    panicButton.setBounds (side.removeFromBottom (juce::jmin (70, sh * 20 / 100)).reduced (4));
     r.removeFromRight (8);
     const int w = r.getWidth() / kNumParts;
     for (int i = 0; i < kNumParts; ++i)
@@ -3655,6 +3686,22 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     velCurveBox.onChange = [this] { proc.setVelocityCurve (velCurveBox.getSelectedId() - 1); };
     addAndMakeVisible (velCurveBox);
 
+    polyLabel.setText (T ("Max voices per part"), juce::dontSendNotification);
+    addAndMakeVisible (polyLabel);
+    for (int v : { 16, 24, 32, 48, 64, 96, 128 }) polyBox.addItem (juce::String (v), v);
+    polyBox.setTooltip (T ("When a part plays more voices, the oldest (released first) is stolen. Lower = less CPU on the mini PC"));
+    polyBox.onChange = [this] { proc.setMaxPolyphony (polyBox.getSelectedId()); };
+    addAndMakeVisible (polyBox);
+    gigToggle.setButtonText (T ("GIG MODE: screen never sleeps, high priority (also on the LIVE page)"));
+    gigToggle.onClick = [this] { proc.setGigMode (gigToggle.getToggleState()); };
+    addAndMakeVisible (gigToggle);
+    resetDrops.setButtonText (T ("Reset dropouts"));
+    resetDrops.onClick = [this] { proc.resetDropouts(); refresh(); };
+    addAndMakeVisible (resetDrops);
+    audioLabel.setFont (juce::FontOptions (13.5f));
+    audioLabel.setJustificationType (juce::Justification::topLeft);
+    addAndMakeVisible (audioLabel);
+
     c3Toggle.setButtonText (T ("C3 = MIDI 60 (Yamaha/Korg). Off: C4 = 60"));
     c3Toggle.onClick = [this] { proc.setC3Is60 (c3Toggle.getToggleState()); };
     addAndMakeVisible (c3Toggle);
@@ -3683,6 +3730,18 @@ void SettingsPage::refresh()
     folders.repaint();
     c3Toggle.setToggleState (proc.getC3Is60(), juce::dontSendNotification);
     velCurveBox.setSelectedId (proc.getVelocityCurve() + 1, juce::dontSendNotification);
+    polyBox.setSelectedId (proc.getMaxPolyphony(), juce::dontSendNotification);
+    if (polyBox.getSelectedId() == 0) polyBox.setText (juce::String (proc.getMaxPolyphony()), juce::dontSendNotification);
+    gigToggle.setToggleState (proc.isGigMode(), juce::dontSendNotification);
+    {
+        const auto a = proc.getAudioInfo();
+        audioLabel.setText (T ("Audio: ") + (a.driver.isNotEmpty() ? a.driver : juce::String ("-")) + "  " + a.device + "   |   "
+                            + juce::String (a.buffer) + T (" samples @ ") + juce::String (a.rate / 1000.0, 1) + " kHz   |   "
+                            + T ("latency ") + juce::String (a.latencyMs, 1) + " ms   |   CPU " + juce::String (juce::roundToInt (proc.getAudioLoad() * 100.0f)) + "%   |   "
+                            + juce::String (proc.getDropouts()) + T (" dropouts")
+                            + (a.advice.isNotEmpty() ? "\n" + a.advice : T ("\nAudio OK")), juce::dontSendNotification);
+        audioLabel.setColour (juce::Label::textColourId, a.warn ? juce::Colour (0xffffb340) : Pal::dim);
+    }
     info.setText (T ("Each folder is scanned with its subfolders: WAV folders, Korg KMP and Kontakt NKI become instruments.\n"
                      "USB stick: insert it, click \"Add folder / USB\" and choose the stick. If you remove it and put it back, click \"Refresh\".\n"
                      "Audio interface and MIDI keyboard: the Options button in the top left corner of the window.\n\n"
@@ -3733,8 +3792,19 @@ void SettingsPage::resized()
         auto row = r.removeFromTop (28);
         velCurveLabel.setBounds (row.removeFromLeft (220));
         velCurveBox.setBounds (row.removeFromLeft (240).reduced (0, 1));
+        row.removeFromLeft (30);
+        polyLabel.setBounds (row.removeFromLeft (170));
+        polyBox.setBounds (row.removeFromLeft (90).reduced (0, 1));
     }
-    r.removeFromTop (16);
+    r.removeFromTop (6);
+    gigToggle.setBounds (r.removeFromTop (28));
+    r.removeFromTop (6);
+    {
+        auto row = r.removeFromTop (44);
+        resetDrops.setBounds (row.removeFromRight (140).withHeight (28));
+        audioLabel.setBounds (row);
+    }
+    r.removeFromTop (12);
     info.setBounds (r);
 }
 

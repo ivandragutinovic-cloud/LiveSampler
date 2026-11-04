@@ -470,6 +470,9 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "tunePreset")  proc.setTuningPreset ((int) v["preset"], (int) v["root"]);
     else if (op == "tuneCents")   proc.setTuneCents ((int) v["pc"], (float) (double) v["cents"]);
     else if (op == "qtEdit")      proc.setQtEdit ((bool) v["on"]);
+    else if (op == "gig")         proc.setGigMode ((bool) v["on"]);
+    else if (op == "maxPoly")     proc.setMaxPolyphony ((int) v["n"]);
+    else if (op == "keyLearn")    { if ((int) v["mode"] == 0) proc.cancelKeyLearn(); else proc.armKeyLearn ((int) v["part"], (int) v["mode"]); }
     else if (op == "sceneRecall") proc.recallScene ((int) v["scene"]);
     else if (op == "sceneStore")  proc.storeScene ((int) v["scene"]);
     else if (op == "sceneClear")  proc.clearScene ((int) v["scene"]);
@@ -584,6 +587,14 @@ juce::StringPairArray RemoteServer::buildSections()
             st->setProperty ("tuneOn", pf.tuneOn);
             st->setProperty ("tuneName", pf.tuneName);
             st->setProperty ("qtEdit", proc.isQtEdit());
+            st->setProperty ("gig", proc.isGigMode());
+            st->setProperty ("keyLearn", proc.getKeyLearnMode());
+            const auto ai = proc.getAudioInfo();
+            st->setProperty ("cpu", juce::roundToInt (proc.getAudioLoad() * 100.0f));
+            st->setProperty ("latency", std::round (ai.latencyMs * 10.0) / 10.0);
+            st->setProperty ("driver", ai.driver);
+            st->setProperty ("audioWarn", ai.warn);
+            st->setProperty ("audioAdvice", ai.advice);
             juce::Array<juce::var> tc, tp;
             for (auto c : pf.tuneCents) tc.add (std::round (c * 10.0f) / 10.0f);
             for (auto& t : Tuning::presets()) tp.add (juce::String (t.name));

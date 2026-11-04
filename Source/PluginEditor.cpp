@@ -656,7 +656,8 @@ void LiveSamplerEditor::timerCallback()
     if (MidiLearn::get().isLearning())
         status.setText ("MIDI LEARN: move a knob or press a key", juce::dontSendNotification);
     else
-        status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" voices"), juce::dontSendNotification);
+        status.setText (proc.getStatusText() + "  |  " + juce::String (proc.getActiveVoices()) + T (" voices") + "  |  " + proc.getAudioShortText(), juce::dontSendNotification);
+    if (currentTab == TabLive && livePage != nullptr && ++meterTick % 3 == 0) livePage->updateMeter();
     tercaButton.repaint();
     learnButton.setToggleState (proc.isLearning(), juce::dontSendNotification);
     learnButton.setButtonText (proc.isLearning() ? T ("PRESS...") : "LEARN");
