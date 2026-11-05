@@ -259,7 +259,7 @@ void SamplerPart::beginBlock (const PartRuntime* runtime, int numSamples)
         return;
 
     const auto& p = cfg->part;
-    float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb, -60.0f) : 0.0f;
+    float g = cfg->active ? juce::Decibels::decibelsToGain (p.volumeDb + cfg->user.levelDb, -60.0f) : 0.0f;   // part + ceo user (COMMON Level)
     // vector joystick (Kronos Vector Volume): u centru jacina = Volume Center, ka svom smeru raste do 100%, na suprotnu stranu pada ka 0
     if (p.expression)
         g *= expression * expression;   // CC11 (kriva ~ 40 log10, kao GM / Kronos)

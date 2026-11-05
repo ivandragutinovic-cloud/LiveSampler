@@ -2147,6 +2147,10 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     legatoStart->slider.setTooltip (T ("The new note's sample starts this far in, so its attack is not heard (legato)"));
     addChildComponent (legatoXfade.get());
     addChildComponent (legatoStart.get());
+    userLevel = std::make_unique<ValueKnob> ("Level", Pal::accent, -40.0, 12.0, 0.0, [] (double v) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; }, 0.0);
+    userLevel->onChange = [this] (double v) { edit ([v] (UserProgram& u) { u.levelDb = (float) v; }); };
+    userLevel->slider.setTooltip (T ("Level of the whole user (all MS / OSC). Used in every performance with this user; the part volume adds on top"));
+    addChildComponent (userLevel.get());
     UI::setupIncDec (bendUp, 0, 24, 1);
     UI::setupIncDec (bendDown, 0, 24, 1);
     bendUp.onValueChange = [this] { const int v = (int) bendUp.getValue(); edit ([v] (UserProgram& u) { u.bendUp = v; }); };
@@ -2159,7 +2163,7 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
         commonLabels[i].setColour (juce::Label::textColourId, Pal::dim);
     }
     for (auto* c : std::initializer_list<juce::Component*> { &voiceMode, &priority, &portaOn, &portaFingered, &portaConstRate,
-                                                             portaTime.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
+                                                             portaTime.get(), userLevel.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
                                                              &commonLabels[2], &commonLabels[3] })
         addChildComponent (c);
 
@@ -2207,6 +2211,7 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
     ml.bindSlider (portaTime->slider, "user.common.portatime");
     ml.bindSlider (legatoXfade->slider, "user.common.legatoxfade");
     ml.bindSlider (legatoStart->slider, "user.common.legatostart");
+    ml.bindSlider (userLevel->slider, "user.common.level");
     ml.bindSlider (bendUp, "user.common.bendup");
     ml.bindSlider (bendDown, "user.common.benddown");
     ml.bindCombo (fxType, "user.effect.type");
@@ -2343,7 +2348,7 @@ void SoundEditor::rebuildKnobs()
     filterType.setVisible (section == Filter);
     filterLabel.setVisible (section == Filter);
     for (auto* c : std::initializer_list<juce::Component*> { &voiceMode, &priority, &portaOn, &portaFingered, &portaConstRate,
-                                                             portaTime.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
+                                                             portaTime.get(), userLevel.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
                                                              &commonLabels[2], &commonLabels[3] })
         c->setVisible (section == Common);
     refreshLegatoKnobs();
@@ -2419,6 +2424,7 @@ void SoundEditor::refresh()
     portaTime->setValue (u.portamento);
     legatoXfade->setValue (u.legatoXfade);
     legatoStart->setValue (u.legatoStart);
+    userLevel->setValue (u.levelDb);
     refreshLegatoKnobs();
     setSliderValue (bendUp, u.bendUp);
     setSliderValue (bendDown, u.bendDown);
@@ -2562,6 +2568,8 @@ void SoundEditor::resized()
         for (auto* s : { &bendUp, &bendDown })
             s->setTextBoxStyle (juce::Slider::TextBoxLeft, false, 50, 26);
         auto row2 = r.removeFromTop (100).reduced (0, 4);
+        userLevel->setBounds (row2.removeFromLeft (100));
+        row2.removeFromLeft (20);
         legatoXfade->setBounds (row2.removeFromLeft (100));
         row2.removeFromLeft (8);
         legatoStart->setBounds (row2.removeFromLeft (100));

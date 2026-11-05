@@ -273,7 +273,7 @@ private:
     // zajednicko
     LearnCombo voiceMode, priority;
     LearnButton portaOn, portaFingered, portaConstRate;
-    std::unique_ptr<ValueKnob> portaTime, legatoXfade, legatoStart;
+    std::unique_ptr<ValueKnob> portaTime, legatoXfade, legatoStart, userLevel;
     LearnSlider bendUp, bendDown;
     juce::Label commonLabels[4];
     // efekat
