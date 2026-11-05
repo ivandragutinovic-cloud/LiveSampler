@@ -364,6 +364,19 @@ void LiveSamplerProcessor::rescanLibrary()
 
             scanning = false;
             instrumentList = names;
+            // useri koji pokazuju na preimenovan folder (npr. "ROM 0155 Musette Musette" -> "ROM 0155 Musette")
+            {
+                bool changed = false;
+                for (auto& u : users)
+                    for (auto& o : u.osc)
+                        if (o.instrument.isNotEmpty() && ! names.contains (o.instrument))
+                            if (const auto nn = library.resolveAlias (o.instrument); nn.isNotEmpty())
+                            {
+                                o.instrument = nn;
+                                changed = true;
+                            }
+                if (changed) markSave();
+            }
             fillMissingParts();
 
             // izbaci iz memorije instrumente kojih vise nema (npr. izvadjen USB)

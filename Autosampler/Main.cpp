@@ -517,6 +517,14 @@ public:
         bits16Toggle.setToggleState (props->getBoolValue ("bits16", false), juce::dontSendNotification);
         const auto f = props->getValue ("folder");
         if (f.isNotEmpty()) { outFolder = juce::File (f); folderLabel.setText (outFolder.getFullPathName(), juce::dontSendNotification); }
+        juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (safe == nullptr) return;
+            if (const int c = safe->tidyRomFolders(); c > 0)
+                safe->setStatus (juce::String::fromUTF8 ("Sample folders tidied (") + juce::String (c)
+                                 + juce::String::fromUTF8 (" changes): one folder per ROM multisample. In Pikaso Workstation click Refresh (SETTINGS)."));
+            safe->neededList.repaint();
+        });
         auto pick = [] (juce::ComboBox& b, const juce::String& name)
         {
             if (name.isEmpty()) return false;
@@ -745,6 +753,27 @@ private:
         }), true);
     }
 
+    void askMergeDuplicates()
+    {
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Merge duplicate folders",
+            juce::String::fromUTF8 ("Sounds recorded twice (e.g. old 24-bit folder and a new \"... manual\" folder) are merged:\n"
+                                    "the old folder name stays (Pikaso Workstation users point to it), the newest samples go into it, "
+                                    "the old samples and the extra folder go to the Recycle Bin.\n\nThen click Refresh in Pikaso Workstation (SETTINGS)."),
+            "Merge", "Cancel", nullptr,
+            juce::ModalCallbackFunction::create ([safe] (int ok)
+            {
+                if (safe == nullptr || ok == 0) return;
+                juce::StringArray log;
+                const int n = safe->mergeDuplicateFolders (log);
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Merge duplicate folders",
+                    n == 0 ? juce::String::fromUTF8 ("No duplicates found.")
+                           : juce::String (n) + juce::String::fromUTF8 (" merged:\n\n") + log.joinIntoString ("\n"));
+                safe->neededList.repaint();
+                safe->updateInfo();
+            }));
+    }
+
     // desni klik na listu: ponovo snimi (brise stare semplove tog programa / multisempla)
     void neededMenu (int row)
     {
@@ -754,11 +783,14 @@ private:
         juce::PopupMenu m;
         m.addItem (1, juce::String::fromUTF8 ("Resample again (delete the old samples)"), ! isThreadRunning());
         m.addItem (2, "Remove from list", ! isThreadRunning());
+        m.addSeparator();
+        m.addItem (3, juce::String::fromUTF8 ("Merge duplicate folders (same sound twice: keep the newest samples)"), ! isThreadRunning());
         juce::Component::SafePointer<MainComponent> safe (this);
         m.showMenuAsync ({}, [safe, sel] (int r)
         {
             if (safe == nullptr || r == 0) return;
             if (r == 2) { safe->removeButton.triggerClick(); return; }
+            if (r == 3) { safe->askMergeDuplicates(); return; }
             juce::StringArray names;
             for (int i = 0; i < sel.size(); ++i)
                 if (sel[i] < (int) safe->needed.size()) names.add (safe->needed[(size_t) sel[i]].label());
@@ -1547,8 +1579,85 @@ private:
     {
         if (n.external)
             return outFolder.getChildFile ("Druge klavijature").getChildFile (juce::File::createLegalFileName (n.extName));
-        auto nm = n.label() + " " + n.usedBy;
-        return outFolder.getChildFile (juce::File::createLegalFileName (nm.trim()));
+        // ROM / EXs / WaveSeq multisempl: folder se zove samo kao na Kronosu (npr. "ROM 0155 Musette"),
+        // bez imena programa: isti sempl koristi vise usera. EXi i drum kit su program, pa nose i ime programa.
+        auto nm = (n.exi || n.drum) ? n.label() + " " + n.usedBy : n.label();
+        const auto byName = outFolder.getChildFile (juce::File::createLegalFileName (nm.trim()));
+        if (byName.isDirectory() || n.romKey.isEmpty()) return byName;
+        // isti zvuk (isti kljuc) vec postoji u drugom folderu (npr. dodat rucno ili iz drugog programa):
+        // snima se preko njega, da se ne prave duplikati (24-bit + 16-bit)
+        const auto existing = folderForKey (n.romKey);
+        return existing != juce::File() ? existing : byName;
+    }
+
+    // kronos-key.txt -> folder (kes, osvezava se na par sekundi)
+    juce::File folderForKey (const juce::String& key) const
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (keyCacheFolder != outFolder || now - keyCacheTime > 3000)
+        {
+            keyCache.clear();
+            for (auto& d : outFolder.findChildFiles (juce::File::findDirectories, false))
+            {
+                const auto kf = d.getChildFile ("kronos-key.txt");
+                if (! kf.existsAsFile()) continue;
+                const auto k = kf.loadFileAsString().trim().toLowerCase();
+                auto it = keyCache.find (k);
+                // vise foldera za isti kljuc: prednost ima originalni (bez " manual") sa semplovima
+                const bool better = it == keyCache.end()
+                    || (it->second.getFileName().endsWith (" manual") && ! d.getFileName().endsWith (" manual"));
+                if (better) keyCache[k] = d;
+            }
+            keyCacheFolder = outFolder;
+            keyCacheTime = now;
+        }
+        auto it = keyCache.find (key.trim().toLowerCase());
+        return it != keyCache.end() ? it->second : juce::File();
+    }
+    mutable std::map<juce::String, juce::File> keyCache;
+    mutable juce::File keyCacheFolder;
+    mutable juce::uint32 keyCacheTime = 0;
+
+    // Spoji duplikate: isti zvuk snimljen u dva foldera (stari 24-bit i novi "... manual").
+    // Ostaje ime starog foldera (na njega se pozivaju useri u Workstation-u), a u njega idu najnoviji semplovi.
+    // Stari semplovi idu u Recycle Bin.
+    int mergeDuplicateFolders (juce::StringArray& log)
+    {
+        std::map<juce::String, juce::Array<juce::File>> groups;
+        for (auto& d : outFolder.findChildFiles (juce::File::findDirectories, false))
+        {
+            const auto kf = d.getChildFile ("kronos-key.txt");
+            if (kf.existsAsFile()) groups[kf.loadFileAsString().trim().toLowerCase()].add (d);
+        }
+        auto stamp = [] (const juce::File& d)
+        {
+            const auto t = d.getChildFile ("kronos-ms.txt");
+            return t.existsAsFile() ? t.getLastModificationTime().toMilliseconds() : (juce::int64) 0;
+        };
+        auto wavs = [] (const juce::File& d) { return d.getNumberOfChildFiles (juce::File::findFiles, "*.wav"); };
+        int merged = 0;
+        for (auto& [key, dirs] : groups)
+        {
+            if (dirs.size() < 2) continue;
+            juce::File target, source;
+            for (auto& d : dirs) if (! d.getFileName().endsWith (" manual") && (target == juce::File() || wavs (d) > wavs (target))) target = d;
+            if (target == juce::File()) target = dirs[0];
+            for (auto& d : dirs) if (wavs (d) > 0 && (source == juce::File() || stamp (d) > stamp (source))) source = d;
+            if (source == juce::File()) continue;
+            if (source != target)
+            {
+                for (auto& f : target.findChildFiles (juce::File::findFiles, false))
+                    if (! f.moveToTrash()) f.deleteFile();
+                for (auto& f : source.findChildFiles (juce::File::findFiles, false))
+                    f.moveFileTo (target.getChildFile (f.getFileName()));
+            }
+            for (auto& d : dirs)
+                if (d != target && ! d.moveToTrash()) d.deleteRecursively();
+            log.add (target.getFileName() + "  <-  " + source.getFileName());
+            ++merged;
+        }
+        keyCacheTime = 0;
+        return merged;
     }
 
     // gotovo samo ako je snimljen bas ovaj program (EXi program izmenjen na Kronosu ima drugi kljuc)
@@ -1563,6 +1672,70 @@ private:
         if (! n.exi && ! n.external && ! n.drum && folder.getChildFile ("kronos-zones.txt").existsAsFile()
             && ! folder.getChildFile ("LiveSampler-mapa.xml").existsAsFile()) return false;
         return true;
+    }
+
+    // Sredjivanje foldera ROM semplova: jedan folder po ROM multisemplu, ime kao na Kronosu.
+    // Vise foldera istog sempla (stari 24-bit + novi 16-bit, "... manual", "... ime programa"):
+    // ostaje najnovije snimljen (sa semplovima), ostali idu u Recycle Bin. Stara imena idu u aliases.txt,
+    // pa Pikaso Workstation sam prebaci usere na novo ime (posle Refresh). Vraca broj promena.
+    int tidyRomFolders()
+    {
+        if (outFolder == juce::File() || ! outFolder.isDirectory() || isThreadRunning()) return 0;
+        struct F { juce::File dir; juce::String label; juce::int64 time = 0; int wavs = 0; };
+        std::map<juce::String, std::vector<F>> groups;
+        for (auto& d : outFolder.findChildFiles (juce::File::findDirectories, false))
+        {
+            const auto tag = d.getChildFile ("kronos-ms.txt");
+            const auto kf = d.getChildFile ("kronos-key.txt");
+            juce::String key, label;
+            if (tag.existsAsFile())
+            {
+                const auto lines = juce::StringArray::fromLines (tag.loadFileAsString());
+                key = lines[0].trim().toLowerCase();
+                label = lines[1].trim();
+            }
+            else if (kf.existsAsFile()) key = kf.loadFileAsString().trim().toLowerCase();
+            if (! key.startsWith ("rom:")) continue;                  // EXi / drum kit / druge klavijature ostaju kako jesu
+            key = key.substring (6);                                   // bez prvog bajta (MS Type + zastavice): isti ROM sempl
+            F f { d, label, tag.existsAsFile() ? tag.getLastModificationTime().toMilliseconds() : 0,
+                  d.getNumberOfChildFiles (juce::File::findFiles, "*.wav") };
+            groups[key].push_back (f);
+        }
+        int changes = 0;
+        auto trash = [&changes] (const juce::File& d) { if (! d.moveToTrash()) d.deleteRecursively(); ++changes; };
+        for (auto& [key, list] : groups)
+        {
+            const F* best = nullptr;
+            for (auto& f : list)
+                if (f.wavs > 0 && f.label.isNotEmpty() && (best == nullptr || f.time > best->time)) best = &f;
+            if (best == nullptr) continue;   // nijedan nije snimljen do kraja: ne dira se (snima se ponovo)
+            const auto target = outFolder.getChildFile (juce::File::createLegalFileName (best->label));
+            juce::StringArray oldNames;
+            for (auto& f : list)
+                if (&f != best)
+                {
+                    if (f.dir != target) oldNames.addIfNotAlreadyThere (f.dir.getFileName());
+                    trash (f.dir);
+                }
+            auto dir = best->dir;
+            if (dir != target && ! target.exists())
+            {
+                const auto oldName = dir.getFileName();
+                if (dir.moveFileTo (target)) { oldNames.addIfNotAlreadyThere (oldName); dir = target; ++changes; }
+            }
+            if (! oldNames.isEmpty())
+            {
+                const auto al = dir.getChildFile ("aliases.txt");
+                juce::StringArray all;
+                if (al.existsAsFile()) all = juce::StringArray::fromLines (al.loadFileAsString());
+                for (auto& o : oldNames) all.addIfNotAlreadyThere (o);
+                all.removeString (dir.getFileName());
+                all.removeEmptyStrings();
+                al.replaceWithText (all.joinIntoString ("\n"));
+            }
+        }
+        keyCacheTime = 0;   // kes foldera po kljucu se pravi ponovo
+        return changes;
     }
 
     // pre snimanja: ako u folderu stoje semplovi nekog drugog (starijeg) programa, brisu se
@@ -1595,6 +1768,7 @@ private:
                 juce::String::fromUTF8 ("Choose the sample folder (button \"Sample folder...\"). Keep it inside a Pikaso Workstation library folder, e.g. C:\\KRONOS\\KRONOS ROM."));
             return;
         }
+        tidyRomFolders();
         useSysex = sysexMode.getToggleState();
         bool anyRom = false, anyExi = false;
         for (auto& n : needed) { anyRom = anyRom || (! n.exi && ! n.external && ! isDone (n)); anyExi = anyExi || (n.exi && ! isDone (n)); }
@@ -2026,6 +2200,7 @@ private:
         }
         send (juce::MidiMessage::allNotesOff (settings.channel));
         const auto rep = writeReport (threadShouldExit());
+        juce::MessageManager::callAsync ([this] { tidyRomFolders(); neededList.repaint(); updateInfo(); });
         setStatus ((threadShouldExit() ? juce::String ("Stopped. ") : juce::String::fromUTF8 ("Done. In Pikaso Workstation click Refresh (SETTINGS), then create the users from the Kronos programs again. ")) + rep);
     }
 

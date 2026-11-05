@@ -300,12 +300,20 @@ void SampleLibrary::scan (const juce::Array<juce::File>& rootFolders)
     entries.clear();
     kronosMs.clear();
     kronosTags.clear();
+    aliases.clear();
 
     for (auto& r : roots)
         if (r.isDirectory())
             scanRoot (r);
 
     names.sortNatural();
+}
+
+juce::String SampleLibrary::resolveAlias (const juce::String& oldName) const
+{
+    const juce::ScopedLock sl (lock);
+    auto it = aliases.find (oldName);
+    return it != aliases.end() ? it->second : juce::String();
 }
 
 juce::String SampleLibrary::findKronosRom (const juce::String& romKey) const
@@ -393,6 +401,14 @@ void SampleLibrary::scanRoot (const juce::File& root)
         if (! insideKontakt)
         {
             add (rel (d), SourceType::WavFolder, d, "WAV");
+            // ranija imena ovog foldera (Autosampler ih upise kad spoji / preimenuje folder)
+            if (const auto al = d.getChildFile ("aliases.txt"); al.existsAsFile())
+            {
+                const auto cur = names[names.size() - 1];
+                const auto parent = cur.containsChar ('/') ? cur.upToLastOccurrenceOf ("/", true, false) : juce::String();
+                for (auto& l : juce::StringArray::fromLines (al.loadFileAsString()))
+                    if (l.trim().isNotEmpty()) aliases[parent + l.trim()] = cur;
+            }
             // presemplovan Kronos ROM multisempl (Kronos Autosampler upisuje kronos-ms.txt)
             const auto tag = d.getChildFile ("kronos-ms.txt");
             if (tag.existsAsFile())
