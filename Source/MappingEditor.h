@@ -70,7 +70,12 @@ public:
     // finished = pusten mis / upisana vrednost (za undo)
     std::function<void (const Points&, bool finished)> onChange;
     std::function<void()> onAutoAll;        // auto loop za sve zone instrumenta
-    std::function<void()> onAutoStartAll;   // auto start (odseci tisinu pre tona) za sve zone
+    std::function<void()> onAutoStartAll;   // auto start (odseci tisinu pre tona) za oznacene / sve zone
+    std::function<void()> onBothAll;        // start + loop za oznacene / sve zone
+    std::function<void (int ms)> onXfadeAll; // isti crossfade za oznacene zone
+    int startFor (const SampleData&) const; // pocetak po podesavanjima (prag dB, preroll)
+    int loopLimit (const SampleData&) const; // > 0: loop se trazi u prvih N sekundi (skracivanje dugih semplova)
+    void setScope (int selectedCount);      // "ALL" dugmad rade na oznacenim zonama kad ih je vise
     AutoLoop::Settings autoSettings() const;
     void runAutoLoop();
 
@@ -103,7 +108,9 @@ private:
     double panStartView = 0.0;
     float panStartX = 0.0f;
 
-    juce::TextButton sampleMode, loopMode, fitButton, autoButton, autoAllButton, autoStartButton, autoStartAllButton;
+    juce::TextButton sampleMode, loopMode, fitButton, autoButton, autoAllButton, autoStartButton, autoStartAllButton, bothAllButton;
+    juce::Slider startDb, prerollMs, loopBySec;
+    juce::Label startDbLabel, prerollLabel, loopByLabel;
     juce::TextButton vPlus, vMinus, vFit;
     float vZoom = 1.0f;                         // zum po visini (1 = ceo opseg)
     void fitHeight();

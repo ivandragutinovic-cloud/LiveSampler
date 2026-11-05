@@ -145,6 +145,22 @@ namespace AutoLoop
         return juce::jlimit (0, len - 1, i - (int) (sampleRate * 0.003));
     }
 
+    // pocetak tona sa pragom u dB ispod vrha (npr. -40 dB) i malo vremena pre njega (preroll, ms)
+    inline int findOnsetDb (const juce::AudioBuffer<float>& buf, int length, double sampleRate, float thresholdDb, float prerollMs)
+    {
+        const int len = juce::jmin (length, buf.getNumSamples());
+        if (len <= 0) return 0;
+        const int chans = juce::jmin (2, buf.getNumChannels());
+        auto mag = [&] (int i) { float m = 0; for (int c = 0; c < chans; ++c) m = juce::jmax (m, std::abs (buf.getSample (c, i))); return m; };
+        float peak = 0;
+        for (int i = 0; i < len; ++i) peak = juce::jmax (peak, mag (i));
+        if (peak <= 0) return 0;
+        const float thr = juce::jmax (peak * juce::Decibels::decibelsToGain (thresholdDb), 1.0e-6f);
+        int i = 0;
+        while (i < len && mag (i) < thr) ++i;
+        return juce::jlimit (0, len - 1, i - (int) (sampleRate * prerollMs * 0.001));
+    }
+
     // pretapanje upisano u sempl (za nove snimke iz autosamplera):
     // kraj loop-a postepeno prelazi u ono sto je pred pocetkom loop-a, pa je spoj gladak
     inline void bakeCrossfade (juce::AudioBuffer<float>& buf, int start, int end, int xf)

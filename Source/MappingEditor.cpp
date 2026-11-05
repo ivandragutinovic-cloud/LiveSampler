@@ -371,7 +371,7 @@ WaveEditor::WaveEditor()
     {
         if (sample == nullptr) return;
         auto np = pts;
-        np.start = AutoLoop::findOnset (sample->audio(), sample->length(), sample->sampleRate);
+        np.start = startFor (*sample);
         if (np.loop && np.start >= np.loopStart) np.start = 0;
         apply (np, true);
     };
@@ -402,6 +402,24 @@ WaveEditor::WaveEditor()
         addAndMakeVisible (l);
     };
     setupMs (xfadeMs, xfadeLabel, "Crossfade", 0, 1000, 80);
+    xfadeMs.setTooltip (T ("Loop crossfade: hides the seam at the loop point. With several zones selected it is set on all of them"));
+    // red 3: pocetak (prag u dB), preroll, loop do N sekundi
+    setupMs (startDb, startDbLabel, "Start at", -80, -10, -46);
+    startDb.setTextValueSuffix (" dB");
+    startDb.setTooltip (T ("AUTO START: the note starts where the sound first rises above this level (dB below its peak). Lower (e.g. -60) = earlier, catches soft attacks; higher (e.g. -30) = later, skips noise"));
+    setupMs (prerollMs, prerollLabel, "Preroll", 0, 50, 3);
+    prerollMs.setTooltip (T ("AUTO START keeps this much time before the detected onset (so the attack is not cut)"));
+    setupMs (loopBySec, loopByLabel, "Loop by", 0, 30, 0);
+    loopBySec.setRange (0.0, 30.0, 0.5);
+    loopBySec.setTextValueSuffix (" s");
+    loopBySec.setTooltip (T ("0 = AUTO LOOP looks in the whole sample. E.g. 3 s = the loop is found inside the first 3 seconds, so long samples get shorter (less RAM), also for sounds that fade"));
+    for (auto* l : { &startDbLabel, &prerollLabel, &loopByLabel }) l->setTooltip (T ("Settings for AUTO START / AUTO LOOP"));
+    bothAllButton.setButtonText (T ("START + LOOP ALL"));
+    bothAllButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2f7d4a));
+    bothAllButton.setTooltip (T ("AUTO START and AUTO LOOP together, with the settings on the right (Start at, Preroll, Loop by, Crossfade)"));
+    bothAllButton.onClick = [this] { if (onBothAll) onBothAll(); };
+    bothAllButton.getProperties().set ("fontSize", 12.0f);
+    addAndMakeVisible (bothAllButton);
     setupMs (minLoopMs, minLabel, "Min loop", 30, 5000, 300);
     setupMs (maxLoopMs, maxLabel, "Max loop", 100, 20000, 3000);
     xfadeMs.onValueChange = [this]
@@ -410,6 +428,7 @@ WaveEditor::WaveEditor()
         auto np = pts;
         np.xfade = (int) (xfadeMs.getValue() * 0.001 * sample->sampleRate);
         apply (np, true);
+        if (onXfadeAll) onXfadeAll ((int) xfadeMs.getValue());
     };
     autoInfo.setFont (juce::FontOptions (12.0f));
     autoInfo.setColour (juce::Label::textColourId, Pal::lcdText);
@@ -445,14 +464,39 @@ AutoLoop::Settings WaveEditor::autoSettings() const
     s.crossfadeSec = xfadeMs.getValue() * 0.001;
     s.minLoopSec = minLoopMs.getValue() * 0.001;
     s.maxLoopSec = juce::jmax (s.minLoopSec + 0.05, maxLoopMs.getValue() * 0.001);
+    if (loopBySec.getValue() > 0.01)
+    {
+        // skracivanje: i zvuk koji opada (klavir, gitara) dobija loop pred zadatim vremenom
+        s.sustainDb = -45.0f;
+        s.maxDecayDb = 18.0f;
+        s.maxLoopSec = juce::jmin (s.maxLoopSec, juce::jmax (s.minLoopSec + 0.05, loopBySec.getValue() * 0.5));
+    }
     return s;
+}
+
+int WaveEditor::startFor (const SampleData& s) const
+{
+    return AutoLoop::findOnsetDb (s.audio(), s.length(), s.sampleRate, (float) startDb.getValue(), (float) prerollMs.getValue());
+}
+
+int WaveEditor::loopLimit (const SampleData& s) const
+{
+    const double sec = loopBySec.getValue();
+    return sec > 0.01 ? juce::jmin (s.length(), (int) (sec * s.sampleRate)) : s.length();
+}
+
+void WaveEditor::setScope (int n)
+{
+    const bool many = n > 1;
+    autoAllButton.setButtonText (many ? T ("AUTO LOOP ") + juce::String (n) + T (" SELECTED") : T ("AUTO LOOP ALL ZONES"));
+    autoStartAllButton.setButtonText (many ? T ("AUTO START ") + juce::String (n) + T (" SELECTED") : T ("AUTO START ALL ZONES"));
+    bothAllButton.setButtonText (many ? T ("START + LOOP ") + juce::String (n) + T (" SELECTED") : T ("START + LOOP ALL"));
 }
 
 void WaveEditor::runAutoLoop()
 {
     if (sample == nullptr) return;
-    const auto r = AutoLoop::find (sample->audio(), pts.end > 0 ? juce::jmax (pts.end, sample->length()) : sample->length(),
-                                   sample->sampleRate, autoSettings());
+    const auto r = AutoLoop::find (sample->audio(), loopLimit (*sample), sample->sampleRate, autoSettings());
     if (! r.found)
     {
         autoInfo.setText (T ("Loop not found: ") + r.reason, juce::dontSendNotification);
@@ -544,7 +588,7 @@ void WaveEditor::apply (Points np, bool finished)
 
 juce::Rectangle<int> WaveEditor::waveArea() const
 {
-    return getLocalBounds().withTrimmedTop (62).reduced (2);
+    return getLocalBounds().withTrimmedTop (93).reduced (2);
 }
 
 double WaveEditor::xToSample (float x) const
@@ -714,6 +758,14 @@ void WaveEditor::resized()
         s->setBounds (row2.removeFromLeft (150).reduced (2, 2));
     }
     autoInfo.setBounds (row2.reduced (6, 0));
+    auto row3 = getLocalBounds().withTrimmedTop (62).removeFromTop (28);
+    bothAllButton.setBounds (row3.removeFromLeft (180).reduced (1, 2));
+    row3.removeFromLeft (6);
+    for (auto [l, s] : { std::pair<juce::Label*, juce::Slider*> { &startDbLabel, &startDb }, { &prerollLabel, &prerollMs }, { &loopByLabel, &loopBySec } })
+    {
+        l->setBounds (row3.removeFromLeft (70));
+        s->setBounds (row3.removeFromLeft (150).reduced (2, 2));
+    }
 }
 
 void WaveEditor::mouseDown (const juce::MouseEvent& e)
@@ -818,45 +870,67 @@ MappingEditor::MappingEditor (LiveSamplerProcessor& p)
     }
     viewButtons[0].setToggleState (true, juce::dontSendNotification);
     addChildComponent (waveEditor);
-    waveEditor.onAutoAll = [this]
+    // AUTO dugmad za vise zona: oznacene (kad ih je vise od jedne), inace sve zone instrumenta
+    auto scopeIdx = [this]
+    {
+        std::vector<int> idx = selectedList();
+        if (idx.size() <= 1) { idx.clear(); for (int i = 0; i < (int) zones.size(); ++i) idx.push_back (i); }
+        return idx;
+    };
+    auto doStart = [this] (Zone& zz, const SampleData& s)
+    {
+        int st = waveEditor.startFor (s);
+        if (zz.loop && zz.hasOwnLoop() && st >= zz.loopStart) st = 0;
+        if (st == zz.sampleStart) return false;
+        zz.sampleStart = juce::jmax (1, st);
+        return true;
+    };
+    auto doLoop = [this] (Zone& zz, const SampleData& s)
+    {
+        const auto r = AutoLoop::find (s.audio(), waveEditor.loopLimit (s), s.sampleRate, waveEditor.autoSettings());
+        if (! r.found) return false;
+        zz.loop = true;
+        zz.loopStart = r.start;
+        zz.loopEnd = r.end;
+        zz.loopXfade = r.crossfade;
+        zz.sampleEnd = -1;
+        if (zz.sampleStart > r.start) zz.sampleStart = 0;
+        return true;
+    };
+    auto runAll = [this, scopeIdx] (const juce::String& title, std::function<bool (Zone&, const SampleData&)> fn)
     {
         if (inst == nullptr) return;
         auto z = zones;
-        int found = 0, total = 0;
-        for (auto& zz : z)
+        int done = 0, total = 0;
+        for (int i : scopeIdx())
         {
+            auto& zz = z[(size_t) i];
             if (zz.sample < 0 || zz.sample >= (int) inst->samples.size()) continue;
             ++total;
-            const auto& s = *inst->samples[(size_t) zz.sample];
-            const auto r = AutoLoop::find (s.audio(), s.length(), s.sampleRate, waveEditor.autoSettings());
-            if (! r.found) continue;
-            zz.loop = true;
-            zz.loopStart = r.start;
-            zz.loopEnd = r.end;
-            zz.loopXfade = r.crossfade;
-            if (zz.sampleStart > r.start) zz.sampleStart = 0;
-            ++found;
+            if (fn (zz, *inst->samples[(size_t) zz.sample])) ++done;
         }
         commit (z, true);
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto loop",
-            T ("Loop found for ") + juce::String (found) + T (" of ") + juce::String (total) + T (" zones. Save the map with the Save button."));
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, title,
+            title + ": " + juce::String (done) + T (" of ") + juce::String (total) + T (" zones. Save the map with the Save button."));
     };
-    waveEditor.onAutoStartAll = [this]
+    waveEditor.onAutoAll = [runAll, doLoop] { runAll ("Auto loop", doLoop); };
+    waveEditor.onAutoStartAll = [runAll, doStart] { runAll ("Auto start", doStart); };
+    waveEditor.onBothAll = [runAll, doStart, doLoop]
     {
-        if (inst == nullptr) return;
+        runAll ("Start + loop", [doStart, doLoop] (Zone& z, const SampleData& s) { const bool a = doStart (z, s); const bool b = doLoop (z, s); return a || b; });
+    };
+    waveEditor.onXfadeAll = [this] (int ms)
+    {
+        const auto idx = selectedList();
+        if (idx.size() <= 1 || inst == nullptr) return;
         auto z = zones;
-        int changed = 0;
-        for (auto& zz : z)
+        for (int i : idx)
         {
-            if (zz.sample < 0 || zz.sample >= (int) inst->samples.size()) continue;
-            const auto& s = *inst->samples[(size_t) zz.sample];
-            int st = AutoLoop::findOnset (s.audio(), s.length(), s.sampleRate);
-            if (zz.loop && st >= zz.loopStart) st = 0;
-            if (st != zz.sampleStart) { zz.sampleStart = juce::jmax (1, st); ++changed; }
+            auto& zz = z[(size_t) i];
+            if (zz.sample < 0 || zz.sample >= (int) inst->samples.size() || ! zz.hasOwnLoop()) continue;
+            zz.loopXfade = juce::jmin ((int) (ms * 0.001 * inst->samples[(size_t) zz.sample]->sampleRate), zz.loopEnd - zz.loopStart - 16);
         }
         commit (z, true);
-        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Auto start",
-            T ("Start moved to the note onset for ") + juce::String (changed) + T (" zones. Save the map with the Save button."));
     };
     waveEditor.onChange = [this] (const WaveEditor::Points& p, bool)
     {
@@ -1391,6 +1465,7 @@ void MappingEditor::setSelection (std::set<int> s, int primary)
 
 void MappingEditor::syncSelectionUI()
 {
+    waveEditor.setScope ((int) selectedList().size());
     {
         const juce::ScopedValueSetter<bool> svs (updatingUI, true);
         juce::SparseSet<int> rows;
