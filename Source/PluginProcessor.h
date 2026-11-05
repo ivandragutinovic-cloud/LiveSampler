@@ -316,6 +316,7 @@ private:
         int maxVoices = 128;
         juce::uint32 perfSerial = 0;    // menja se kad se pozove drugi performans (SST)
         TercaSettings terca;
+        int harmNative = -1;            // skala za koju je napravljena ugradjena terca performansa (-1 = nema)
     };
     using ConfigPtr = std::shared_ptr<const EngineConfig>;
 
@@ -323,6 +324,9 @@ private:
     void timerCallback() override;
 
     void rebuildConfig();
+    void applyKronosScale (const Kronos::Combi&, Performance&) const;
+    void rememberHarmKey();
+    static int fixedHarmInterval (const PerfPart&, int note, int root, int scale, const EngineConfig&);
     void loadNeededInstruments();
     juce::StringArray neededInstruments (bool includeBank) const;
     void markSave() { saveNeeded = true; }

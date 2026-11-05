@@ -170,6 +170,8 @@ namespace Kronos
         c.vectorVolume = (d[1211] & 0x04) != 0;
         c.vectorEqualPower = (d[1211] & 0x08) != 0;
         c.return2 = juce::jlimit (0, 127, (int) d[1049]);
+        c.scaleType = juce::jlimit (0, 26, (int) d[4793]);
+        c.scaleKey = juce::jlimit (0, 11, (int) d[4794]);
         for (int t = 0; t < 16; ++t)
         {
             const auto* b = d + timbresOffset + t * timbreSize;
@@ -190,6 +192,7 @@ namespace Kronos
             tm.velLow = juce::jlimit (1, 127, (int) b[41]);
             tm.damper = (b[32] & 0x04) != 0;       // (Filter) Damper
             tm.footPedal = (b[34] & 0x08) != 0;    // (Filter) Foot Pedal
+            tm.useProgramScale = (b[34] & 0x20) != 0;   // CombiAndSongTimbreSet.txt 4836 bit 5
             tm.vectorDir = juce::jlimit (0, 4, (int) (b[52] & 0x07));     // CombiAndSongTimbreSet.txt: VJS Assign
             tm.vectorCenter = juce::jlimit (0, 4, (int) ((b[52] >> 3) & 0x07));
             readTrackEq (tm, b + 46);
@@ -240,6 +243,14 @@ namespace Kronos
                 if (id == "GLB1" && size > 4)
                 {
                     globalChannel = (d[content + 2] & 0x0f) + 1;
+                    // Global.txt: User Octave Scale 00..15 od 12592, po 12 bajtova (-99..+99 centi)
+                    if (size >= 12592 + 16 * 12)
+                    {
+                        for (int k = 0; k < 16; ++k)
+                            for (int n = 0; n < 12; ++n)
+                                userOctaveScales[(size_t) k][(size_t) n] = juce::jlimit (-99, 99, (int) (juce::int8) d[content + 12592 + (size_t) (k * 12 + n)]);
+                        hasUserScales = true;
+                    }
                     // Global.txt: Combi Category 00..17 Name na 16800, po 24 bajta
                     if (size >= 16800 + 18 * 24)
                     {

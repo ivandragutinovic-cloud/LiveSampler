@@ -606,6 +606,7 @@ void LiveSamplerProcessor::rebuildConfig()
     cfg->globalTranspose = globalTranspose;
     cfg->perfSerial = perfSerial;
     cfg->terca = terca;
+    cfg->harmNative = perf.harmRoot >= 0 ? perf.harmNative : -1;
 
     ConfigPtr old;
     {
@@ -993,8 +994,22 @@ void LiveSamplerProcessor::handleAsyncUpdate()
     }
 
     if (tercaChanged.exchange (false))
+    {
+        rememberHarmKey();
         sendChangeMessage();
+    }
     sendChangeMessage();
+}
+
+// performans sa ugradjenom tercom pamti tonalitet (za STORE), da svaka pesma dodje u svom tonalitetu
+void LiveSamplerProcessor::rememberHarmKey()
+{
+    if (perf.harmRoot < 0) return;
+    const int r = tercaRoot.load(), sc = tercaScale.load();
+    if (r == perf.harmRoot && sc == perf.harmScale) return;
+    perf.harmRoot = r;
+    perf.harmScale = sc;
+    perfDirty = true;
 }
 
 //==============================================================================
@@ -1435,6 +1450,59 @@ int LiveSamplerProcessor::userForKronosProgram (const Kronos::Program& p)
     return createUserFromKronos (p);
 }
 
+// Skala kombija (Scale Type / Key + GLOBAL User Octave Scale):
+//  - samo 0 i +-99 centi = "ugradjena terca": timbre bez "Use Program Scale" svira kroz skalu, npr. transpose -20 (=+4)
+//    i -99 na nekim tonovima daje diatonsku tercu. Kronos skalu cita po noti koja zvuci (posle transpozicije), od Scale Key.
+//    Takav part dobija fixedHarm: interval za svaki ton tonaliteta, a tonalitet / dur-mol se menjaju kao kod HARMONY.
+//  - sitni centi = orijentalno stimovanje: ide u TUNING performansa, timbre sa "Use Program Scale" ostaje nestimovan.
+void LiveSamplerProcessor::applyKronosScale (const Kronos::Combi& c, Performance& p) const
+{
+    p.harmRoot = -1;
+    for (auto& part : p.parts) { part.fixedHarm = false; part.harmIv = {}; }
+    if (c.scaleType == 0) { p.tuneOn = false; return; }               // Equal Temperament
+    if (c.scaleType < 11 || kronosPcg == nullptr || ! kronosPcg->hasUserScales) return;   // fabricke skale (Pure Major...) se ne prenose
+    const auto& table = kronosPcg->userOctaveScales[(size_t) (c.scaleType - 11)];
+    const int key = c.scaleKey;
+    bool any = false, harmonic = true;
+    for (auto v : table) { any = any || v != 0; harmonic = harmonic && (v == 0 || std::abs (v) >= 90); }
+    if (! any) { p.tuneOn = false; return; }
+    if (harmonic)
+    {
+        int mode = -1;   // 0 dur, 1 mol (po tercama na tonici)
+        for (int t = 0; t < 16 && t < kNumParts; ++t)
+        {
+            auto& part = p.parts[(size_t) t];
+            if (! part.on || c.timbres[(size_t) t].useProgramScale) continue;
+            const int T = c.timbres[(size_t) t].transpose;
+            for (int d = 0; d < 12; ++d)
+            {
+                const int corr = juce::roundToInt ((float) table[(size_t) (((d + T) % 12 + 12) % 12)] / 100.0f);
+                part.harmIv[(size_t) d] = T + corr;
+            }
+            part.fixedHarm = true;
+            part.terca = false;   // vec je terca: ne dobija jos jednu od dugmeta za tercu
+            const int i0 = ((part.harmIv[0] % 12) + 12) % 12;
+            if (mode < 0) mode = (i0 == 4 || i0 == 9) ? 0 : (i0 == 3 || i0 == 8) ? 1 : -1;
+        }
+        if (! p.hasFixedHarm()) return;
+        int idx = 0;
+        const char* want = mode == 1 ? "Minor" : "Major";
+        for (int i = 0; i < (int) terca.scales.size(); ++i)
+            if (terca.scales[(size_t) i].name.equalsIgnoreCase (want)) { idx = i; break; }
+        p.harmRoot = key;
+        p.harmScale = p.harmNative = idx;
+        p.tuneOn = false;
+        return;
+    }
+    // orijentalno stimovanje
+    for (int pc = 0; pc < 12; ++pc)
+        p.tuneCents[(size_t) pc] = (float) table[(size_t) (((pc - key) % 12 + 12) % 12)];
+    p.tuneOn = true;
+    p.tuneName = "Kronos User Scale " + juce::String (c.scaleType - 11).paddedLeft ('0', 2);
+    for (int t = 0; t < 16 && t < kNumParts; ++t)
+        p.parts[(size_t) t].scaleTune = ! c.timbres[(size_t) t].useProgramScale;
+}
+
 juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c, bool keepChannels, std::vector<KronosMissing>* missing)
 {
     juce::StringArray skipped;
@@ -1528,6 +1596,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
             part.eqHighDb = d (tm.eqHighDb, bh);
         }
     }
+    applyKronosScale (c, p);
     updatePerformance (p);
     return skipped;
 }
@@ -1725,6 +1794,7 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     currentSlot = slot;
     currentBank = slot / kPerfPerBank;
     soloMask = 0;     // SOLO vazi samo za performans u kome je ukljucen
+    if (perf.harmRoot >= 0) { tercaRoot = perf.harmRoot; tercaScale = juce::jlimit (0, juce::jmax (0, (int) terca.scales.size() - 1), perf.harmScale); tercaChanged = true; }
     ++perfSerial;     // zvuci prethodnog performansa izdisu prirodno (SST)
     vectorX = 0.0f; vectorY = 0.0f;     // joystick krece iz centra, kao na Kronosu
     vectorUiDirty = true;
@@ -2565,6 +2635,7 @@ void LiveSamplerProcessor::setTercaKey (int root, int scale)
 {
     tercaRoot = ((root % 12) + 12) % 12;
     tercaScale = juce::jlimit (0, juce::jmax (0, (int) terca.scales.size() - 1), scale);
+    rememberHarmKey();
     sendChangeMessage();
 }
 
@@ -2650,6 +2721,21 @@ void LiveSamplerProcessor::tercaTrigger (bool down, const EngineConfig& c)
     }
 }
 
+// ugradjena terca (Kronos kombi): interval za notu u trenutnom tonalitetu. U skali za koju je napravljena
+// (harmNative) svira tacno kao Kronos; u drugoj (dur <-> mol) terca se uzima iz HARMONY skale, oktava ostaje.
+int LiveSamplerProcessor::fixedHarmInterval (const PerfPart& part, int note, int root, int scale, const EngineConfig& c)
+{
+    const int d = ((note - root) % 12 + 12) % 12;
+    const int native = part.harmIv[(size_t) d];
+    if (scale == c.harmNative || scale < 0 || scale >= (int) c.terca.scales.size())
+        return native;
+    const auto& sc = c.terca.scales[(size_t) scale];
+    const int T = part.transpose, tpc = ((T % 12) + 12) % 12, base = T - tpc;
+    if ((tpc == 3 || tpc == 4) && sc.above[(size_t) d] != 0) return base + sc.above[(size_t) d];
+    if ((tpc == 8 || tpc == 9) && sc.below[(size_t) d] != 0) return base + 12 + sc.below[(size_t) d];
+    return native;
+}
+
 void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineConfig& c)
 {
     ++heldCount[note];
@@ -2677,7 +2763,8 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
         if (note < part.keyLow || note > part.keyHigh || vel < part.velLow || vel > part.velHigh)
             continue;
 
-        const int shift = part.transpose + part.octave * 12 + c.globalTranspose;
+        const int shift = (part.fixedHarm ? fixedHarmInterval (part, note, root, scale, c) : part.transpose)
+                        + part.octave * 12 + c.globalTranspose;
         parts[p].noteOn (note, note + shift, vel);
         partHits[(size_t) p].fetch_add (1, std::memory_order_relaxed);
         used |= (juce::uint16) (1 << p);

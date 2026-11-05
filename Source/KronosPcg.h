@@ -81,6 +81,7 @@ namespace Kronos
         // (Track EQ) timbre-a (CombiAndSongTimbreSet: timbre + 46..51)
         bool eqBypass = false;
         float eqLowDb = 0.0f, eqMidDb = 0.0f, eqHighDb = 0.0f, eqMidFreq = 1000.0f;
+        bool useProgramScale = true;             // Pitch: Use Program Scale (iskljuceno = svira kroz skalu kombija)
     };
 
     struct Combi
@@ -93,6 +94,8 @@ namespace Kronos
         int return1 = 127, return2 = 127;   // MFX1 / MFX2 Return
         int category = 0;                   // Combi Category 0-17 (imena u Pcg::combiCategories)
         bool vectorVolume = false, vectorEqualPower = false;   // Vector Control: Enable Volume Control, Equal Power
+        int scaleType = 0;                  // 0 Equal Temperament ... 10 User All Notes, 11..26 User Octave Scale 00..15
+        int scaleKey = 0;                   // C..B
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
     };
 
@@ -104,6 +107,8 @@ namespace Kronos
         int drumKits = 0;
         int globalChannel = 1;   // Kronos GLOBAL MIDI kanal (iz GLB1)
         juce::StringArray combiCategories;   // imena kategorija kombija sa Kronosa (GLOBAL, 18 komada)
+        std::array<std::array<int, 12>, 16> userOctaveScales {};   // GLOBAL User Octave Scale 00..15 (centi C..B)
+        bool hasUserScales = false;
         bool load (const juce::File& f, juce::String& error);
         const Program* findProgram (juce::uint32 bankId, int number) const;
     };

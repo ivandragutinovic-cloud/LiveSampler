@@ -348,6 +348,12 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         if (any) e->setAttribute ("tuneCents", tc.joinIntoString (" "));
         if (tuneName.isNotEmpty()) e->setAttribute ("tuneName", tuneName);
     }
+    if (harmRoot >= 0)
+    {
+        e->setAttribute ("harmRoot", harmRoot);
+        e->setAttribute ("harmScale", harmScale);
+        e->setAttribute ("harmNative", harmNative);
+    }
     for (int s = 0; s < kNumScenes; ++s)
     {
         const auto& sc = scenes[(size_t) s];
@@ -387,6 +393,12 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("reverb", (double) p.reverbSend);
         x->setAttribute ("delay", (double) p.delaySend);
         x->setAttribute ("terca", p.terca);
+        if (p.fixedHarm)
+        {
+            juce::StringArray iv;
+            for (auto v : p.harmIv) iv.add (juce::String (v));
+            x->setAttribute ("fixedHarm", iv.joinIntoString (" "));
+        }
         if (p.tercaVel >= 0.0f) x->setAttribute ("tercaVel", (double) p.tercaVel);
         x->setAttribute ("sustain", p.sustainPedal);
         x->setAttribute ("expression", p.expression);
@@ -409,6 +421,9 @@ Performance Performance::fromXml (const juce::XmlElement& e)
     perf.scene = juce::jlimit (-1, kNumScenes - 1, e.getIntAttribute ("scene", -1));
     perf.tuneOn = e.getBoolAttribute ("tuneOn", false);
     perf.tuneName = e.getStringAttribute ("tuneName");
+    perf.harmRoot = juce::jlimit (-1, 11, e.getIntAttribute ("harmRoot", -1));
+    perf.harmScale = juce::jmax (0, e.getIntAttribute ("harmScale", 0));
+    perf.harmNative = juce::jmax (0, e.getIntAttribute ("harmNative", 0));
     {
         const auto tc = juce::StringArray::fromTokens (e.getStringAttribute ("tuneCents"), " ", "");
         for (int i = 0; i < 12 && i < tc.size(); ++i) perf.tuneCents[(size_t) i] = juce::jlimit (-100.0f, 100.0f, tc[i].getFloatValue());
@@ -459,6 +474,12 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.reverbSend = (float) x->getDoubleAttribute ("reverb", 0.2);
         p.delaySend = (float) x->getDoubleAttribute ("delay", 0.0);
         p.terca = x->getBoolAttribute ("terca", false);
+        if (x->hasAttribute ("fixedHarm"))
+        {
+            const auto iv = juce::StringArray::fromTokens (x->getStringAttribute ("fixedHarm"), " ", "");
+            p.fixedHarm = iv.size() == 12;
+            for (int i = 0; i < 12 && i < iv.size(); ++i) p.harmIv[(size_t) i] = juce::jlimit (-60, 60, iv[i].getIntValue());
+        }
         p.tercaVel = x->hasAttribute ("tercaVel") ? (float) juce::jlimit (0.05, 1.5, x->getDoubleAttribute ("tercaVel")) : -1.0f;
         p.sustainPedal = x->getBoolAttribute ("sustain", true);
         p.expression = x->getBoolAttribute ("expression", true);

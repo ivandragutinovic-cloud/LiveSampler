@@ -235,8 +235,17 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     tercaButton.getProperties().set ("fontSize", 12.0f);
     tercaButton.setTooltip (T ("This part gets the harmony (terca) when it is on"));
     tercaButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.terca = tercaButton.getToggleState(); }); };
-    tercaButton.extraMenuItems = [] (juce::PopupMenu& m) { m.addItem (100, T ("Harmony level for this part...")); };
-    tercaButton.onExtraMenuItem = [this] (int) { showHarmLevel(); };
+    tercaButton.extraMenuItems = [this] (juce::PopupMenu& m)
+    {
+        m.addItem (100, T ("Harmony level for this part..."));
+        if (proc.getPerformance().parts[(size_t) index].fixedHarm)
+            m.addItem (101, T ("Turn off built-in harmony (Kronos scale): play the plain transpose"));
+    };
+    tercaButton.onExtraMenuItem = [this] (int id)
+    {
+        if (id == 101) { edit ([] (PerfPart& pp) { pp.fixedHarm = false; }); return; }
+        showHarmLevel();
+    };
     addAndMakeVisible (tercaButton);
 
     sustainButton.setButtonText ("SUST");
@@ -600,8 +609,11 @@ void PartStrip::refresh()
     keyLow.updateText();
     keyHigh.updateText();
     tercaButton.setToggleState (p.terca, juce::dontSendNotification);
-    tercaButton.setButtonText (p.tercaVel >= 0.0f ? "HARM*" : "HARM");
-    tercaButton.setTooltip (T ("This part gets the harmony (terca) when it is on. Right click: harmony level for this part")
+    tercaButton.setButtonText (p.fixedHarm ? "KRN H" : p.tercaVel >= 0.0f ? "HARM*" : "HARM");
+    tercaButton.setColour (juce::TextButton::buttonColourId, p.fixedHarm ? juce::Colour (0xff5a3d8a) : Pal::panelHi);
+    tercaButton.setTooltip ((p.fixedHarm ? T ("KRN H: built-in harmony from the Kronos combi (timbre through the combi scale). Always plays; "
+                                              "follows the HARMONY key and Major/Minor (also from Pikaso Stage). ") : juce::String())
+                            + T ("This part gets the harmony (terca) when it is on. Right click: harmony level for this part")
                             + (p.tercaVel >= 0.0f ? "\n" + T ("Own level: ") + juce::String (juce::roundToInt (p.tercaVel * 100.0f)) + "%" : juce::String()));
     sustainButton.setToggleState (p.sustainPedal, juce::dontSendNotification);
     exprButton.setToggleState (p.expression, juce::dontSendNotification);

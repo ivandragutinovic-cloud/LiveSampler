@@ -169,6 +169,10 @@ struct PerfPart
     float reverbSend = 0.2f, delaySend = 0.0f;
     bool terca = false;                 // ovaj deo dobija terce
     float tercaVel = -1.0f;             // jacina terce samo za ovaj part (0.05..1.5), -1 = generalna (HARMONY Velocity)
+    // ugradjena terca iz Kronos kombija (timbre transponovan +3/+4/-8... kroz user skalu, bez "Use Program Scale"):
+    // part uvek svira tercu; harmIv = interval (polutonova, sa oktavom) za svaki ton od tonaliteta 0..11
+    bool fixedHarm = false;
+    std::array<int, 12> harmIv {};
     bool sustainPedal = true;
     bool expression = true;             // prima Expression (CC11)
     bool scaleTune = true;              // prati orijentalno stimovanje performansa (iskljuci za bubnjeve)
@@ -238,6 +242,9 @@ struct Performance
     bool tuneOn = false;
     std::array<float, 12> tuneCents {};
     juce::String tuneName;
+    // tonalitet za partove sa ugradjenom tercom (fixedHarm): -1 = nema. harmNative = skala (Major/Minor) za koju je harmIv napravljen
+    int harmRoot = -1, harmScale = 0, harmNative = 0;
+    bool hasFixedHarm() const { for (auto& p : parts) if (p.fixedHarm) return true; return false; }
 
     std::unique_ptr<juce::XmlElement> toXml() const;
     static Performance fromXml (const juce::XmlElement&);
