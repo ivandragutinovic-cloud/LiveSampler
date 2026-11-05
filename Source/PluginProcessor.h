@@ -296,6 +296,10 @@ public:
 
     juce::String getStatusText() const;
     int getActiveVoices() const { return activeVoices.load(); }
+    // aktivnost partova (tackice) i jacina pritisnutih dirki (virtuelna klavijatura)
+    int getPartVoices (int p) const { return p >= 0 && p < 16 ? partVoices[(size_t) p].load() : 0; }
+    juce::uint32 getPartHits (int p) const { return p >= 0 && p < 16 ? partHits[(size_t) p].load() : 0; }
+    int getKeyVelocity (int note) const { return note >= 0 && note < 128 ? keyVel[(size_t) note].load() : 0; }
     void panic();
 
     juce::File getDataFile() const;
@@ -389,6 +393,9 @@ private:
     std::atomic<int> learnedType { 0 }, learnedChannel { 0 }, learnedNumber { 0 };
     std::atomic<bool> tercaChanged { false };
     std::atomic<int> activeVoices { 0 };
+    std::array<std::atomic<int>, 16> partVoices {};
+    std::array<std::atomic<juce::uint32>, 16> partHits {};
+    std::array<std::atomic<int>, 128> keyVel {};
     juce::AbstractFifo uiTriggerFifo { 32 };
     int uiTriggerData[32] {};
 

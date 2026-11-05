@@ -6,6 +6,46 @@ class LiveSamplerEditor;
 //==============================================================================
 //  PERFORMANS: 8 delova kao kanali miksete + pregled raspona tastera
 //==============================================================================
+// tackica: svetli kad part svira (jako na udarac, slabije dok zvuk traje)
+class ActivityDot : public juce::Component, private juce::Timer
+{
+public:
+    ActivityDot (LiveSamplerProcessor& p, int part, juce::Colour c) : proc (p), index (part), colour (c)
+    {
+        setInterceptsMouseClicks (false, false);
+        startTimerHz (30);
+    }
+    void paint (juce::Graphics& g) override
+    {
+        const float d = juce::jmin ((float) getWidth(), (float) getHeight()) - 2.0f;
+        auto r = getLocalBounds().toFloat().withSizeKeepingCentre (d, d);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillEllipse (r);
+        const float a = juce::jmax (flash, sounding ? 0.35f : 0.0f);
+        if (a > 0.0f)
+        {
+            g.setColour (colour.brighter (0.4f).withAlpha (a));
+            g.fillEllipse (r.reduced (1.0f));
+            if (flash > 0.5f) { g.setColour (colour.withAlpha (0.35f * flash)); g.drawEllipse (r.expanded (0.5f), 1.5f); }
+        }
+    }
+private:
+    void timerCallback() override
+    {
+        const auto h = proc.getPartHits (index);
+        const bool snd = proc.getPartVoices (index) > 0;
+        const float f = h != lastHits ? 1.0f : juce::jmax (0.0f, flash - 0.12f);
+        lastHits = h;
+        if (f != flash || snd != sounding) { flash = f; sounding = snd; repaint(); }
+    }
+    LiveSamplerProcessor& proc;
+    const int index;
+    juce::Colour colour;
+    juce::uint32 lastHits = 0;
+    float flash = 0.0f;
+    bool sounding = false;
+};
+
 class PartStrip : public juce::Component
 {
 public:
@@ -27,6 +67,7 @@ private:
     void showEq();
     void showHarmLevel();
     void showPartMenu();
+    std::unique_ptr<ActivityDot> dot;
     LearnButton onButton, soloButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
     void stepUser (int dir);
     ValueKnob volume, pan, reverb, delay;
@@ -114,6 +155,7 @@ private:
         LearnSlider volume;
         LearnButton on;
         juce::Label name;
+        std::unique_ptr<ActivityDot> dot;
     };
     Fader faders[kNumParts];
     juce::Rectangle<int> lcd, transArea;

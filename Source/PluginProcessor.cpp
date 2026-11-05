@@ -2679,6 +2679,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
 
         const int shift = part.transpose + part.octave * 12 + c.globalTranspose;
         parts[p].noteOn (note, note + shift, vel);
+        partHits[(size_t) p].fetch_add (1, std::memory_order_relaxed);
         used |= (juce::uint16) (1 << p);
 
         if (pr.user.isMono())
@@ -3027,6 +3028,13 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     const auto& c = *audioConfig;
 
     keyboardState.processNextMidiBuffer (midi, 0, n, true);
+    for (const auto meta : midi)   // jacina dirki za prikaz na virtuelnoj klavijaturi
+    {
+        const auto m = meta.getMessage();
+        if (m.isNoteOn()) keyVel[(size_t) m.getNoteNumber()] = m.getVelocity();
+        else if (m.isNoteOff()) keyVel[(size_t) m.getNoteNumber()] = 0;
+        else if (m.isAllNotesOff() || m.isAllSoundOff()) for (auto& k : keyVel) k = 0;
+    }
 
     if (panicRequested.exchange (false))
     {
@@ -3169,8 +3177,12 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         buffer.clear (ch, 0, n);
 
     int voicesNow = 0;
-    for (auto& p : parts)
-        voicesNow += p.getNumActiveVoices();
+    for (int i = 0; i < kNumParts; ++i)
+    {
+        const int v = parts[i].getNumActiveVoices();
+        if (i < (int) partVoices.size()) partVoices[(size_t) i] = v;
+        voicesNow += v;
+    }
     for (auto& p : tails)
         voicesNow += p.getNumActiveVoices();
     activeVoices = voicesNow;

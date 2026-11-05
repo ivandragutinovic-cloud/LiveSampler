@@ -184,7 +184,51 @@ private:
     LearnButton pagePrev, pageNext;
     juce::Label setListLabel;
 
-    juce::MidiKeyboardComponent keyboard;
+    // virtuelna klavijatura: na pritisnutoj dirki stubic jacine (velocity) i broj
+    struct VelKeyboard : public juce::MidiKeyboardComponent
+    {
+        VelKeyboard (LiveSamplerProcessor& p, juce::MidiKeyboardState& s)
+            : juce::MidiKeyboardComponent (s, juce::MidiKeyboardComponent::horizontalKeyboard), proc (p) { poll.startTimerHz (25); }
+        void drawWhiteNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool down, bool over, juce::Colour line, juce::Colour text) override
+        {
+            juce::MidiKeyboardComponent::drawWhiteNote (note, g, area, down, over, line, text);
+            drawVel (note, g, area, false);
+        }
+        void drawBlackNote (int note, juce::Graphics& g, juce::Rectangle<float> area, bool down, bool over, juce::Colour fill) override
+        {
+            juce::MidiKeyboardComponent::drawBlackNote (note, g, area, down, over, fill);
+            drawVel (note, g, area, true);
+        }
+        void drawVel (int note, juce::Graphics& g, juce::Rectangle<float> area, bool black)
+        {
+            const int v = shown[(size_t) note];
+            if (v <= 0) return;
+            auto r = area.reduced (area.getWidth() * (black ? 0.22f : 0.25f), 3.0f);
+            r = r.withTrimmedBottom (black ? 2.0f : 14.0f);
+            const float h = r.getHeight() * (float) v / 127.0f;
+            auto bar = r.removeFromBottom (h);
+            const auto c = v < 50 ? juce::Colour (0xff3fa7ff) : v < 100 ? juce::Colour (0xff47d18c) : juce::Colour (0xffff7a3a);
+            g.setColour (c.withAlpha (0.9f));
+            g.fillRoundedRectangle (bar, 2.0f);
+            g.setColour (black ? juce::Colours::white : juce::Colours::black);
+            g.setFont (juce::FontOptions (juce::jlimit (7.0f, 11.0f, area.getWidth() * 0.55f), juce::Font::bold));
+            g.drawText (juce::String (v), area.withHeight (14.0f).translated (0.0f, 2.0f), juce::Justification::centred, false);
+        }
+        void pollVel()
+        {
+            bool changed = false;
+            for (int n = 0; n < 128; ++n)
+            {
+                const int v = proc.getKeyVelocity (n);
+                if (v != shown[(size_t) n]) { shown[(size_t) n] = v; changed = true; }
+            }
+            if (changed) repaint();
+        }
+        LiveSamplerProcessor& proc;
+        std::array<int, 128> shown {};
+        juce::TimedCallback poll { [this] { pollVel(); } };
+    };
+    VelKeyboard keyboard;
     juce::TooltipWindow tooltips { this, 600 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LiveSamplerEditor)

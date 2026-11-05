@@ -348,7 +348,7 @@ void LiveSamplerEditor::TercaButton::paint (juce::Graphics& g)
 
 LiveSamplerEditor::LiveSamplerEditor (LiveSamplerProcessor& p)
     : AudioProcessorEditor (&p), proc (p),
-      keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
+      keyboard (p, p.keyboardState)
 {
     setLookAndFeel (&lnf);
     content.owner = this;

@@ -156,6 +156,8 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     onButton.setColour (juce::TextButton::buttonOnColourId, colour);
     onButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.on = onButton.getToggleState(); }); };
     addAndMakeVisible (onButton);
+    dot = std::make_unique<ActivityDot> (proc, index, colour);
+    addAndMakeVisible (*dot);
     soloButton.setButtonText ("S");
     soloButton.setClickingTogglesState (true);
     soloButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd9a400));
@@ -649,6 +651,8 @@ void PartStrip::resized()
         row.removeFromRight (2);
         soloButton.setBounds (row.removeFromRight (22));
         row.removeFromRight (2);
+        dot->setBounds (row.removeFromLeft (12));
+        row.removeFromLeft (2);
         onButton.setBounds (row);
     }
     r.removeFromTop (4);
@@ -1020,6 +1024,7 @@ LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), e
     for (int i = 0; i < kNumParts; ++i)
     {
         auto& f = faders[i];
+        f.dot = std::make_unique<ActivityDot> (proc, i, Pal::part[i]);
         f.volume.setSliderStyle (juce::Slider::LinearBarVertical);
         f.volume.setRange (-60.0, 6.0, 0.1);
         f.volume.setSkewFactorFromMidPoint (-12.0);
@@ -1050,6 +1055,7 @@ LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), e
         f.name.setMinimumHorizontalScale (0.6f);
         for (juce::Component* c : { (juce::Component*) &f.volume, (juce::Component*) &f.on, (juce::Component*) &f.name })
             addAndMakeVisible (c);
+        addAndMakeVisible (*f.dot);   // iznad imena
     }
 }
 
@@ -1158,7 +1164,11 @@ void LivePage::resized()
     for (int i = 0; i < kNumParts; ++i)
     {
         auto col = r.removeFromLeft (w).reduced (3, 0);
-        faders[i].name.setBounds (col.removeFromTop (34));
+        {
+            auto top = col.removeFromTop (34);
+            faders[i].name.setBounds (top);
+            if (faders[i].dot != nullptr) faders[i].dot->setBounds (top.getX(), top.getY() + 1, 11, 11);
+        }
         faders[i].on.setBounds (col.removeFromBottom (36).reduced (0, 2));
         faders[i].volume.setBounds (col.reduced (4, 2));
     }
