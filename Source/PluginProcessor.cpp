@@ -2021,7 +2021,12 @@ private:
             juce::Array<juce::var> kept;
             for (auto& c : *cats)
             {
-                if (c.getProperty ("device", {}).toString() == dev)
+                if (c.getProperty ("device", {}).toString() == dev
+                    && stripDevice (c.getProperty ("name", {}).toString()).equalsIgnoreCase ("Main"))
+                {
+                    kept.add (c);   // Main: dugmad koju korisnik kopira u Pikaso Stage, ostaje netaknuta
+                }
+                else if (c.getProperty ("device", {}).toString() == dev)
                 {
                     if (insertAt < 0) insertAt = kept.size();
                     oldCats[stripDevice (c.getProperty ("name", {}).toString()).toLowerCase()] = c;
@@ -2169,6 +2174,7 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
         if (c.getProperty ("device", {}).toString() != dev) continue;
         const auto name = stripDevice (c.getProperty ("name", {}).toString());
         if (name.isEmpty() || names.contains (name, true)) continue;
+        if (name.equalsIgnoreCase ("Main")) continue;   // Main = kopije dugmadi koje slaze korisnik u Pikaso Stage, nije kategorija performansa
         names.add (name);
         const auto col = c.getProperty ("color", {}).toString().trimCharactersAtStart ("#");
         colours.push_back (col.length() == 6 ? juce::Colour ((juce::uint32) (0xff000000u | (juce::uint32) col.getHexValue32()))
@@ -2504,6 +2510,31 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
 {
     const int ch = juce::jlimit (0, 15, m.getChannel() - 1);
     const auto& lt = c.terca.learn;
+
+    // Pikaso Stage (SysEx, ID 7D = sopstveni uredjaj): F0 7D 50 01 kk F7 tonalitet harmonije (0-11),
+    // F0 7D 50 02 mm F7 harmonija: 0 iskljucena, 1 dur (Major), 2 mol (Minor)
+    if (m.isSysEx())
+    {
+        const auto* d = m.getSysExData();
+        if (m.getSysExDataSize() >= 4 && d[0] == 0x7D && d[1] == 0x50)
+        {
+            if (d[2] == 0x01) tercaRoot = d[3] % 12;
+            else if (d[2] == 0x02)
+            {
+                if (d[3] == 0) tercaOn = false;
+                else
+                {
+                    const char* want = d[3] == 2 ? "Minor" : "Major";
+                    for (int i = 0; i < (int) c.terca.scales.size(); ++i)
+                        if (c.terca.scales[(size_t) i].name.equalsIgnoreCase (want)) { tercaScale = i; break; }
+                    tercaOn = true;
+                }
+            }
+            tercaChanged = true;
+            triggerAsyncUpdate();
+        }
+        return;
+    }
 
     // MIDI Learn (desni klik na kontrolu): naucen CC / taster ide samo na tu kontrolu
     if (MidiLearn::get().handleIncoming (m))
