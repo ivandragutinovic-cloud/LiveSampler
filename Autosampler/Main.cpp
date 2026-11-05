@@ -1973,7 +1973,8 @@ private:
                 std::vector<int> notes;
                 if (! zones.empty()) for (auto& z : zones) notes.push_back (z.root);
                 else for (int note = settings.low; note <= settings.high; note += settings.step) notes.push_back (note);
-                const auto fileOf = [&] (int note) { return n.label().replaceCharacter (' ', '_') + " " + juce::String (note).paddedLeft ('0', 3) + ".wav"; };
+                // ime sempla mora biti dozvoljeno na Windows-u (npr. "sfp<" iz Kronos imena ne sme u ime fajla)
+                const auto fileOf = [&] (int note) { return juce::File::createLegalFileName (n.label()).replaceCharacter (' ', '_') + " " + juce::String (note).paddedLeft ('0', 3) + ".wav"; };
                 for (size_t k = 0; k < notes.size() && ! threadShouldExit(); ++k)
                 {
                     const int note = notes[k];
@@ -2547,7 +2548,9 @@ private:
         }
 
         file.deleteFile();
-        std::unique_ptr<juce::OutputStream> os = std::make_unique<juce::FileOutputStream> (file);
+        auto fos = std::make_unique<juce::FileOutputStream> (file);
+        if (fos->failedToOpen()) return false;   // npr. nedozvoljeno ime: ne broji se kao snimljen
+        std::unique_ptr<juce::OutputStream> os = std::move (fos);
         juce::WavAudioFormat wav;
         // auto loop: nadji loop u delu koji drzi, upisi crossfade u sempl i loop tacke u WAV (smpl)
         std::unordered_map<juce::String, juce::String> meta;
