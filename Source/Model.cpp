@@ -106,6 +106,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
         x->setAttribute ("fadeIn", o.fadeIn);
         if (std::abs (o.velRampDb) > 0.01f) x->setAttribute ("velRamp", (double) o.velRampDb);
         x->setAttribute ("fadeOut", o.fadeOut);
+        if (o.fadeOutFrom > 0) x->setAttribute ("fadeOutFrom", o.fadeOutFrom);
         x->setAttribute ("fadeCurve", o.fadeCurve);
         x->setAttribute ("block", o.block);
         x->setAttribute ("keyOff", o.keyOff);
@@ -224,6 +225,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
         o.fadeIn = juce::jlimit (0, 127, x->getIntAttribute ("fadeIn", 0));
         o.velRampDb = (float) juce::jlimit (-40.0, 0.0, x->getDoubleAttribute ("velRamp", 0.0));
         o.fadeOut = juce::jlimit (0, 127, x->getIntAttribute ("fadeOut", 0));
+        o.fadeOutFrom = x->hasAttribute ("fadeOutFrom") ? juce::jlimit (0, 127, x->getIntAttribute ("fadeOutFrom", 0)) : -1;   // -1: stari zapis
         o.fadeCurve = x->getIntAttribute ("fadeCurve", 0);
         o.keyOff = x->getBoolAttribute ("keyOff", false);
         o.keySlope = (float) juce::jlimit (-1.0, 2.0, x->getDoubleAttribute ("slope", 1.0));
@@ -235,6 +237,20 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     }
     for (int i = 0; i < kNumOsc; ++i)
         u.osc[(size_t) i].block = i / kMsPerOsc;
+    // stari uvoz sa Kronosa: utisavanje donjeg MS-a se racunalo od 127 umesto od granice gornjeg MS-a
+    // (pa je na najjacoj dinamici MS bio skoro nem). Granica = Vel lo gornjeg MS-a sa istim Xfade-om.
+    for (auto& o : u.osc)
+    {
+        if (o.fadeOutFrom >= 0) continue;
+        o.fadeOutFrom = 0;
+        if (o.fadeOut <= 0) continue;
+        int best = 0;
+        for (auto& up : u.osc)
+            if (&up != &o && up.block == o.block && up.on && up.fadeIn == o.fadeOut
+                && up.velLow > o.velLow && up.velLow <= o.velHigh && (best == 0 || up.velLow < best))
+                best = up.velLow;
+        o.fadeOutFrom = best;
+    }
     return u;
 }
 
@@ -369,6 +385,7 @@ std::unique_ptr<juce::XmlElement> Performance::toXml() const
         x->setAttribute ("reverb", (double) p.reverbSend);
         x->setAttribute ("delay", (double) p.delaySend);
         x->setAttribute ("terca", p.terca);
+        if (p.tercaVel >= 0.0f) x->setAttribute ("tercaVel", (double) p.tercaVel);
         x->setAttribute ("sustain", p.sustainPedal);
         x->setAttribute ("expression", p.expression);
         if (! p.scaleTune) x->setAttribute ("scaleTune", false);
@@ -440,6 +457,7 @@ Performance Performance::fromXml (const juce::XmlElement& e)
         p.reverbSend = (float) x->getDoubleAttribute ("reverb", 0.2);
         p.delaySend = (float) x->getDoubleAttribute ("delay", 0.0);
         p.terca = x->getBoolAttribute ("terca", false);
+        p.tercaVel = x->hasAttribute ("tercaVel") ? (float) juce::jlimit (0.05, 1.5, x->getDoubleAttribute ("tercaVel")) : -1.0f;
         p.sustainPedal = x->getBoolAttribute ("sustain", true);
         p.expression = x->getBoolAttribute ("expression", true);
         p.scaleTune = x->getBoolAttribute ("scaleTune", true);

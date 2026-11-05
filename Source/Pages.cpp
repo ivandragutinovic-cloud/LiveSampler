@@ -225,6 +225,8 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     tercaButton.getProperties().set ("fontSize", 12.0f);
     tercaButton.setTooltip (T ("This part gets the harmony (terca) when it is on"));
     tercaButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.terca = tercaButton.getToggleState(); }); };
+    tercaButton.extraMenuItems = [] (juce::PopupMenu& m) { m.addItem (100, T ("Harmony level for this part...")); };
+    tercaButton.onExtraMenuItem = [this] (int) { showHarmLevel(); };
     addAndMakeVisible (tercaButton);
 
     sustainButton.setButtonText ("SUST");
@@ -320,6 +322,72 @@ namespace
         const int index;
         juce::Label info;
         juce::OwnedArray<ValueKnob> knobs;
+    };
+}
+
+namespace
+{
+    // HARMONY jacina samo za jedan part (pregazi generalnu HARMONY Velocity)
+    struct PartHarmPanel : public juce::Component
+    {
+        PartHarmPanel (LiveSamplerProcessor& p, int idx, juce::Colour c)
+            : proc (p), index (idx),
+              knob (T ("Harmony level"), c, 0.05, 1.5, 0.5, [] (double v)
+              {
+                  return juce::String (juce::roundToInt (v * 100.0)) + "%  (" + juce::String (juce::Decibels::gainToDecibels ((float) (v * v)), 1) + " dB)";
+              }, 0.8)
+        {
+            const auto& part = proc.getPerformance().parts[(size_t) index];
+            own.setButtonText (T ("Own level for this part (overrides HARMONY Velocity)"));
+            own.setToggleState (part.tercaVel >= 0.0f, juce::dontSendNotification);
+            own.onClick = [this]
+            {
+                const bool on = own.getToggleState();
+                const float v = (float) knob.getValue();
+                edit ([on, v] (PerfPart& pp) { pp.tercaVel = on ? v : -1.0f; });
+                update();
+            };
+            addAndMakeVisible (own);
+            knob.setValue (part.tercaVel >= 0.0f ? part.tercaVel : proc.getTerca().velocity);
+            knob.slider.setTooltip (T ("How loud the third is on this part (10% = about -40 dB, 50% = -12 dB, 80% = -4 dB, 100% = same as melody)"));
+            knob.onChange = [this] (double v)
+            {
+                if (! own.getToggleState()) { own.setToggleState (true, juce::dontSendNotification); }
+                edit ([v] (PerfPart& pp) { pp.tercaVel = (float) v; });
+                update();
+            };
+            addAndMakeVisible (knob);
+            info.setFont (juce::FontOptions (12.0f));
+            info.setColour (juce::Label::textColourId, Pal::dim);
+            addAndMakeVisible (info);
+            update();
+            setSize (330, 170);
+        }
+        void update()
+        {
+            const int g = juce::roundToInt (proc.getTerca().velocity * 100.0f);
+            info.setText (own.getToggleState() ? T ("Saved with the performance. General HARMONY Velocity: ") + juce::String (g) + "%"
+                                               : T ("Uses general HARMONY Velocity: ") + juce::String (g) + "%", juce::dontSendNotification);
+            knob.setAlpha (own.getToggleState() ? 1.0f : 0.5f);
+        }
+        void edit (std::function<void (PerfPart&)> fn)
+        {
+            auto perf = proc.getPerformance();
+            fn (perf.parts[(size_t) index]);
+            proc.updatePerformance (perf);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (6);
+            own.setBounds (r.removeFromTop (24));
+            info.setBounds (r.removeFromTop (20));
+            knob.setBounds (r.withSizeKeepingCentre (110, r.getHeight()));
+        }
+        LiveSamplerProcessor& proc;
+        const int index;
+        juce::ToggleButton own;
+        juce::Label info;
+        ValueKnob knob;
     };
 }
 
@@ -423,6 +491,13 @@ void PartStrip::showPartMenu()
     });
 }
 
+void PartStrip::showHarmLevel()
+{
+    auto* top = getTopLevelComponent();
+    juce::CallOutBox::launchAsynchronously (std::make_unique<PartHarmPanel> (proc, index, colour),
+                                            top->getLocalArea (this, tercaButton.getBounds()), top);
+}
+
 void PartStrip::showEq()
 {
     auto* top = getTopLevelComponent();
@@ -512,6 +587,9 @@ void PartStrip::refresh()
     keyLow.updateText();
     keyHigh.updateText();
     tercaButton.setToggleState (p.terca, juce::dontSendNotification);
+    tercaButton.setButtonText (p.tercaVel >= 0.0f ? "HARM*" : "HARM");
+    tercaButton.setTooltip (T ("This part gets the harmony (terca) when it is on. Right click: harmony level for this part")
+                            + (p.tercaVel >= 0.0f ? "\n" + T ("Own level: ") + juce::String (juce::roundToInt (p.tercaVel * 100.0f)) + "%" : juce::String()));
     sustainButton.setToggleState (p.sustainPedal, juce::dontSendNotification);
     exprButton.setToggleState (p.expression, juce::dontSendNotification);
     setAlpha (p.on ? 1.0f : 0.55f);
@@ -1096,7 +1174,7 @@ SceneBar::SceneBar (LiveSamplerProcessor& p, bool b) : proc (p), big (b)
     storeButton.setTooltip (T ("Turn on, then click a scene: it remembers which parts are on, their volume, pan, transpose, octave, harmony, keys and sends."));
     addAndMakeVisible (storeButton);
     moreButton.setButtonText (juce::String::fromUTF8 ("\xe2\x8b\xaf"));
-    moreButton.setTooltip (T ("Rename / clear a scene"));
+    moreButton.setTooltip (T ("Scene menu: rename / clear a stored scene (store a scene first with STORE)"));
     moreButton.onClick = [this] { menu(); };
     addAndMakeVisible (moreButton);
 }
@@ -1123,6 +1201,8 @@ void SceneBar::menu()
             ren.addItem (100 + i, juce::String (i + 1) + "  " + p.scenes[(size_t) i].name);
             clr.addItem (200 + i, juce::String (i + 1) + "  " + p.scenes[(size_t) i].name);
         }
+    if (ren.getNumItems() == 0)
+        m.addItem (1, T ("No scenes stored yet: click STORE, then a scene number"), false);
     m.addSubMenu (T ("Rename scene"), ren, ren.getNumItems() > 0);
     m.addSubMenu (T ("Clear scene"), clr, clr.getNumItems() > 0);
     juce::Component::SafePointer<SceneBar> safe (this);
@@ -1155,7 +1235,6 @@ void SceneBar::refresh()
         scenes[i].setColour (juce::TextButton::buttonColourId, cur ? Pal::accent : sc.used ? juce::Colour (0xff2f5d8a) : Pal::panelHi.darker (0.3f));
         scenes[i].setColour (juce::TextButton::textColourOffId, cur ? juce::Colours::black : sc.used ? Pal::text : Pal::dim);
     }
-    moreButton.setEnabled (std::any_of (p.scenes.begin(), p.scenes.end(), [] (const Scene& s) { return s.used; }));
 }
 
 void SceneBar::resized()
@@ -1378,6 +1457,12 @@ OscRow::OscRow (LiveSamplerProcessor& p, LiveSamplerEditor& e, int r, std::funct
     eqButton.onClick = [this] { showEq(); };
     addAndMakeVisible (eqButton);
 
+    xfButton.setButtonText ("XF");
+    xfButton.setClickingTogglesState (false);
+    xfButton.getProperties().set ("fontSize", 11.0f);
+    xfButton.onClick = [this] { showXfade(); };
+    addAndMakeVisible (xfButton);
+
     auto c3 = [this] { return proc.getC3Is60(); };
     UI::setupIncDec (level, -40, 12, 0.5, [] (double v) { return juce::String (v, 1); });
     UI::setupIncDec (pan, -1, 1, 0.05, UI::panText);
@@ -1559,6 +1644,126 @@ namespace
 
 namespace
 {
+    // Velocity crossfade jednog MS-a (Kronos: Bottom Vel / Xfade Range / Curve) + grafik jacine svih MS-ova bloka
+    struct MsXfadePanel : public juce::Component
+    {
+        MsXfadePanel (LiveSamplerProcessor& p, int user, int osc, juce::Colour c) : proc (p), u (user), o (osc), colour (c)
+        {
+            auto steps = [] (double v) { return v < 0.5 ? T ("Off") : juce::String ((int) v); };
+            auto from = [] (double v) { return v < 0.5 ? T ("Auto") : juce::String ((int) v); };
+            auto db = [] (double v) { return v > -0.05 ? T ("Off") : juce::String (v, 1) + " dB"; };
+            const auto& s = os();
+            struct K { const char* n; double lo, hi, centre, val; std::function<juce::String (double)> f; const char* tip; };
+            const K ks[] = {
+                { "Xfade in", 0, 127, 20, (double) s.fadeIn, steps, "How many velocity steps from Vel lo upward this MS fades in (Kronos Xfade Range of this zone)" },
+                { "Xfade out", 0, 127, 20, (double) s.fadeOut, steps, "How many velocity steps this MS fades out while the MS above fades in" },
+                { "Out from", 0, 127, 64, (double) s.fadeOutFrom, from, "Velocity where the fade out starts (Kronos: Bottom Vel of the MS above). Auto = ends at Vel hi" },
+                { "Vel ramp", -40, 0, -12, (double) s.velRampDb, db, "Extra level at Vel lo, rising smoothly to 0 dB at the top of this MS" } };
+            for (int k = 0; k < 4; ++k)
+            {
+                auto* kn = knobs.add (new ValueKnob (T (ks[k].n), c, ks[k].lo, ks[k].hi, ks[k].centre, ks[k].f, k == 3 ? 0.0 : 0.0));
+                kn->setValue (ks[k].val);
+                kn->slider.setTooltip (T (ks[k].tip));
+                kn->onChange = [this, k] (double v)
+                {
+                    edit ([k, v] (OscSettings& x)
+                    {
+                        if (k == 0) x.fadeIn = juce::roundToInt (v);
+                        else if (k == 1) x.fadeOut = juce::roundToInt (v);
+                        else if (k == 2) x.fadeOutFrom = juce::roundToInt (v);
+                        else x.velRampDb = (float) (v > -0.05 ? 0.0 : v);
+                    });
+                };
+                addAndMakeVisible (kn);
+            }
+            const char* cn[] = { "Linear", "Power" };
+            for (int k = 0; k < 2; ++k)
+            {
+                auto& b = curve[k];
+                b.setButtonText (T (cn[k]));
+                b.setClickingTogglesState (false);
+                b.setColour (juce::TextButton::buttonOnColourId, c);
+                b.setTooltip (k == 0 ? T ("Linear: levels of both MS add up to the same amplitude") : T ("Power: equal power crossfade, no dip in the middle"));
+                b.onClick = [this, k] { edit ([k] (OscSettings& x) { x.fadeCurve = k; }); updateCurve(); };
+                addAndMakeVisible (b);
+            }
+            updateCurve();
+            setSize (480, 250);
+        }
+        const OscSettings& os() const { return proc.getUser (u).osc[(size_t) o]; }
+        void edit (std::function<void (OscSettings&)> fn)
+        {
+            auto user = proc.getUser (u);
+            fn (user.osc[(size_t) o]);
+            proc.updateUser (u, user);
+            repaint();
+        }
+        void updateCurve() { for (int k = 0; k < 2; ++k) curve[k].setToggleState (os().fadeCurve == k, juce::dontSendNotification); }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (6);
+            graph = r.removeFromTop (110).toFloat();
+            r.removeFromTop (4);
+            auto cr = r.removeFromRight (80);
+            curve[0].setBounds (cr.removeFromTop (cr.getHeight() / 2).reduced (2, 6));
+            curve[1].setBounds (cr.reduced (2, 6));
+            const int w = r.getWidth() / 4;
+            for (auto* k : knobs) k->setBounds (r.removeFromLeft (w));
+        }
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (Pal::lcdBg);
+            g.fillRoundedRectangle (graph, 5.0f);
+            auto a = graph.reduced (8.0f, 10.0f);
+            g.setColour (Pal::lcdText.withAlpha (0.25f));
+            for (int v : { 32, 64, 96 })
+                g.drawVerticalLine (juce::roundToInt (a.getX() + a.getWidth() * (float) (v - 1) / 126.0f), a.getY(), a.getBottom());
+            g.setFont (juce::FontOptions (10.0f));
+            g.drawText ("1", juce::Rectangle<float> (a.getX(), a.getBottom() - 1.0f, 30.0f, 10.0f), juce::Justification::left);
+            g.drawText ("127", juce::Rectangle<float> (a.getRight() - 30.0f, a.getBottom() - 1.0f, 30.0f, 10.0f), juce::Justification::right);
+            const auto& user = proc.getUser (u);
+            const int blk = o / kMsPerOsc;
+            for (int pass = 0; pass < 2; ++pass)
+                for (int m = 0; m < kMsPerOsc; ++m)
+                {
+                    const int idx = blk * kMsPerOsc + m;
+                    const auto& x = user.osc[(size_t) idx];
+                    const bool me = idx == o;
+                    if ((pass == 1) != me || ! (x.on || me)) continue;
+                    juce::Path path;
+                    for (int v = 1; v <= 127; ++v)
+                    {
+                        const float px = a.getX() + a.getWidth() * (float) (v - 1) / 126.0f;
+                        const float py = a.getBottom() - a.getHeight() * x.velocityGain (v) * juce::Decibels::decibelsToGain (juce::jmin (0.0f, x.levelDb));
+                        if (v == 1) path.startNewSubPath (px, py); else path.lineTo (px, py);
+                    }
+                    g.setColour (me ? colour : Pal::lcdText.withAlpha (0.45f));
+                    g.strokePath (path, juce::PathStrokeType (me ? 2.2f : 1.2f));
+                    if (x.on)
+                    {
+                        int peak = x.velLow; float best = -1.0f;
+                        for (int v = x.velLow; v <= x.velHigh; ++v) if (x.velocityGain (v) > best) { best = x.velocityGain (v); peak = v; }
+                        const float px = a.getX() + a.getWidth() * (float) (peak - 1) / 126.0f;
+                        g.drawText ("MS" + juce::String (m + 1), juce::Rectangle<float> (px - 16.0f, a.getY() - 10.0f, 32.0f, 10.0f), juce::Justification::centred);
+                    }
+                }
+            const auto& me = os();
+            g.setColour (Pal::text.withAlpha (0.8f));
+            g.drawText (T ("Velocity ") + juce::String (me.velLow) + "-" + juce::String (me.velHigh) + T ("  (gain at 127: ")
+                            + juce::String (juce::Decibels::gainToDecibels (me.velocityGain (127), -60.0f), 1) + " dB)",
+                        graph.reduced (8.0f, 2.0f).removeFromBottom (12.0f).withTrimmedBottom (-2.0f), juce::Justification::centredRight);
+        }
+        LiveSamplerProcessor& proc;
+        const int u, o;
+        juce::Colour colour;
+        juce::OwnedArray<ValueKnob> knobs;
+        juce::TextButton curve[2];
+        juce::Rectangle<float> graph;
+    };
+}
+
+namespace
+{
     // Key follow (Pitch Slope) i "jedan sempl na sve tastere" za jedan MS
     struct MsKeyFollowPanel : public juce::Component
     {
@@ -1658,6 +1863,15 @@ void OscRow::showEq()
                                             top->getLocalArea (this, eqButton.getBounds()), top);
 }
 
+void OscRow::showXfade()
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    auto* top = getTopLevelComponent();
+    juce::CallOutBox::launchAsynchronously (std::make_unique<MsXfadePanel> (proc, u, oscIndex(), Pal::part[blockFn()]),
+                                            top->getLocalArea (this, xfButton.getBounds()), top);
+}
+
 void OscRow::edit (std::function<void (OscSettings&)> fn)
 {
     const int u = userIndex();
@@ -1693,6 +1907,17 @@ void OscRow::refresh()
                                   : T ("Copy / paste / delete this MS, key follow"));
     }
     eqButton.setColour (juce::TextButton::buttonColourId, s.hasEq() ? juce::Colour (0xff2f7d4a) : Pal::panelHi);
+    {
+        const bool xf = s.fadeIn > 0 || s.fadeOut > 0 || s.velRampDb < -0.05f;
+        xfButton.setColour (juce::TextButton::buttonColourId, xf ? juce::Colour (0xff2f5f8d) : Pal::panelHi);
+        juce::String tip = T ("Velocity crossfade of this MS (like Kronos Xfade Range / Curve)");
+        if (xf)
+            tip << "\n" << T ("Xfade in: ") << (s.fadeIn > 0 ? juce::String (s.fadeIn) : T ("Off"))
+                << "   " << T ("Xfade out: ") << (s.fadeOut > 0 ? juce::String (s.fadeOut) + (s.fadeOutFrom > 0 ? T (" from ") + juce::String (s.fadeOutFrom) : juce::String()) : T ("Off"))
+                << "   " << (s.fadeCurve == 1 ? "Power" : "Linear")
+                << "\n" << T ("Gain at 127: ") << juce::String (juce::Decibels::gainToDecibels (s.velocityGain (127), -60.0f), 1) << " dB";
+        xfButton.setTooltip (tip);
+    }
     setSliderValue (level, s.levelDb);
     setSliderValue (pan, s.pan);
     setSliderValue (transpose, s.transpose);
@@ -1722,7 +1947,7 @@ void OscRow::resized()
     r.removeFromLeft (6);
     const int boxW = 82;
     juce::Slider* boxes[] = { &level, &pan, &transpose, &fine, &keyLow, &keyHigh, &velLow, &velHigh };
-    const int fixed = boxW * 8 + 56 + 6 + 72;
+    const int fixed = boxW * 8 + 56 + 6 + 72 + 34;
     auto instArea = r.removeFromLeft (r.getWidth() - fixed);
     instPrev.setBounds (instArea.removeFromLeft (20).reduced (0, 2));
     instNext.setBounds (instArea.removeFromRight (20).reduced (0, 2));
@@ -1732,6 +1957,7 @@ void OscRow::resized()
     r.removeFromLeft (2);
     keyOffButton.setBounds (r.removeFromLeft (34).reduced (1, 0));
     eqButton.setBounds (r.removeFromLeft (34).reduced (1, 0));
+    xfButton.setBounds (r.removeFromLeft (34).reduced (1, 0));
     r.removeFromLeft (4);
     for (auto* b : boxes)
     {
@@ -3078,11 +3304,11 @@ void UserPage::resized()
     auto header = r.removeFromTop (16).reduced (4, 0);
     header.removeFromLeft (70);
     const int boxW = 82;
-    const int fixed = boxW * 8 + 56 + 6 + 72;
+    const int fixed = boxW * 8 + 56 + 6 + 72 + 34;
     headerLabels[0].setBounds (header.removeFromLeft (header.getWidth() - fixed));
     header.removeFromLeft (4);
     headerLabels[2].setBounds (header.removeFromLeft (52));
-    header.removeFromLeft (2 + 72);
+    header.removeFromLeft (2 + 72 + 34);
     for (int i = 3; i < 9; ++i)
         headerLabels[i].setBounds (header.removeFromLeft (boxW));
     headerLabels[9].setBounds (header);

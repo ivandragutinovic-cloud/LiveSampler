@@ -46,7 +46,9 @@ public:
     void bindCombo (juce::ComboBox& c, const juce::String& id);
 
     // UI
-    void showMenu (juce::Component* target, const juce::String& id, bool allowNote);
+    // extraItems: dodatne stavke (id >= 100) ispod MIDI Learn-a, npr. podesavanja tog dugmeta
+    void showMenu (juce::Component* target, const juce::String& id, bool allowNote,
+                   std::function<void (juce::PopupMenu&)> extraItems = {}, std::function<void (int)> onExtra = {});
     void startLearn (const juce::String& id, bool allowNote);
     void cancelLearn();
     bool isLearning() const { return learnMode.load() != 0; }
@@ -125,6 +127,9 @@ public:
     ~LearnButton() override { MidiLearn::get().removeChangeListener (this); }
     std::function<juce::String()> learnId;
     void setLearnId (const juce::String& id) { learnId = [id] { return id; }; repaint(); }
+    // desni klik: dodatne stavke u meniju (id >= 100)
+    std::function<void (juce::PopupMenu&)> extraMenuItems;
+    std::function<void (int)> onExtraMenuItem;
     void mouseDown (const juce::MouseEvent& e) override;
     void mouseUp (const juce::MouseEvent& e) override;
     void paintOverChildren (juce::Graphics& g) override { if (learnId) LearnMark::paint (g, *this, learnId()); }

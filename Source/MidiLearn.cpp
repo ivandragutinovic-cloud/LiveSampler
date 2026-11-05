@@ -169,7 +169,8 @@ void MidiLearn::cancelLearn()
     sendChangeMessage();
 }
 
-void MidiLearn::showMenu (juce::Component* target, const juce::String& id, bool allowNote)
+void MidiLearn::showMenu (juce::Component* target, const juce::String& id, bool allowNote,
+                          std::function<void (juce::PopupMenu&)> extraItems, std::function<void (int)> onExtra)
 {
     if (id.isEmpty()) return;
     juce::PopupMenu m;
@@ -180,8 +181,10 @@ void MidiLearn::showMenu (juce::Component* target, const juce::String& id, bool 
     else
         m.addItem (1, allowNote ? "MIDI Learn (move a CC or press a key)" : "MIDI Learn (move a knob / CC)");
     m.addItem (2, "Remove Learn", cur.isNotEmpty());
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, id, allowNote] (int r)
+    if (extraItems) { m.addSeparator(); extraItems (m); }
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [this, id, allowNote, onExtra] (int r)
     {
+        if (r >= 100) { if (onExtra) onExtra (r); return; }
         if (r == 1) startLearn (id, allowNote);
         else if (r == 2) clear (id);
         else if (r == 3) cancelLearn();
@@ -383,7 +386,7 @@ void LearnSlider::mouseUp (const juce::MouseEvent& e)   { if (menuOpen) { menuOp
 
 void LearnButton::mouseDown (const juce::MouseEvent& e)
 {
-    if (learnPopup (e, learnId)) { menuOpen = true; MidiLearn::get().showMenu (this, learnId(), true); return; }
+    if (learnPopup (e, learnId)) { menuOpen = true; MidiLearn::get().showMenu (this, learnId(), true, extraMenuItems, onExtraMenuItem); return; }
     menuOpen = false;
     juce::TextButton::mouseDown (e);
 }

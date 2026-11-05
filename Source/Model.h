@@ -26,6 +26,7 @@ struct OscSettings
     int velLow = 1, velHigh = 127;
     int block = 0;                      // 0 = OSC1, 1 = OSC2 (uvek index / kMsPerOsc)
     int fadeIn = 0, fadeOut = 0;        // velocity crossfade (koliko koraka od donje / gornje granice)
+    int fadeOutFrom = 0;                // od koje jacine pocinje utisavanje (Kronos: donja granica gornje zone); 0 = velHigh - fadeOut + 1
     int fadeCurve = 0;                  // 0 linearno, 1 power
     float velRampDb = 0.0f;             // izjednacena dinamika slojeva: jacina na donjoj granici MS-a (dB, gornja = 0)
     bool keyOff = false;                // svira kad se pusti taster (release / keyoff sempl)
@@ -34,6 +35,29 @@ struct OscSettings
     // jedan sempl na svim tasterima: zona sa ovog tastera svira na celom rasponu MS-a (-1 = iskljuceno, svaki taster svoju zonu)
     int zoneKey = -1;
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;   // EQ ovog MS-a
+
+    // jacina ovog MS-a za datu dinamiku (velocity crossfade + izjednacena dinamika), bez Level-a
+    float velocityGain (int velocity) const
+    {
+        if (velocity < velLow || velocity > velHigh) return 0.0f;
+        auto fade = [this] (int steps, int dist)
+        {
+            if (steps <= 0) return 1.0f;
+            const float x = juce::jlimit (0.0f, 1.0f, (float) (dist + 1) / (float) (steps + 1));
+            return fadeCurve == 1 ? std::sin (x * juce::MathConstants<float>::halfPi) : x;
+        };
+        float g = fade (fadeIn, velocity - velLow);
+        // utisavanje ide od fadeOutFrom navise (kao na Kronosu): moze da se zavrsi i iznad 127
+        const int outStart = fadeOut > 0 ? (fadeOutFrom > 0 ? fadeOutFrom : velHigh - fadeOut + 1) : velHigh + 1;
+        g *= fade (fadeOut, outStart + fadeOut - 1 - velocity);
+        if (velRampDb < 0.0f)
+        {
+            const int top = juce::jmax (velLow + 1, juce::jmin (velHigh, outStart - 1));
+            const float t = juce::jlimit (0.0f, 1.0f, (float) (velocity - velLow) / (float) (top - velLow));
+            g *= juce::Decibels::decibelsToGain (velRampDb * (1.0f - t));
+        }
+        return g;
+    }
 
     bool hasEq() const { return std::abs (eqLowDb) > 0.05f || std::abs (eqMidDb) > 0.05f || std::abs (eqHighDb) > 0.05f; }
 };
@@ -143,6 +167,7 @@ struct PerfPart
     int midiChannel = 0;                // 0 = svi kanali
     float reverbSend = 0.2f, delaySend = 0.0f;
     bool terca = false;                 // ovaj deo dobija terce
+    float tercaVel = -1.0f;             // jacina terce samo za ovaj part (0.05..1.5), -1 = generalna (HARMONY Velocity)
     bool sustainPedal = true;
     bool expression = true;             // prima Expression (CC11)
     bool scaleTune = true;              // prati orijentalno stimovanje performansa (iskljuci za bubnjeve)

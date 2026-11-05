@@ -419,23 +419,9 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         }
 
         const float pan = juce::jlimit (-1.0f, 1.0f, zone->pan + o.pan);
-        float xfade = 1.0f;
-        auto fade = [&o] (int steps, int dist)
-        {
-            if (steps <= 0) return 1.0f;
-            const float x = juce::jlimit (0.0f, 1.0f, (float) (dist + 1) / (float) (steps + 1));
-            return o.fadeCurve == 1 ? std::sin (x * juce::MathConstants<float>::halfPi) : x;
-        };
-        xfade *= fade (o.fadeIn, velocity - o.velLow);
-        xfade *= fade (o.fadeOut, o.velHigh - velocity);
-        // izjednacena dinamika: od donje granice (velRampDb) do vrha sloja (0 dB), glatko kroz ceo opseg
-        float rampDb = 0.0f;
-        if (o.velRampDb < 0.0f)
-        {
-            const int top = juce::jmax (o.velLow + 1, o.velHigh - o.fadeOut);
-            const float t = juce::jlimit (0.0f, 1.0f, (float) (velocity - o.velLow) / (float) (top - o.velLow));
-            rampDb = o.velRampDb * (1.0f - t);
-        }
+        // velocity crossfade + izjednacena dinamika (ista formula kao grafik u USER > XF)
+        const float xfade = o.velocityGain (velocity);
+        const float rampDb = 0.0f;
         const float g = xfade * juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb + rampDb)
                       * (id >= 128 && cfg != nullptr ? cfg->harmGain : 1.0f);   // terca: svoja jacina
         v.vel01 = vel01;

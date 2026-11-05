@@ -25,6 +25,7 @@ private:
     const juce::Colour colour;
 
     void showEq();
+    void showHarmLevel();
     void showPartMenu();
     LearnButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
     void stepUser (int dir);
@@ -203,8 +204,9 @@ private:
 
     void showMenu();
     void showEq();
+    void showXfade();
     void showKeyFollow();
-    LearnButton onButton, menuButton, instButton, mapButton, keyOffButton, eqButton, instPrev, instNext;
+    LearnButton onButton, menuButton, instButton, mapButton, keyOffButton, eqButton, xfButton, instPrev, instNext;
     void stepInstrument (int dir);
     void pickInstrument();
     LearnSlider level, pan, transpose, fine, keyLow, keyHigh, velLow, velHigh;

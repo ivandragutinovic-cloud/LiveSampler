@@ -586,7 +586,7 @@ void LiveSamplerProcessor::rebuildConfig()
         if (perf.tuneOn && pr.part.scaleTune) pr.scaleCents = perf.tuneCents;
         pr.maxVoices = maxPolyphony;
         // HARMONY Velocity: jacina terce (0.1 = oko -40 dB, 0.5 = -12 dB, 0.8 = -4 dB, 1.5 = +7 dB), boja ostaje kao kod melodije
-        pr.harmGain = std::pow (juce::jlimit (0.05f, 1.5f, terca.velocity), 2.0f);
+        pr.harmGain = std::pow (juce::jlimit (0.05f, 1.5f, pr.part.tercaVel >= 0.0f ? pr.part.tercaVel : terca.velocity), 2.0f);   // part moze da pregazi generalnu
         pr.vectorOn = perf.vectorOn;
         pr.vectorEqualPower = perf.vectorEqualPower;
     }
@@ -1101,7 +1101,9 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje.
         // Xfade range ide od donje granice zone navise: gornja zona se tu pojacava,
         // donja se utisava (Linear/Power) ili svira punom jacinom (Layer).
-        int top = 127, prevRange = 0, prevCurve = 0, ms = 0;
+        // Kao na Kronosu: pretapanje pocinje na Bottom Vel gornje zone i ide navise za Xfade Range koraka
+        // (moze da predje 127 - tada se na 127 i dalje cuju obe zone). Donja zona se utisava od te granice.
+        int top = 127, prevRange = 0, prevCurve = 0, prevBottom = 0, ms = 0;
         for (int z = 0; z < 8 && top >= 1; ++z)
         {
             const auto& zone = prog.osc[(size_t) o][(size_t) z];
@@ -1114,9 +1116,11 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             const int lo = juce::jmax (bottom, q.velLow), hi = juce::jmin (top, q.velHigh);
             const int oscCurve = curve == 1 || prevCurve == 1 ? 1 : 0;
 
+            const int fadeFrom = fadeOut > 0 ? prevBottom : 0;
             top = bottom - 1 + (lowerExists ? range : 0);
             prevRange = lowerExists ? range : 0;
             prevCurve = curve;
+            prevBottom = bottom;
             if (lo > hi || ms >= kMsPerOsc) continue;
 
             const auto inst = resolveKronosZone (zone);
@@ -1136,6 +1140,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
             os.velHigh = hi;
             os.fadeIn = fadeIn;
             os.fadeOut = fadeOut;
+            os.fadeOutFrom = fadeFrom;
             os.fadeCurve = oscCurve;
             os.keyLow = juce::jmin (q.keyLow, q.keyHigh);
             os.keyHigh = juce::jmax (q.keyLow, q.keyHigh);
@@ -1911,6 +1916,7 @@ bool LiveSamplerProcessor::layoutVelocityLayers (UserProgram& user, int block, c
         o.velLow = m + 1 < n ? layers[(size_t) m + 1] + 1 : 1;
         o.fadeIn = m + 1 < n ? xf : 0;
         o.fadeOut = m > 0 ? xf : 0;
+        o.fadeOutFrom = 0;
         if (m > 0) o.velHigh = juce::jmin (127, o.velHigh + xf);   // slabiji sloj ulazi u pretapanje
         o.fadeCurve = xf > 0 ? 1 : 0;
         o.velRampDb = 0.0f;
@@ -2018,7 +2024,7 @@ bool LiveSamplerProcessor::deleteVelocityLayer (int userIndex, int oscIndex, juc
                 if (remaining.size() >= 2) layoutVelocityLayers (user, b, proto, remaining);
                 else
                 {
-                    proto.velLow = 1; proto.velHigh = 127; proto.fadeIn = proto.fadeOut = 0; proto.velRampDb = 0.0f;
+                    proto.velLow = 1; proto.velHigh = 127; proto.fadeIn = proto.fadeOut = proto.fadeOutFrom = 0; proto.velRampDb = 0.0f;
                     for (int m = 0; m < kMsPerOsc; ++m) { auto& o = user.osc[(size_t) (b * kMsPerOsc + m)]; o = OscSettings(); o.block = b; }
                     user.osc[(size_t) (b * kMsPerOsc)] = proto;
                     user.block[(size_t) b].velSens = 0.6f;
