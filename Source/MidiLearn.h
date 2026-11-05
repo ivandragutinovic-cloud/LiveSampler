@@ -53,6 +53,8 @@ public:
     juce::String learningId() const { return learnTargetId; }
     bool isAssigned (const juce::String& id) const { return assigns.count (id) > 0; }
     juce::String describe (const juce::String& id) const;
+    juce::StringArray idsFor (int type, int channel, int number) const;   // type 1 CC, 2 nota (message thread)
+    bool stateOf (const juce::String& id, bool& state) const;             // false = nije dugme sa stanjem
     void clear (const juce::String& id);
 
     // audio thread: true = the message was used by MIDI Learn (do not pass it on)

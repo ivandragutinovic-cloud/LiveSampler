@@ -613,6 +613,7 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "tuneCents")   proc.setTuneCents ((int) v["pc"], (float) (double) v["cents"]);
     else if (op == "qtEdit")      proc.setQtEdit ((bool) v["on"]);
     else if (op == "gig")         proc.setGigMode ((bool) v["on"]);
+    else if (op == "impulse")     proc.impulseFromRemote (v["id"].toString(), (int) v["v"]);
     else if (op == "maxPoly")     proc.setMaxPolyphony ((int) v["n"]);
     else if (op == "keyLearn")    { if ((int) v["mode"] == 0) proc.cancelKeyLearn(); else proc.armKeyLearn ((int) v["part"], (int) v["mode"]); }
     else if (op == "sceneRecall") proc.recallScene ((int) v["scene"]);
@@ -730,6 +731,19 @@ juce::StringPairArray RemoteServer::buildSections()
             st->setProperty ("tuneName", pf.tuneName);
             st->setProperty ("qtEdit", proc.isQtEdit());
             st->setProperty ("gig", proc.isGigMode());
+            {
+                // IMPULSE: [id, vrsta, ime, vrednost, sta radi u Workstation-u, stanje -1/0/1]
+                juce::Array<juce::var> im;
+                for (auto& c : proc.getImpulseLayout())
+                {
+                    int state = -1;
+                    const auto what = proc.impulseTargetText (c, state);
+                    im.add (juce::Array<juce::var> { c.id, c.kind, c.name, proc.getImpulseValue (c), what, state });
+                }
+                st->setProperty ("imp", im);
+                st->setProperty ("impSeen", proc.isImpulseSeen());
+                st->setProperty ("impCh", proc.getImpulseChannel());
+            }
             st->setProperty ("keyLearn", proc.getKeyLearnMode());
             const auto ai = proc.getAudioInfo();
             st->setProperty ("cpu", juce::roundToInt (proc.getAudioLoad() * 100.0f));

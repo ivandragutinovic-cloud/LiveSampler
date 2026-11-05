@@ -280,6 +280,23 @@ void MidiLearn::timerCallback()
     }
 }
 
+juce::StringArray MidiLearn::idsFor (int type, int channel, int number) const
+{
+    juce::StringArray out;
+    for (auto& kv : assigns)
+        if (kv.second.type == type && kv.second.channel == channel && kv.second.number == number && targets.count (kv.first) > 0)
+            out.add (kv.first);
+    return out;
+}
+
+bool MidiLearn::stateOf (const juce::String& id, bool& state) const
+{
+    auto it = targets.find (id);
+    if (it == targets.end() || ! it->second.isButton || ! it->second.getState) return false;
+    state = it->second.getState();
+    return true;
+}
+
 void MidiLearn::dispatch (int type, int channel, int number, int value)
 {
     const int key = (type * 16 + channel) * 128 + number;

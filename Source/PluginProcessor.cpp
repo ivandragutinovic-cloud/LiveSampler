@@ -36,6 +36,9 @@ LiveSamplerProcessor::LiveSamplerProcessor()
     rebuildConfig();
     if (! libraryFolders.isEmpty())
         rescanLibrary();
+    for (auto& x : impPickup) x = -1;
+    impPhysPrev.fill (-1);
+    loadImpulseLayout ({});
     startTimer (500);
 }
 
@@ -44,6 +47,10 @@ LiveSamplerProcessor::~LiveSamplerProcessor()
     alive->store (false);
     stopTimer();
     remote.reset();
+   #if JucePlugin_Build_Standalone
+    if (auto* holder = juce::StandalonePluginHolder::getInstance())
+        for (auto& id : impRegistered) holder->deviceManager.removeMidiInputDeviceCallback (id, impCallback.get());
+   #endif
     if (saveNeeded)
         saveNow();
     loadPool.removeAllJobs (true, 10000);
@@ -667,6 +674,164 @@ void LiveSamplerProcessor::keepMidiInputs()
    #endif
 }
 
+//==============================================================================
+//  IMPULSE (iPad)
+//==============================================================================
+namespace
+{
+    struct ImpulseCb : juce::MidiInputCallback
+    {
+        LiveSamplerProcessor& p;
+        explicit ImpulseCb (LiveSamplerProcessor& pp) : p (pp) {}
+        void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m) override { p.impulseIncoming (m); }
+    };
+
+    std::vector<LiveSamplerProcessor::ImpulseCtl> impulseDefaults()
+    {
+        std::vector<LiveSamplerProcessor::ImpulseCtl> c;
+        auto add = [&c] (const juce::String& id, const juce::String& kind, const juce::String& name, int type, int num, int ch)
+        { LiveSamplerProcessor::ImpulseCtl x; x.id = id; x.kind = kind; x.name = name; x.type = type; x.num = num; x.ch = ch; c.push_back (x); };
+        for (int i = 1; i <= 8; ++i) add ("k" + juce::String (i), "knob", "Knob " + juce::String (i), 1, 20 + i, 0);
+        for (int i = 1; i <= 8; ++i) add ("f" + juce::String (i), "fader", "Fader " + juce::String (i), 1, 40 + i, 0);
+        add ("f9", "fader", "Master", 1, 49, 0);
+        for (int i = 1; i <= 9; ++i) add ("b" + juce::String (i), "btn", i == 9 ? "M" : juce::String (i), 1, 50 + i, 0);
+        const char* tn[] = { "Rew", "Fwd", "Stop", "Play", "Loop", "Rec" };
+        for (int i = 0; i < 6; ++i) add ("t" + juce::String (114 + i), "trans", tn[i], 1, 114 + i, 0);
+        for (int i = 0; i < 8; ++i) add ("p" + juce::String (i + 1), "pad", "Pad " + juce::String (i + 1), 2, 36 + i, 10);
+        add ("pb", "wheel", "Pitch", 3, 0, 0);
+        add ("mw", "wheel", "Mod", 1, 1, 0);
+        return c;
+    }
+
+    juce::String learnLabel (const juce::String& id)
+    {
+        // "perf.part3.volume" -> "Part 3 volume", "scene.2" -> "Scene 2", "live.harmony" -> "Harmony"
+        auto s = id;
+        for (auto* pre : { "perf.", "user.", "live.", "fx." }) if (s.startsWith (pre)) s = s.fromFirstOccurrenceOf (".", false, false);
+        juce::String out;
+        for (auto& w : juce::StringArray::fromTokens (s, ".", ""))
+        {
+            juce::String t = w;
+            if (t.startsWith ("part") && t.substring (4).containsOnly ("0123456789")) t = "Part " + t.substring (4);
+            else if (t.startsWith ("button") && t.substring (6).containsOnly ("0123456789")) t = "Button " + t.substring (6);
+            else if (t.containsOnly ("0123456789")) t = t;
+            out << (out.isEmpty() ? t.substring (0, 1).toUpperCase() + t.substring (1) : " " + t);
+        }
+        return out;
+    }
+}
+
+void LiveSamplerProcessor::registerImpulseInputs()
+{
+   #if JucePlugin_Build_Standalone
+    auto* holder = juce::StandalonePluginHolder::getInstance();
+    if (holder == nullptr) return;
+    if (impCallback == nullptr) impCallback = std::make_unique<ImpulseCb> (*this);
+    for (auto& d : juce::MidiInput::getAvailableDevices())
+        if (d.name.containsIgnoreCase ("impulse") && ! impRegistered.contains (d.identifier))
+        {
+            holder->deviceManager.addMidiInputDeviceCallback (d.identifier, impCallback.get());
+            impRegistered.add (d.identifier);
+        }
+   #endif
+}
+
+void LiveSamplerProcessor::impulseIncoming (const juce::MidiMessage& m)
+{
+    if (m.isController()) { impCc[(size_t) m.getControllerNumber()] = m.getControllerValue(); if (m.getChannel() != 10) impCh = m.getChannel(); }
+    else if (m.isNoteOnOrOff()) impNote[(size_t) m.getNoteNumber()] = m.isNoteOn() ? m.getVelocity() : 0;
+    else if (m.isPitchWheel()) { impPb = m.getPitchWheelValue() >> 7; impCh = m.getChannel(); }
+    else return;
+    impSeen = true;
+}
+
+int LiveSamplerProcessor::getImpulseValue (const ImpulseCtl& c) const
+{
+    if (c.type == 3) return impPb.load();
+    if (c.type == 2) return impNote[(size_t) juce::jlimit (0, 127, c.num)].load();
+    return impCc[(size_t) juce::jlimit (0, 127, c.num)].load();
+}
+
+juce::String LiveSamplerProcessor::impulseTargetText (const ImpulseCtl& c, int& state) const
+{
+    state = -1;
+    if (c.type == 3) return T ("Pitch bend");
+    const int ch = c.ch > 0 ? c.ch : juce::jmax (1, impCh.load());
+    const auto ids = MidiLearn::get().idsFor (c.type == 2 ? 2 : 1, ch, c.num);
+    if (ids.isEmpty())
+    {
+        if (c.type == 1 && c.num == 1) return T ("Modulation");
+        if (c.type == 1 && c.num == 11) return "Expression";
+        if (c.type == 1 && c.num == 64) return "Sustain";
+        if (c.type == 1 && (c.num == vectorCcX.load() || c.num == vectorCcY.load())) return "Vector " + juce::String (c.num == vectorCcX.load() ? "X" : "Y");
+        return {};
+    }
+    juce::StringArray names;
+    for (auto& id : ids)
+    {
+        names.add (learnLabel (id));
+        bool st = false;
+        if (MidiLearn::get().stateOf (id, st)) state = juce::jmax (state, st ? 1 : 0);
+    }
+    return names.joinIntoString (", ");
+}
+
+void LiveSamplerProcessor::loadImpulseLayout (const juce::var& json)
+{
+    auto def = impulseDefaults();
+    if (const auto* ctls = json.getProperty ("impulse", {}).getProperty ("controls", {}).getArray())
+    {
+        const int baseCh = (int) json.getProperty ("impulse", {}).getProperty ("ch", 0);
+        juce::ignoreUnused (baseCh);   // kanal iz Pikaso Stage je bio za njegov virtuelni Impulse; pravi kanal se cita sa Impulse-a
+        for (auto& d : def)
+            for (auto& x : *ctls)
+                if (x.getProperty ("id", {}).toString() == d.id)
+                {
+                    const auto t = x.getProperty ("type", "cc").toString();
+                    d.type = t == "note" ? 2 : t == "pb" ? 3 : 1;
+                    d.num = juce::jlimit (0, 127, (int) x.getProperty ("num", d.num));
+                    if (d.type == 2) d.ch = juce::jlimit (1, 16, (int) x.getProperty ("ch", d.ch));
+                    const auto nm = x.getProperty ("name", {}).toString();
+                    if (nm.isNotEmpty()) d.name = nm;
+                }
+    }
+    impCtls = def;
+}
+
+void LiveSamplerProcessor::impulseFromRemote (const juce::String& id, int value)
+{
+    for (auto& c : impCtls)
+    {
+        if (c.id != id) continue;
+        value = juce::jlimit (0, 127, value);
+        const int ch = c.ch > 0 ? c.ch : juce::jmax (1, impCh.load());
+        juce::uint32 msg = 0;
+        if (c.type == 3)
+        {
+            const int w = juce::jlimit (0, 16383, value * 16383 / 127);
+            msg = (juce::uint32) (0xE0 | (ch - 1)) | (juce::uint32) (w & 127) << 8 | (juce::uint32) (w >> 7) << 16;
+            impPb = value;
+        }
+        else if (c.type == 2)
+        {
+            msg = (juce::uint32) ((value > 0 ? 0x90 : 0x80) | (ch - 1)) | (juce::uint32) c.num << 8 | (juce::uint32) (value > 0 ? value : 0) << 16;
+            impNote[(size_t) c.num] = value;
+        }
+        else
+        {
+            msg = (juce::uint32) (0xB0 | (ch - 1)) | (juce::uint32) c.num << 8 | (juce::uint32) value << 16;
+            impCc[(size_t) c.num] = value;
+            // pravi knob / fader ostaje gde je bio: preuzima se tek kad stigne do ove vrednosti
+            if (c.kind == "knob" || c.kind == "fader" || c.kind == "wheel") impPickup[(size_t) c.num] = value;
+        }
+        int s1, n1, s2, n2;
+        impFifo.prepareToWrite (1, s1, n1, s2, n2);
+        if (n1 > 0) impFifoData[(size_t) s1] = msg;
+        impFifo.finishedWrite (n1);
+        return;
+    }
+}
+
 void LiveSamplerProcessor::setMaxPolyphony (int n)
 {
     maxPolyphony = juce::jlimit (8, 128, n);
@@ -739,7 +904,7 @@ void LiveSamplerProcessor::timerCallback()
         if (gigMode) applyGigMode();
     }
 
-    if (++midiTick >= 4) { midiTick = 0; keepMidiInputs(); }
+    if (++midiTick >= 4) { midiTick = 0; keepMidiInputs(); registerImpulseInputs(); }
 
     // Live Kontroler: prvi put se sam poveze ako fajl postoji; posle se prati izmena fajla
     if (++kontrolerTick >= 4)
@@ -2165,6 +2330,7 @@ bool LiveSamplerProcessor::syncKontroler (juce::String* report)
         return false;
     }
     const auto dev = kontrolerDeviceId (json);
+    loadImpulseLayout (json);
 
     juce::StringArray names;
     std::vector<juce::Colour> colours;
@@ -2536,6 +2702,22 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         return;
     }
 
+    // IMPULSE pickup: posle pomeranja sa iPada pravi knob / fader se ne cuje dok ne stigne do te vrednosti
+    if (m.isController() && ! impInjecting && m.getChannel() == impCh.load())
+    {
+        const int num = m.getControllerNumber(), v = m.getControllerValue();
+        const int want = impPickup[(size_t) num].load();
+        if (want >= 0)
+        {
+            const int prev = impPhysPrev[(size_t) num];
+            impPhysPrev[(size_t) num] = v;
+            const bool crossed = std::abs (v - want) <= 2 || (prev >= 0 && ((prev < want) != (v < want)));
+            if (! crossed) return;
+            impPickup[(size_t) num] = -1;
+        }
+        else impPhysPrev[(size_t) num] = v;
+    }
+
     // MIDI Learn (desni klik na kontrolu): naucen CC / taster ide samo na tu kontrolu
     if (MidiLearn::get().handleIncoming (m))
         return;
@@ -2732,6 +2914,26 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         {
             parts[p].setVector (vectorX.load(), vectorY.load());
             parts[p].beginBlock (&c.parts[(size_t) p], len);
+        }
+
+        if (start == 0 && impFifo.getNumReady() > 0)
+        {
+            // komande sa iPada (IMPULSE strana): kao da su stigle sa Impulse-a
+            int s1, n1, s2, n2;
+            impFifo.prepareToRead (impFifo.getNumReady(), s1, n1, s2, n2);
+            impInjecting = true;
+            auto run = [&] (int st, int n)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    const auto w = impFifoData[(size_t) (st + i)];
+                    const juce::uint8 b[3] { (juce::uint8) (w & 0xff), (juce::uint8) ((w >> 8) & 0x7f), (juce::uint8) ((w >> 16) & 0x7f) };
+                    handleMidi (juce::MidiMessage (b, 3, 0.0), c);
+                }
+            };
+            run (s1, n1); run (s2, n2);
+            impInjecting = false;
+            impFifo.finishedRead (n1 + n2);
         }
 
         int pos = 0;

@@ -260,6 +260,17 @@ public:
     void cancelKeyLearn() { keyLearnMode = 0; sendChangeMessage(); }
     int getKeyLearnMode() const { return keyLearnMode.load(); }
     int getKeyLearnPart() const { return keyLearnPart.load(); }
+    // IMPULSE (iPad): pregled i upravljanje Novation Impulse-om. Workstation ga cita direktno (MIDI ulaz),
+    // iPad pomera kontrole kao da su pomerene na Impulse-u; pravi fader se preuzima tek kad prodje kroz vrednost (pickup).
+    struct ImpulseCtl { juce::String id, kind, name; int type = 1; int num = 0; int ch = 0; };   // type: 1 CC, 2 nota, 3 pitch
+    const std::vector<ImpulseCtl>& getImpulseLayout() const { return impCtls; }
+    int getImpulseValue (const ImpulseCtl&) const;
+    int getImpulseChannel() const { return impCh.load(); }
+    bool isImpulseSeen() const { return impSeen.load(); }
+    void impulseFromRemote (const juce::String& id, int value);
+    juce::String impulseTargetText (const ImpulseCtl&, int& state) const;   // state: -1 nema, 0 iskljuceno, 1 ukljuceno
+    void loadImpulseLayout (const juce::var& kontrolerJson);
+    void impulseIncoming (const juce::MidiMessage&);   // MIDI nit: samo pamti vrednosti
     bool isQtEdit() const { return qtEdit.load(); }
     void setQtEdit (bool b) { qtEdit = b; sendChangeMessage(); }
     float getGlobalVolume() const { return globalDb; }
@@ -392,7 +403,19 @@ private:
     juce::String kontrolerStatus;
     friend class BackupThread;
     std::unique_ptr<juce::Thread> backupThread;
-    std::unique_ptr<class RemoteServer> remote;     // iPad (Live Kontroler, tab PIKASO), port 8091
+    std::unique_ptr<class RemoteServer> remote;
+    std::vector<ImpulseCtl> impCtls;
+    std::array<std::atomic<int>, 128> impCc {}, impNote {};
+    std::atomic<int> impPb { 64 }, impCh { 0 };
+    std::atomic<bool> impSeen { false };
+    std::array<std::atomic<int>, 128> impPickup {};          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mora da stigne
+    std::array<int, 128> impPhysPrev {};                     // audio nit
+    juce::AbstractFifo impFifo { 256 };
+    std::array<juce::uint32, 256> impFifoData {};
+    std::unique_ptr<juce::MidiInputCallback> impCallback;
+    juce::StringArray impRegistered;
+    void registerImpulseInputs();
+    bool impInjecting = false;   // audio nit     // iPad (Live Kontroler, tab PIKASO), port 8091
     bool restorePending = false;   // backup vracen: ne snimaj preko njega dok se program ne pokrene ponovo
     bool kontrolerLinked = false, kontrolerChecked = false;
     juce::File kontrolerFile;

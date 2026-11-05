@@ -109,6 +109,22 @@ table.zt tr.sel{background:#ff8a3d40}
 .stpx button{min-height:30px;width:100%;padding:0}
 .lab{font-size:11px;color:var(--dim);font-weight:700}
 @media (max-width:1000px){.parts{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+/* IMPULSE */
+.imp{display:flex;flex-direction:column;gap:10px;padding:4px}
+.imp .row{display:flex;gap:8px;align-items:stretch}
+.imp .cell{flex:1;min-width:0;background:var(--panel);border-radius:10px;padding:6px 4px;display:flex;flex-direction:column;align-items:center;gap:4px;touch-action:none;user-select:none}
+.imp .cell .nm{font-size:12px;font-weight:700;color:var(--dim)}
+.imp .cell .what{font-size:11px;color:var(--lcd);text-align:center;line-height:1.15;height:26px;overflow:hidden;width:100%;word-break:break-word}
+.imp .cell .what.none{color:#555b66}
+.imp .cell .val{font-size:13px;font-weight:700}
+.imp .ftrack{position:relative;width:34px;height:190px;border-radius:8px;background:var(--bg);border:1px solid var(--hi)}
+.imp .ftrack i{position:absolute;left:0;right:0;bottom:0;border-radius:7px;background:linear-gradient(#ff8a3d,#c25a1a)}
+.imp .ftrack b{position:absolute;left:-6px;right:-6px;height:14px;border-radius:5px;background:#e8eaee;box-shadow:0 1px 4px #000}
+.imp .ib{width:100%;min-height:54px;border:1px solid var(--hi);background:var(--bg)}
+.imp .ib.lit{background:var(--green);color:#111;border-color:var(--green)}
+.imp .ib.st1{box-shadow:inset 0 0 0 3px var(--green)}
+.imp h4{margin:2px 4px;font-size:12px;color:var(--dim);letter-spacing:1px}
 </style>
 </head>
 <body>
@@ -122,7 +138,7 @@ table.zt tr.sel{background:#ff8a3d40}
   <button id="harm"><small>HARMONY</small><span id="harmText">—</span></button>
   <button id="panic" style="background:#7a2230">PANIC</button>
 </div>
-<div id="tabs"><button data-tab="live">LIVE</button><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button><button data-tab="lists">LISTS</button><button data-tab="map">MAPPING</button><button data-tab="harm">HARMONY</button></div>
+<div id="tabs"><button data-tab="live">LIVE</button><button data-tab="perf">PERFORMANCE</button><button data-tab="user">USER EDIT</button><button data-tab="fx">EFFECTS</button><button data-tab="lists">LISTS</button><button data-tab="map">MAPPING</button><button data-tab="harm">HARMONY</button><button data-tab="imp">IMPULSE</button></div>
 <div id="main"></div>
 <div id="off"><div>Pikaso Workstation is not connected</div><div class="hint">Start Pikaso Workstation on the mini PC (port 8091).</div></div>
 <div id="modal"><div id="box"></div></div>
@@ -218,6 +234,7 @@ function flush() {
   // isti cilj+putanja: samo poslednja vrednost
   const merged = [], seen = {};
   for (const q of queue.splice(0)) {
+    if (q.op === "impulse") { const k = "imp:" + q.id; if (seen[k] !== undefined) { merged[seen[k]] = q; continue; } seen[k] = merged.length; }
     if (q.op === "set" && q.sets.length === 1) { const k = q.target + q.sets[0][0] + (q.index ?? ""); if (seen[k] !== undefined) { merged[seen[k]] = q; continue; } seen[k] = merged.length; }
     merged.push(q);
   }
@@ -1060,6 +1077,87 @@ function buildMap(m) {
 
 // ---------- HARMONY ----------
 function tSend() { api({ op: "terca", data: S.terca }); }
+
+// ---------- IMPULSE: pregled i upravljanje (Workstation cita Impulse direktno) ----------
+function buildImp(m) {
+  const box = el("div", "imp", "", m);
+  const L = () => S.status.imp || [];
+  const get = id => L().find(x => x[0] === id) || [id, "", id, 0, "", -1];
+  const head = el("div", "row", "", box); head.style.alignItems = "center";
+  const hs = el("div", "", "", head); hs.style.cssText = "flex:1;font-size:13px;color:var(--dim)";
+  ctrls.push(() => { hs.innerHTML = S.status.impSeen ? "Impulse povezan · kanal " + (S.status.impCh || "?") + " · pomeri prstom: Workstation reaguje kao da si pomerio Impulse. Pravi fader se preuzima kad prođe kroz tu vrednost."
+                                                    : "Čekam Impulse… (pomeri bilo koji knob ili fader na Impulse-u)"; });
+  const send = (id, v) => api({ op: "impulse", id, v: Math.max(0, Math.min(127, Math.round(v))) });
+  const local = {};   // vrednost koju prst upravo drzi (da se ne vraca unazad)
+  const valOf = id => local[id] && local[id].t > Date.now() ? local[id].v : +get(id)[3];
+  const hold = (id, v) => { local[id] = { v, t: Date.now() + 900 }; };
+  const label = (cell, id) => {
+    const nm = el("div", "nm", "", cell), wh = el("div", "what", "", cell);
+    ctrls.push(() => { const x = get(id); nm.textContent = x[2]; wh.textContent = x[4] || "nije dodeljeno"; wh.classList.toggle("none", !x[4]); });
+  };
+  const drag = (elm, id, vertical, spring) => {
+    let y0 = 0, v0 = 0, on = false;
+    elm.onpointerdown = e => { on = true; elm.setPointerCapture(e.pointerId); y0 = e.clientY; v0 = valOf(id);
+      if (vertical) { const r = elm.getBoundingClientRect(); const v = (r.bottom - e.clientY) / r.height * 127; hold(id, v); send(id, v); upd(); } };
+    elm.onpointermove = e => { if (!on) return; let v;
+      if (vertical) { const r = elm.getBoundingClientRect(); v = (r.bottom - e.clientY) / r.height * 127; } else v = v0 + (y0 - e.clientY) * 0.8;
+      v = Math.max(0, Math.min(127, v)); hold(id, v); send(id, v); upd(); };
+    elm.onpointerup = elm.onpointercancel = () => { on = false; if (spring) { hold(id, 64); send(id, 64); upd(); } };
+  };
+  let upd = () => ctrls.forEach(f => f());
+
+  el("h4", "", "KNOBOVI", box);
+  const kr = el("div", "row", "", box);
+  for (let i = 1; i <= 8; i++) {
+    const id = "k" + i, c = el("div", "cell", "", kr);
+    const sv = el("div", "", '<svg viewBox="0 0 60 60" width="64" height="64"><circle cx="30" cy="30" r="24" fill="none" stroke="#262a33" stroke-width="7"/><path fill="none" stroke="#ff8a3d" stroke-width="7" stroke-linecap="round"/><line x1="30" y1="30" stroke="#e8eaee" stroke-width="3" stroke-linecap="round"/></svg>', c);
+    const val = el("div", "val", "", c); label(c, id); drag(c, id, false);
+    const arc = sv.querySelector("path"), ln = sv.querySelector("line");
+    ctrls.push(() => { const v = valOf(id), a0 = -225, a = a0 + v / 127 * 270, P = d => [30 + 24 * Math.cos(d * Math.PI / 180), 30 + 24 * Math.sin(d * Math.PI / 180)];
+      const s = P(a0), e = P(a); arc.setAttribute("d", v > 0.5 ? `M${s[0]} ${s[1]} A24 24 0 ${a - a0 > 180 ? 1 : 0} 1 ${e[0]} ${e[1]}` : "");
+      const q = [30 + 16 * Math.cos(a * Math.PI / 180), 30 + 16 * Math.sin(a * Math.PI / 180)]; ln.setAttribute("x2", q[0]); ln.setAttribute("y2", q[1]); val.textContent = Math.round(v); });
+  }
+
+  el("h4", "", "FADERI I DUGMAD", box);
+  const fr = el("div", "row", "", box);
+  for (let i = 1; i <= 9; i++) {
+    const fid = "f" + i, bid = "b" + i, c = el("div", "cell", "", fr);
+    const tr = el("div", "ftrack", "<i></i><b></b>", c), val = el("div", "val", "", c);
+    label(c, fid); drag(tr, fid, true);
+    const fill = tr.querySelector("i"), cap = tr.querySelector("b");
+    ctrls.push(() => { const v = valOf(fid), p = v / 127; fill.style.height = (p * 100) + "%"; cap.style.bottom = "calc(" + (p * 100) + "% - 7px)"; val.textContent = Math.round(v); });
+    const b = el("button", "ib", "", c);
+    b.onclick = () => { send(bid, 127); setTimeout(() => send(bid, 0), 120); };
+    ctrls.push(() => { const x = get(bid); b.textContent = x[2]; b.classList.toggle("lit", +x[3] > 0); b.classList.toggle("st1", x[5] === 1); b.title = x[4] || "nije dodeljeno"; });
+    const bw = el("div", "what", "", c); ctrls.push(() => { const x = get(bid); bw.textContent = x[4] ? x[4] + (x[5] === 1 ? " · ON" : x[5] === 0 ? " · OFF" : "") : "—"; bw.classList.toggle("none", !x[4]); });
+  }
+
+  const lr = el("div", "row", "", box);
+  const tbox = el("div", "cell", "", lr); tbox.style.flex = "3";
+  el("div", "nm", "TRANSPORT", tbox);
+  const tg = el("div", "row", "", tbox); tg.style.width = "100%";
+  ["t114", "t115", "t116", "t117", "t118", "t119"].forEach(id => {
+    const b = el("button", "ib", "", tg); b.style.flex = "1";
+    b.onclick = () => { send(id, 127); setTimeout(() => send(id, 0), 120); };
+    ctrls.push(() => { const x = get(id); b.innerHTML = esc(x[2]) + (x[4] ? "<br><small style='font-size:10px;color:var(--lcd)'>" + esc(x[4]) + "</small>" : ""); b.classList.toggle("lit", +x[3] > 0 || x[5] === 1); });
+  });
+  const pbox = el("div", "cell", "", lr); pbox.style.flex = "4";
+  el("div", "nm", "PADOVI", pbox);
+  const pg = el("div", "row", "", pbox); pg.style.width = "100%";
+  for (let i = 1; i <= 8; i++) {
+    const id = "p" + i, b = el("button", "ib", "", pg); b.style.flex = "1";
+    b.onpointerdown = e => { e.preventDefault(); send(id, 100); }; b.onpointerup = b.onpointercancel = () => send(id, 0);
+    ctrls.push(() => { const x = get(id); b.innerHTML = esc(x[2].replace("Pad ", "")) + (x[4] ? "<br><small style='font-size:10px;color:var(--lcd)'>" + esc(x[4]) + "</small>" : ""); b.classList.toggle("lit", +x[3] > 0); });
+  }
+  [["pb", true], ["mw", false]].forEach(([id, spring]) => {
+    const c = el("div", "cell", "", lr); c.style.flex = "0 0 74px";
+    const tr = el("div", "ftrack", "<i></i><b></b>", c); tr.style.height = "120px";
+    const val = el("div", "val", "", c); label(c, id); drag(tr, id, true, spring);
+    const fill = tr.querySelector("i"), cap = tr.querySelector("b");
+    ctrls.push(() => { const v = valOf(id), p = v / 127; fill.style.height = (p * 100) + "%"; cap.style.bottom = "calc(" + (p * 100) + "% - 7px)"; val.textContent = Math.round(v); });
+  });
+}
+
 function buildHarm(m) {
   const T = S.terca; if (!T) { el("div", "hint", "Loading...", m); return; }
   // stanje stize ponovo posle svake izmene: uvek citaj iz S.terca
@@ -1224,11 +1322,12 @@ function render() {
   // stranice koje se crtaju iz stanja: ponovo kad se promeni ono sto vidis
   if (tab === "lists") key += "|" + listSub + listMode + slPage + slMode + "|" + JSON.stringify(listSub === "perf" ? S.lists && [S.lists.bank, S.lists.cur, S.lists.banks, S.lists.slots.slice(S.lists.bank * 128, S.lists.bank * 128 + 128)] : S.setlist);
   if (tab === "map") key += "|" + JSON.stringify(S.map && [S.map.name, S.map.loaded, S.map.dirty, S.map.userInst, (S.map.zones || []).length]) + mapSel;
+  if (tab === "imp") key += "|" + ((S.status.imp || []).map(x => x[0] + x[2]).join(","));
   if (tab === "harm") key += "|" + tScale + "|" + JSON.stringify(S.terca && [(S.terca.Scale || []).map(s => s.name), (S.terca.Rule || []).length]);
   if (key !== built) {
     built = key; ctrls = [];
     const m = $("main"); const sc = m.scrollTop; m.innerHTML = "";
-    if (tab === "live") buildLive(m); else if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else if (tab === "lists") buildLists(m); else if (tab === "map") buildMap(m); else if (tab === "harm") buildHarm(m); else buildFx(m);
+    if (tab === "live") buildLive(m); else if (tab === "perf") buildPerf(m); else if (tab === "user") buildUser(m); else if (tab === "lists") buildLists(m); else if (tab === "map") buildMap(m); else if (tab === "harm") buildHarm(m); else if (tab === "imp") buildImp(m); else buildFx(m);
     m.scrollTop = sc;
   }
   ctrls.forEach(f => f());
