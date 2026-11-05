@@ -286,7 +286,7 @@ public:
         sysexMode.setToggleState (true, juce::dontSendNotification);
         sysexMode.setVisible (false);
         readTemplateButton.setButtonText (juce::String::fromUTF8 ("Read template from Kronos"));
-        readTemplateButton.setTooltip (juce::String::fromUTF8 ("On the Kronos select Init Program (e.g. USER-FF 006), then click here."));
+        readTemplateButton.setTooltip (juce::String::fromUTF8 ("Switches the Kronos by itself: ROM in the list -> Init Program from the PCG (e.g. USER-FF 006) and reads it as the template; only EXi -> EXi program. Needs the PCG loaded and GLOBAL > MIDI Program/Bank Change receive on."));
         readTemplateButton.onClick = [this] { readTemplateFromKronos(); };
         addAndMakeVisible (readTemplateButton);
         templateInfo.setColour (juce::Label::textColourId, lcd);
@@ -1237,7 +1237,43 @@ private:
             return;
         }
         sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // Kronos u PROGRAM mod
+        // lista za semplovanje odredjuje banku: ROM -> Init Program (HD-1, npr. USER-FF 006), EXi -> EXi program
+        const NeededMs* firstRom = nullptr;
+        const NeededMs* firstExi = nullptr;
+        bool firstIsExi = false;
+        for (auto& n : needed)
+        {
+            if (n.external || n.drum) continue;
+            if (firstRom == nullptr && firstExi == nullptr) firstIsExi = n.exi;
+            if (n.exi) { if (firstExi == nullptr) firstExi = &n; }
+            else if (firstRom == nullptr) firstRom = &n;
+        }
+        juce::MouseCursor::showWaitCursor();
+        if (firstRom != nullptr)
+        {
+            const auto* init = initHd1Program();
+            setStatus (juce::String::fromUTF8 ("Switching the Kronos to ") + (init != nullptr ? init->id() + " " + init->name : juce::String ("an HD-1 program")) + "...");
+            if (init != nullptr && ! selectKronosProgram (init->bankId, init->number, init->name, false))
+            {
+                juce::MouseCursor::hideWaitCursor();
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
+                    juce::String::fromUTF8 ("The Kronos did not switch to ") + init->id() + " " + init->name
+                    + juce::String::fromUTF8 (". Check GLOBAL > MIDI: Program Change and Bank Change receive on, and that the loaded PCG is the same as on the Kronos. Or select it manually and click again."));
+                return;
+            }
+        }
+        else if (firstExi != nullptr)
+        {
+            juce::String err;
+            const bool ok = ensureKronosKind (*firstExi, &err);
+            juce::MouseCursor::hideWaitCursor();
+            if (! ok) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "EXi", err); return; }
+            templateInfo.setText (juce::String::fromUTF8 ("Kronos is on an EXi program. The list has only EXi programs: no template needed"), juce::dontSendNotification);
+            setStatus (juce::String::fromUTF8 ("Kronos switched to EXi (") + firstExi->programId + ")");
+            return;
+        }
         auto reply = sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x74, 0x00 }, 0x75, 3000);
+        juce::MouseCursor::hideWaitCursor();
         if (! reply)
         {
             juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "SysEx",
@@ -1269,6 +1305,15 @@ private:
                               juce::dontSendNotification);
         outFolder.createDirectory();
         outFolder.getChildFile ("Kronos-program.syx").replaceWithData (r.data(), r.size());
+        lastKind = 1;
+        // prvi na listi je EXi: posle citanja sablona vrati Kronos na EXi program
+        if (firstIsExi && firstExi != nullptr)
+        {
+            juce::String err;
+            if (! ensureKronosKind (*firstExi, &err))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "EXi", err);
+        }
+        setStatus (juce::String::fromUTF8 ("Template read: ") + nm.trim());
     }
 
     // posalji izmenjen program u edit buffer Kronosa
@@ -1664,29 +1709,37 @@ private:
         return nm.trim();
     }
 
-    int userBankBase = -1;   // CC32 za USER-A (8 ili 6, zavisi od Kronosa); nadje se proverom imena programa
+    int userBankBase = -1;   // CC32 za USER-A (po Kronos MIDI implementaciji 8; 6/7 samo kao rezerva)
+    int bankMsb = -1;        // CC0: 00 kad je Global Bank Map KORG, 3F kad je GM(2)
 
     // izaberi program na Kronosu (Bank Select + Program Change) i proveri da je stvarno izabran (ime i vrsta)
     bool selectKronosProgram (juce::uint32 bankId, int number, const juce::String& expectedName, bool wantExi)
     {
         const int hi = (int) (bankId >> 16), lo = (int) (bankId & 0xffff);
-        std::vector<int> lsbs;
-        if (hi == 0 && lo <= 6) lsbs.push_back (lo);
-        if (hi == 2)
+        std::vector<std::pair<int, int>> tries;   // (CC0, CC32)
+        auto addLsb = [&] (int lsb)
         {
-            if (userBankBase >= 0) lsbs.push_back (userBankBase + lo);
-            for (int base : { 8, 6, 7 }) if (base != userBankBase) lsbs.push_back (base + lo);
+            for (int msb : { bankMsb >= 0 ? bankMsb : 0, bankMsb >= 0 ? (bankMsb == 0 ? 0x3F : 0) : 0x3F })
+                if (std::find (tries.begin(), tries.end(), std::make_pair (msb, lsb)) == tries.end())
+                    tries.push_back ({ msb, lsb });
+        };
+        if (hi == 0 && lo <= 6) addLsb (lo);                     // INT-A..G = 00..06
+        if (hi == 2)                                              // USER-A..G = 08..0E, USER-AA..GG = 0F..15
+        {
+            addLsb ((userBankBase >= 0 ? userBankBase : 8) + lo);
+            for (int base : { 8, 6, 7 }) addLsb (base + lo);
         }
-        if (lsbs.empty() || number < 0 || number > 127) return false;
+        if (tries.empty() || number < 0 || number > 127) return false;
         const int ch = settings.channel;
         sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
-        for (int lsb : lsbs)
+        for (auto [msb, lsb] : tries)
         {
-            send (juce::MidiMessage::controllerEvent (ch, 0, 0));
+            send (juce::MidiMessage::controllerEvent (ch, 0, msb));
             send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
             send (juce::MidiMessage::programChange (ch, number));
-            // Kronos-u treba malo vremena da ucita program (EXi duze)
-            for (int t = 0; t < 8 && ! threadShouldExit(); ++t)
+            // Kronos-u treba vremena da ucita program; prelaz EXi <-> HD-1 traje i nekoliko sekundi
+            juce::String lastName; int same = 0;
+            for (int t = 0; t < 16 && ! threadShouldExit(); ++t)
             {
                 wait (500);
                 int size = 0;
@@ -1695,12 +1748,26 @@ private:
                 if (size > 0 && isExi == wantExi && (expectedName.isEmpty() || nm.equalsIgnoreCase (expectedName.trim())))
                 {
                     if (hi == 2) userBankBase = lsb - lo;
+                    bankMsb = msb;
                     return true;
                 }
-                if (size > 0 && ! nm.equalsIgnoreCase (expectedName.trim()) && t >= 2) break;   // izabran je neki drugi program: probaj drugi CC32
+                same = (size > 0 && nm == lastName) ? same + 1 : 0;
+                lastName = nm;
+                if (same >= 5 && t >= 7) break;   // ~3 s stoji neki drugi program: probaj sledeci Bank Select
             }
         }
         return false;
+    }
+
+    // HD-1 Init Program iz PCG-a (npr. USER-FF 006), inace prvi HD-1 program
+    const Kronos::Program* initHd1Program() const
+    {
+        if (pcg == nullptr) return nullptr;
+        const Kronos::Program* pick = nullptr;
+        for (auto& p : pcg->programs)
+            if (p.hd1 && ! p.drumKit && (pick == nullptr || (p.name.startsWithIgnoreCase ("init") && ! pick->name.startsWithIgnoreCase ("init"))))
+                pick = &p;
+        return pick;
     }
 
     // Kronos prima program istog tipa kao banka u kojoj je; vraca false ako nije uspelo da prebaci
@@ -1726,10 +1793,7 @@ private:
         else
         {
             // HD-1 program: "Init..." iz PCG-a, inace prvi HD-1 program
-            const Kronos::Program* pick = nullptr;
-            for (auto& p : pcg->programs)
-                if (p.hd1 && ! p.drumKit && (pick == nullptr || (p.name.startsWithIgnoreCase ("init") && ! pick->name.startsWithIgnoreCase ("init"))))
-                    pick = &p;
+            const auto* pick = initHd1Program();
             if (pick != nullptr) ok = selectKronosProgram (pick->bankId, pick->number, pick->name, false);
         }
         if (! ok)
