@@ -273,6 +273,14 @@ public:
     void impulseIncoming (const juce::MidiMessage&);   // MIDI nit: samo pamti vrednosti
     bool isQtEdit() const { return qtEdit.load(); }
     void setQtEdit (bool b) { qtEdit = b; sendChangeMessage(); }
+    // moji preseti reverba (cuvaju se u podesavanjima Workstation-a)
+    const std::vector<ReverbPreset>& getUserReverbPresets() const { return userReverbPresets; }
+    void saveUserReverbPreset (const juce::String& name, const MasterSettings& m)
+    {
+        for (auto& x : userReverbPresets) if (x.name.equalsIgnoreCase (name)) { x = ReverbPreset::from (name, m); markSave(); sendChangeMessage(); return; }
+        userReverbPresets.push_back (ReverbPreset::from (name, m)); markSave(); sendChangeMessage();
+    }
+    void deleteUserReverbPreset (int i) { if (i >= 0 && i < (int) userReverbPresets.size()) { userReverbPresets.erase (userReverbPresets.begin() + i); markSave(); sendChangeMessage(); } }
     const GlobalEqSettings& getGlobalEq() const { return globalEq; }
     void setGlobalEq (const GlobalEqSettings& e) { globalEq = e; rebuildConfig(); markSave(); sendChangeMessage(); }
     float getGlobalVolume() const { return globalDb; }
@@ -466,6 +474,7 @@ private:          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mor
     bool gigMode = false;
     std::atomic<int> keyLearnMode { 0 }, keyLearnPart { 0 }, keyLearnFirst { -1 }, keyLearnNote { -1 };
     GlobalEqSettings globalEq;
+    std::vector<ReverbPreset> userReverbPresets;
     float globalDb = 0.0f;
     bool saveNeeded = false;
     juce::uint32 lastSaveCheck = 0;

@@ -436,7 +436,8 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
             const float t = juce::jlimit (0.0f, 1.0f, (float) (velocity - o.velLow) / (float) (top - o.velLow));
             rampDb = o.velRampDb * (1.0f - t);
         }
-        const float g = xfade * juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb + rampDb);
+        const float g = xfade * juce::Decibels::decibelsToGain (zone->gainDb + o.levelDb + rampDb)
+                      * (id >= 128 && cfg != nullptr ? cfg->harmGain : 1.0f);   // terca: svoja jacina
         v.vel01 = vel01;
         v.velGain = (1.0f - sb.velSens) + sb.velSens * std::pow (vel01, juce::jmax (0.1f, sb.velCurve));
         v.gainL = g * juce::jmin (1.0f, 1.0f - pan);

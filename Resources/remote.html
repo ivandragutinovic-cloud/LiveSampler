@@ -153,6 +153,7 @@ const holdUntil = {};           // control path -> time until incoming values ar
 
 // ---------- formatting ----------
 const F = {
+  mult: v => (+v).toFixed(2) + "x",
   db: v => v <= -59.5 ? "-inf" : v.toFixed(1) + " dB",
   dbs: v => (v > 0 ? "+" : "") + v.toFixed(1) + " dB",
   pan: v => { const x = Math.round(v * 50); return x === 0 ? "C" : (x < 0 ? "L" + (-x) : "R" + x); },
@@ -894,9 +895,31 @@ function buildUser(m) {
 function buildFx(m) {
   const M = "Master", col = "#c58aff";
   const sec = (title, ks) => { const b = el("div", "sect", "", m); el("h3", "", title, b); const g = el("div", "kgrid", "", b); ks.forEach(k => knob(g, { label: k[0], target: "perf", path: M + "@" + k[1], lo: k[2], hi: k[3], c: k[4], def: k[5], fmt: F[k[6]], col })); return g; };
-  sec("PLATE REVERB", [["Size", "revSize", 0, 1, 0, 0.5, "pct"], ["Decay", "revDecay", 0.3, 10, 2, 2.2, "sec"], ["Predelay", "revPre", 0, 150, 30, 20, "ms"], ["Damping", "revDamp", 0, 1, 0, 0.5, "pct"],
-    ["Low cut", "revLowCut", 20, 1000, 150, 150, "hz"], ["High cut", "revHighCut", 1000, 16000, 5000, 6000, "hz"], ["Density", "revDiff", 0, 1, 0, 0.7, "pct"], ["Modulation", "revMod", 0, 1, 0, 0.3, "pct"],
-    ["Width", "revWidth", 0, 1, 0, 1, "pct"], ["Level", "revLevel", 0, 1, 0, 0.8, "pct"]]);
+  // REVERB: preset, tip prostora, glavni i karakter
+  {
+    const b = el("div", "sect", "", m); el("h3", "", "REVERB", b);
+    const top = el("div", "row", "", b); top.style.marginBottom = "6px";
+    const pb = el("button", "", "PRESET...", top), tb = el("button", "", "", top), sb = el("button", "", "SAVE AS MY PRESET", top);
+    const TYPES = ["Plate", "Hall", "Room", "Chamber", "Cathedral"];
+    const cur = () => +getV("perf", M + "@revType", 1);
+    ctrls.push(() => { tb.textContent = "TYPE: " + TYPES[Math.max(0, Math.min(4, cur()))]; });
+    tb.onclick = () => picker("Type of space", TYPES.map((n, i) => ({ label: n, value: i })), cur(), [], (a, v) => setP("perf", M + "@revType", v));
+    pb.onclick = () => {
+      const st = S.status, bi = st.revPresets || [], mine = st.revMine || [];
+      const items = bi.map((n, i) => ({ label: n, value: "b:" + i })).concat(mine.map((n, i) => ({ label: "★ " + n, value: "u:" + i })));
+      picker("Reverb preset", items, "", mine.length ? ["Delete one of my presets..."] : [], (a, v) => {
+        if (a === 0) return picker("Delete my preset", mine.map((n, i) => ({ label: n, value: i })), "", [], (a2, i) => { if (confirm("Delete \"" + mine[i] + "\"?")) api({ op: "revDelete", i }); });
+        api({ op: "revPreset", id: v });
+      });
+    };
+    sb.onclick = () => { const n = prompt("Name of the reverb preset", "My reverb"); if (n && n.trim()) api({ op: "revSave", name: n.trim() }); };
+    const g1 = el("div", "kgrid", "", b);
+    [["Size", "revSize", 0, 1, 0, 0.6, "pct"], ["Decay", "revDecay", 0.3, 12, 2, 2.2, "sec"], ["Predelay", "revPre", 0, 150, 30, 25, "ms"], ["Damping", "revDamp", 0, 1, 0, 0.7, "pct"],
+     ["Low cut", "revLowCut", 20, 1000, 150, 200, "hz"], ["High cut", "revHighCut", 1000, 16000, 5000, 5500, "hz"], ["Level", "revLevel", 0, 1, 0, 0.8, "pct"]]
+      .forEach(k => knob(g1, { label: k[0], target: "perf", path: M + "@" + k[1], lo: k[2], hi: k[3], c: k[4], def: k[5], fmt: F[k[6]], col }));
+  }
+  sec("REVERB CHARACTER", [["Density", "revDiff", 0, 1, 0, 0.85, "pct"], ["Modulation", "revMod", 0, 1, 0, 0.7, "pct"], ["Width", "revWidth", 0, 1, 0, 1, "pct"],
+    ["Bass mult", "revBass", 0.5, 2, 1, 1.1, "mult"], ["Crossover", "revXover", 80, 2000, 400, 400, "hz"], ["Early", "revEarly", 0, 1, 0, 0.35, "pct"], ["Ducking", "revDuck", 0, 1, 0, 0, "pct"]]);
   sec("DELAY", [["Time", "dlyTime", 20, 1500, 350, 350, "ms"], ["Feedback", "dlyFb", 0, 0.95, 0, 0.35, "pct"], ["Level", "dlyLevel", 0, 1, 0, 0.6, "pct"]]);
   const g = sec("VOLUME", [["Performance", "volume", -60, 6, -12, 0, "db"]]);
   // MASTER EQ: ceo Workstation, svi performansi (parametric ili graphic 15)

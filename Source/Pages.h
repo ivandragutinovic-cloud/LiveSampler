@@ -390,6 +390,9 @@ private:
     juce::StringArray geqKeys;
     juce::OwnedArray<juce::Slider> gband;     // graphic 15
     juce::TextButton geqOn, geqParam, geqGraphic, geqFlat;
+    juce::ComboBox revType;
+    juce::TextButton revPreset;
+    void showReverbPresets();
     void editEq (std::function<void (GlobalEqSettings&)> fn);
     struct Section { juce::String title; int first, count; };
     juce::Array<Section> sections;

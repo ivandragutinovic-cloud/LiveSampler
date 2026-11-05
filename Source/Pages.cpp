@@ -3236,6 +3236,7 @@ TercePage::TercePage (LiveSamplerProcessor& p)
     addAndMakeVisible (voiceMode);
 
     velocity.onChange = [this] (double v) { edit ([v] (TercaSettings& t) { t.velocity = (float) v; }); };
+    velocity.slider.setTooltip (T ("Harmony level: how loud the third is compared to the melody (10% = about -40 dB, 50% = -12 dB, 80% = -4 dB, 100% = same, 150% = louder)"));
     addAndMakeVisible (velocity);
 
     topOnly.setButtonText (T ("Top note only (melody)"));
@@ -3514,14 +3515,19 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
 
     auto ms = [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; };
     auto sec = [] (double v) { return juce::String (v, 1) + " s"; };
-    add ("PLATE REVERB", { { "Size", 0, 1, 0, 0.5, UI::pctText }, { "Decay", 0.3, 10, 2, 2.2, sec },
-                           { "Predelay", 0, 150, 30, 20, ms }, { "Damping", 0, 1, 0, 0.5, UI::pctText },
-                           { "Low cut", 20, 1000, 150, 150, UI::hzText }, { "High cut", 1000, 16000, 5000, 6000, UI::hzText },
-                           { "Density", 0, 1, 0, 0.7, UI::pctText }, { "Modulation", 0, 1, 0, 0.3, UI::pctText },
-                           { "Width", 0, 1, 0, 1.0, UI::pctText }, { "Level", 0, 1, 0, 0.8, UI::pctText } });
+    auto xf = [] (double v) { return juce::String (v, 2) + "x"; };
+    // red 1: REVERB (glavno), red 2: KARAKTER REVERBA + DELAY + jacina performansa
+    add ("REVERB", { { "Size", 0, 1, 0, 0.6, UI::pctText }, { "Decay", 0.3, 12, 2, 2.2, sec },
+                     { "Predelay", 0, 150, 30, 25, ms }, { "Damping", 0, 1, 0, 0.7, UI::pctText },
+                     { "Low cut", 20, 1000, 150, 200, UI::hzText }, { "High cut", 1000, 16000, 5000, 5500, UI::hzText },
+                     { "Level", 0, 1, 0, 0.8, UI::pctText } });
+    add ("REVERB CHARACTER", { { "Density", 0, 1, 0, 0.85, UI::pctText }, { "Modulation", 0, 1, 0, 0.7, UI::pctText },
+                               { "Width", 0, 1, 0, 1.0, UI::pctText }, { "Bass mult", 0.5, 2, 1, 1.1, xf },
+                               { "Crossover", 80, 2000, 400, 400, UI::hzText }, { "Early", 0, 1, 0, 0.35, UI::pctText },
+                               { "Ducking", 0, 1, 0, 0, UI::pctText } });
     add ("DELAY", { { "Time", 20, 1500, 350, 350, [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; } },
                     { "Feedback", 0, 0.95, 0, 0.35, UI::pctText }, { "Level", 0, 1, 0, 0.6, UI::pctText } });
-    add ("PERFORMANCE", { { "Volume", -60, 6, -12, 0, UI::dbText } });
+    add ("PERF.", { { "Volume", -60, 6, -12, 0, UI::dbText } });
 
     auto setter = [this] (int i, std::function<void (MasterSettings&, float)> fn)
     {
@@ -3534,10 +3540,14 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     setter (k++, [] (MasterSettings& m, float v) { m.reverbDamping = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.reverbLowCut = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.reverbHighCut = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbLevel = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.reverbDiffusion = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.reverbMod = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.reverbWidth = v; });
-    setter (k++, [] (MasterSettings& m, float v) { m.reverbLevel = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbBassMult = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbCrossover = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbEarly = v; });
+    setter (k++, [] (MasterSettings& m, float v) { m.reverbDucking = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.delayTimeMs = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.delayFeedback = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.delayLevel = v; });
@@ -3545,21 +3555,35 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
 
     // objasnjenja (mis preko dugmeta)
     const char* tips[] = {
-        "Reverb room size: small room to big hall",
+        "Size of the space: small to big (changes the length of the reflections)",
         "How long the reverb tail rings (seconds)",
         "Pause before the reverb starts: more predelay keeps the dry sound clear and in front",
-        "Damping of the high frequencies in the tail: more = darker, softer reverb",
+        "Damping of the high frequencies in the tail: more = darker, warmer, softer reverb",
         "Low cut into the reverb: removes bass from the reverb so it does not boom",
         "High cut into the reverb: removes the hiss and sharpness from the reverb",
-        "Density of the reverb: low = separate echoes, high = smooth tail",
-        "Slow movement in the tail (chorus-like): livelier, less metallic reverb",
-        "Stereo width of the reverb: 0 = mono, 100% = full stereo",
         "Reverb return level: how loud the reverb is in the mix",
+        "Density: low = separate echoes, high = smooth tail",
+        "Slow movement in the tail: livelier and warmer, removes the metallic ringing",
+        "Stereo width of the reverb: 0 = mono, 100% = full stereo",
+        "How long the bass rings compared to the middle: above 1 = warmer, fuller hall; below 1 = tighter, clearer bass",
+        "Where the bass ends for Bass mult (Hz)",
+        "Early reflections: the first echoes from the walls; gives the feeling of a real room (piano, sax, accordion)",
+        "Ducking: the reverb goes quieter while you play and opens in the pauses, so the melody stays clear (sax, lead)",
         "Delay time between repeats (ms)",
         "Feedback: how many repeats (more = longer echo)",
         "Delay return level: how loud the echoes are in the mix",
         "Volume of this performance (saved in the performance)" };
-    for (int i = 0; i < knobs.size() && i < 14; ++i) knobs[i]->slider.setTooltip (T (tips[i]));
+    for (int i = 0; i < knobs.size() && i < 18; ++i) knobs[i]->slider.setTooltip (T (tips[i]));
+
+    // tip prostora i preseti
+    revType.addItemList (reverbTypeNames(), 1);
+    revType.setTooltip (T ("Type of space: Plate (smooth, bright), Hall (concert hall), Room (small, close), Chamber (warm room), Cathedral (very big)"));
+    revType.onChange = [this] { const int t = revType.getSelectedItemIndex(); if (t >= 0) edit ([t] (MasterSettings& m) { m.reverbType = t; }); };
+    addAndMakeVisible (revType);
+    revPreset.setButtonText (T ("PRESET..."));
+    revPreset.setTooltip (T ("Ready reverb settings for piano, sax, strings, pad, synth... and your own saved presets"));
+    revPreset.onClick = [this] { showReverbPresets(); };
+    addAndMakeVisible (revPreset);
 
     // MASTER EQ: isti za sve performanse (zvucnici, sala), cuva se u podesavanjima Workstation-a
     struct E { const char* key; const char* name; double lo, hi, centre, def; std::function<juce::String (double)> fmt; const char* tip; };
@@ -3628,12 +3652,55 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     addAndMakeVisible (*globalVolume);
 
     // MIDI Learn
-    const char* ids[] = { "reverb.size", "reverb.decay", "reverb.predelay", "reverb.damping", "reverb.lowcut", "reverb.highcut",
-                          "reverb.density", "reverb.mod", "reverb.width", "reverb.level", "delay.time", "delay.feedback", "delay.level",
-                          "perf.volume" };
-    for (int i = 0; i < knobs.size() && i < 14; ++i)
+    const char* ids[] = { "reverb.size", "reverb.decay", "reverb.predelay", "reverb.damping", "reverb.lowcut", "reverb.highcut", "reverb.level",
+                          "reverb.density", "reverb.mod", "reverb.width", "reverb.bassmult", "reverb.crossover", "reverb.early", "reverb.ducking",
+                          "delay.time", "delay.feedback", "delay.level", "perf.volume" };
+    for (int i = 0; i < knobs.size() && i < 18; ++i)
         MidiLearn::get().bindSlider (knobs[i]->slider, juce::String ("fx.") + ids[i]);
     MidiLearn::get().bindSlider (globalVolume->slider, "master.volume");
+}
+
+void EffectsPage::showReverbPresets()
+{
+    juce::PopupMenu m;
+    const auto& bi = builtInReverbPresets();
+    for (int i = 0; i < (int) bi.size(); ++i) m.addItem (1 + i, bi[(size_t) i].name);
+    const auto& mine = proc.getUserReverbPresets();
+    if (! mine.empty())
+    {
+        m.addSeparator();
+        m.addSectionHeader (T ("MY PRESETS"));
+        for (int i = 0; i < (int) mine.size(); ++i) m.addItem (100 + i, mine[(size_t) i].name);
+        juce::PopupMenu del;
+        for (int i = 0; i < (int) mine.size(); ++i) del.addItem (300 + i, mine[(size_t) i].name);
+        m.addSubMenu (T ("Delete my preset"), del);
+    }
+    m.addSeparator();
+    m.addItem (200, T ("Save the current reverb as my preset..."));
+    juce::Component::SafePointer<EffectsPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&revPreset), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& pr = safe->proc;
+        if (r >= 1 && r < 100) { const auto p = builtInReverbPresets()[(size_t) (r - 1)]; safe->edit ([p] (MasterSettings& ms) { p.applyTo (ms); }); }
+        else if (r >= 100 && r < 200) { const auto p = pr.getUserReverbPresets()[(size_t) (r - 100)]; safe->edit ([p] (MasterSettings& ms) { p.applyTo (ms); }); }
+        else if (r >= 300) pr.deleteUserReverbPreset (r - 300);
+        else if (r == 200)
+        {
+            auto* w = new juce::AlertWindow (T ("Save reverb preset"), T ("Name of the preset:"), juce::MessageBoxIconType::NoIcon);
+            w->addTextEditor ("name", T ("My reverb"));
+            w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+            w->addButton (T ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
+            w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w] (int res)
+            {
+                if (safe != nullptr && res == 1)
+                {
+                    const auto nm = w->getTextEditorContents ("name").trim();
+                    if (nm.isNotEmpty()) safe->proc.saveUserReverbPreset (nm, safe->proc.getPerformance().master);
+                }
+            }), true);
+        }
+    });
 }
 
 void EffectsPage::editEq (std::function<void (GlobalEqSettings&)> fn)
@@ -3653,9 +3720,10 @@ void EffectsPage::edit (std::function<void (MasterSettings&)> fn)
 void EffectsPage::refresh()
 {
     const auto& m = proc.getPerformance().master;
-    const float vals[] = { m.reverbSize, m.reverbDecay, m.reverbPreDelayMs, m.reverbDamping, m.reverbLowCut, m.reverbHighCut,
-                           m.reverbDiffusion, m.reverbMod, m.reverbWidth, m.reverbLevel, m.delayTimeMs, m.delayFeedback, m.delayLevel,
-                           m.masterDb };
+    const float vals[] = { m.reverbSize, m.reverbDecay, m.reverbPreDelayMs, m.reverbDamping, m.reverbLowCut, m.reverbHighCut, m.reverbLevel,
+                           m.reverbDiffusion, m.reverbMod, m.reverbWidth, m.reverbBassMult, m.reverbCrossover, m.reverbEarly, m.reverbDucking,
+                           m.delayTimeMs, m.delayFeedback, m.delayLevel, m.masterDb };
+    revType.setSelectedItemIndex (juce::jlimit (0, 4, m.reverbType), juce::dontSendNotification);
     for (int i = 0; i < knobs.size(); ++i)
         knobs[i]->setValue (vals[i]);
     globalVolume->setValue (proc.getGlobalVolume());
@@ -3679,6 +3747,7 @@ void EffectsPage::paint (juce::Graphics& g)
     {
         auto a = knobs[s.first]->getBounds();
         auto b = knobs[s.first + s.count - 1]->getBounds();
+        if (s.first == 0) a.setX (revPreset.getX());   // REVERB: naslov i iznad PRESET / tipa
         UI::sectionTitle (g, juce::Rectangle<int> (a.getX(), a.getY() - 34, b.getRight() - a.getX(), 24), s.title, Pal::master);
     }
     {
@@ -3698,7 +3767,7 @@ void EffectsPage::paint (juce::Graphics& g)
         }
     }
     auto gv = globalVolume->getBounds();
-    UI::sectionTitle (g, juce::Rectangle<int> (gv.getX(), gv.getY() - 34, gv.getWidth(), 24), T ("MASTER (all performances)"), juce::Colours::white);
+    UI::sectionTitle (g, juce::Rectangle<int> (gv.getX(), gv.getY() - 34, gv.getWidth(), 24), T ("MASTER (all)"), juce::Colours::white);
     g.setColour (Pal::dim);
     g.setFont (juce::FontOptions (13.0f));
     g.drawText (T ("Effects are saved in the performance. How much each part sends to reverb and delay is set on the PERFORMANCE page."),
@@ -3708,25 +3777,30 @@ void EffectsPage::paint (juce::Graphics& g)
 void EffectsPage::resized()
 {
     auto r = getLocalBounds().reduced (24, 16);
-    r.removeFromBottom (28);
-    const int rowH = r.getHeight() / 3;
-    const int kw = juce::jmin (110, r.getWidth() / 10), kh = juce::jmin (110, rowH - 40), gap = 30;
-    // red 1: reverb, red 2: delay + EQ performansa + jacina performansa, red 3: MASTER EQ + MASTER
-    const int rowOf[] = { 0, 1, 1 };
-    int x = 0, lastRow = -1, y = 0;
-    for (int si = 0; si < sections.size(); ++si)
+    r.removeFromBottom (24);
+    // red 1: REVERB, red 2: KARAKTER + DELAY + PERFORMANCE + MASTER, redovi 3-4: MASTER EQ
+    const int rowH = r.getHeight() / 4;
+    const int kw = juce::jmin (100, (r.getWidth() - 360) / 13), kh = juce::jmin (100, rowH - 36), gap = 24;
     {
-        const int row = rowOf[juce::jmin (si, 2)];
-        if (row != lastRow) { x = r.getX(); y = r.getY() + row * rowH + 36; lastRow = row; }
-        auto& s = sections.getReference (si);
-        for (int k = 0; k < s.count; ++k, x += kw)
-            knobs[s.first + k]->setBounds (x, y, kw, kh);
-        x += gap;
+        int x = r.getX(), y = r.getY() + 34;
+        revPreset.setBounds (x, y + 6, 130, 32);
+        revType.setBounds (x, y + 46, 130, 30);
+        x += 146;
+        auto& s0 = sections.getReference (0);
+        for (int k = 0; k < s0.count; ++k, x += kw) knobs[s0.first + k]->setBounds (x, y, kw, kh);
     }
-    // jacina MASTER u redu 2, desno od jacine performansa
-    globalVolume->setBounds (x + 50, y, 160, kh);
-    // red 3: MASTER EQ (ceo Workstation)
-    auto row = juce::Rectangle<int> (r.getX(), r.getY() + 2 * rowH + 36, r.getWidth(), rowH - 36);
+    {
+        int x = r.getX(), y = r.getY() + rowH + 34;
+        for (int si = 1; si < sections.size(); ++si)
+        {
+            auto& s = sections.getReference (si);
+            for (int k = 0; k < s.count; ++k, x += kw) knobs[s.first + k]->setBounds (x, y, kw, kh);
+            x += gap;
+        }
+        globalVolume->setBounds (x + 10, y, juce::jmin (130, r.getRight() - x - 10), kh);
+    }
+    // MASTER EQ (ceo Workstation)
+    auto row = juce::Rectangle<int> (r.getX(), r.getY() + 2 * rowH + 34, r.getWidth(), 2 * rowH - 34);
     auto btns = row.removeFromLeft (120);
     const int bh = juce::jmin (34, (btns.getHeight() - 12) / 4);
     geqOn.setBounds (btns.removeFromTop (bh).reduced (0, 2));      btns.removeFromTop (4);
@@ -3735,9 +3809,9 @@ void EffectsPage::resized()
     geqFlat.setBounds (btns.removeFromTop (bh).reduced (0, 2));
     row.removeFromLeft (16);
     const int pk = juce::jmin (100, row.getWidth() / juce::jmax (1, geq.size()));
-    for (int i = 0; i < geq.size(); ++i) geq[i]->setBounds (row.getX() + i * pk, row.getY(), pk, juce::jmin (kh, row.getHeight()));
+    for (int i = 0; i < geq.size(); ++i) geq[i]->setBounds (row.getX() + i * pk, row.getY(), pk, juce::jmin (110, row.getHeight()));
     const int gw = juce::jmin (64, row.getWidth() / GlobalEqSettings::numGraphic);
-    for (int i = 0; i < gband.size(); ++i) gband[i]->setBounds (row.getX() + i * gw, row.getY() + 16, gw - 6, row.getHeight() - 14);
+    for (int i = 0; i < gband.size(); ++i) gband[i]->setBounds (row.getX() + i * gw, row.getY() + 16, gw - 6, row.getHeight() - 20);
 }
 
 //==============================================================================

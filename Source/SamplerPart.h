@@ -13,6 +13,7 @@ struct PartRuntime
     std::array<InstrumentPtr, kNumOsc> inst;
     std::shared_ptr<const Fm::Patch> fm;   // FM sinteza (user napravljen od MOD-7 programa)
     std::array<float, 12> scaleCents {};
+    float harmGain = 1.0f;                 // jacina terce (HARMONY Velocity), mnozi glasove terce
     int maxVoices = 128;                   // polifonija ovog dela (SETTINGS); preko toga se krade najstariji glas   // orijentalno stimovanje za ovaj deo (nule = iskljuceno)
     bool active = false;   // ukljucen i ima usera
     bool vectorOn = false, vectorEqualPower = false;   // iz performansa

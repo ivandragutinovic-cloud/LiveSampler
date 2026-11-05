@@ -485,6 +485,19 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "harmony")    proc.setTercaOn ((bool) v["on"]);
     else if (op == "vector")     proc.setVectorXY ((float) (double) v["x"], (float) (double) v["y"]);
     else if (op == "gvol")       proc.setGlobalVolume ((float) (double) v["db"]);
+    else if (op == "revPreset")
+    {
+        // preset reverba u trenutni performans: "b:3" ugradjeni, "u:1" moj
+        const auto id = v["id"].toString();
+        const int i = id.substring (2).getIntValue();
+        auto perf = proc.getPerformance();
+        bool ok = false;
+        if (id.startsWith ("b:") && i >= 0 && i < (int) builtInReverbPresets().size()) { builtInReverbPresets()[(size_t) i].applyTo (perf.master); ok = true; }
+        if (id.startsWith ("u:") && i >= 0 && i < (int) proc.getUserReverbPresets().size()) { proc.getUserReverbPresets()[(size_t) i].applyTo (perf.master); ok = true; }
+        if (ok) { proc.updatePerformance (perf); dirty = true; }
+    }
+    else if (op == "revSave")   { const auto nm = v["name"].toString().trim(); if (nm.isNotEmpty()) proc.saveUserReverbPreset (nm, proc.getPerformance().master); }
+    else if (op == "revDelete") proc.deleteUserReverbPreset ((int) v["i"]);
     else if (op == "geq")
     {
         auto g = proc.getGlobalEq();
@@ -727,6 +740,13 @@ juce::StringPairArray RemoteServer::buildSections()
         st->setProperty ("harmText", proc.getTercaText());
         st->setProperty ("voices", proc.getActiveVoices());
         st->setProperty ("gvol", proc.getGlobalVolume());
+        {
+            juce::Array<juce::var> b, u;
+            for (auto& x : builtInReverbPresets()) b.add (x.name);
+            for (auto& x : proc.getUserReverbPresets()) u.add (x.name);
+            st->setProperty ("revPresets", b);
+            st->setProperty ("revMine", u);
+        }
         {
             const auto& g = proc.getGlobalEq();
             auto* e = new juce::DynamicObject();

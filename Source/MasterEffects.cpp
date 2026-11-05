@@ -56,50 +56,82 @@ void Biquad::set (Kind kind, double sampleRate, double freq, double q, double ga
 //==============================================================================
 //  PlateReverb (Jon Dattorro, "Effect Design Part 1", 1997)
 //==============================================================================
+namespace
+{
+    // tip prostora: duzine rezervoara, gustina ulaza, vremena ranih refleksija (ms)
+    constexpr float kTypeLen[5]   = { 1.0f, 1.35f, 0.55f, 0.8f, 1.8f };
+    constexpr float kTypeInDif[5] = { 1.0f, 1.0f, 0.85f, 0.9f, 1.0f };
+    constexpr float kErMs[5][6] = { { 3, 6, 9, 13, 18, 24 }, { 9, 15, 23, 33, 45, 58 }, { 4, 7, 11, 16, 22, 29 },
+                                    { 6, 10, 15, 22, 30, 39 }, { 14, 24, 37, 52, 70, 90 } };
+    constexpr float kErGain[6] = { 0.9f, 0.75f, 0.62f, 0.5f, 0.4f, 0.32f };
+}
+
 void PlateReverb::prepare (double sampleRate)
 {
     sr = sampleRate;
     lastSize = -1.0f;
+    lastType = -1;
     preDelay.init ((int) (0.25 * sampleRate));
-    build (0.5f);
+    erLine.init ((int) (0.12 * sampleRate));
+    // linije se prave jednom za najveci prostor (Cathedral, Size 100%): menjanje tipa ne alocira na audio niti
+    scale = (float) (sr / 29761.0) * 1.45f * 1.8f;
+    const int inLens[4] = { 142, 107, 379, 277 };
+    for (int i = 0; i < 4; ++i) inAp[i].line.init (ms (inLens[i]) + 4);
+    const int ap1[2] = { 672, 908 }, d1[2] = { 4453, 4217 }, ap2[2] = { 1800, 2656 }, d2[2] = { 3720, 3163 };
+    const int excursion = (int) std::ceil (40.0 * sr / 29761.0) + 4;
+    for (int k = 0; k < 2; ++k)
+    {
+        tankAp1[k].init (ms (ap1[k]) + 2 * excursion);
+        tankDelay1[k].init (ms (d1[k]) + 4);
+        tankAp2[k].line.init (ms (ap2[k]) + 4);
+        tankDelay2[k].init (ms (d2[k]) + 4);
+    }
+    build (0.5f, 0);
 }
 
-void PlateReverb::build (float size)
+void PlateReverb::build (float size, int type)
 {
-    // velicina menja duzine svih linija (0 = mala ploca, 1 = velika)
-    scale = (float) (sr / 29761.0) * (0.55f + 0.9f * juce::jlimit (0.0f, 1.0f, size));
+    type = juce::jlimit (0, 4, type);
+    // velicina i tip menjaju duzine svih linija
+    scale = (float) (sr / 29761.0) * (0.55f + 0.9f * juce::jlimit (0.0f, 1.0f, size)) * kTypeLen[type];
     const int inLens[4] = { 142, 107, 379, 277 };
-    for (int i = 0; i < 4; ++i) { inAp[i].len = ms (inLens[i]); inAp[i].line.init (inAp[i].len); }
+    for (int i = 0; i < 4; ++i) inAp[i].len = ms (inLens[i]);
     const int ap1[2] = { 672, 908 }, d1[2] = { 4453, 4217 }, ap2[2] = { 1800, 2656 }, d2[2] = { 3720, 3163 };
-    const int excursion = (int) std::ceil (16.0 * sr / 29761.0) + 2;
     for (int k = 0; k < 2; ++k)
     {
         tankAp1Len[k] = ms (ap1[k]);
-        tankAp1[k].init (tankAp1Len[k] + 2 * excursion);
-        tankDelay1Len[k] = ms (d1[k]);  tankDelay1[k].init (tankDelay1Len[k]);
-        tankAp2[k].len = ms (ap2[k]);   tankAp2[k].line.init (tankAp2[k].len);
-        tankDelay2Len[k] = ms (d2[k]);  tankDelay2[k].init (tankDelay2Len[k]);
-        damp[k] = tankFeed[k] = 0.0f;
+        tankDelay1Len[k] = ms (d1[k]);
+        tankAp2[k].len = ms (ap2[k]);
+        tankDelay2Len[k] = ms (d2[k]);
+    }
+    for (int t = 0; t < 6; ++t)
+    {
+        erTapL[t] = juce::jlimit (1, (int) erLine.buf.size() - 2, (int) (kErMs[type][t] * 0.001 * sr));
+        erTapR[t] = juce::jlimit (1, (int) erLine.buf.size() - 2, (int) (kErMs[type][t] * 1.07 * 0.001 * sr) + 7);
     }
     lastSize = size;
+    lastType = type;
 }
 
 void PlateReverb::reset()
 {
     preDelay.clear();
+    erLine.clear();
     for (auto& a : inAp) a.line.clear();
     for (int k = 0; k < 2; ++k)
     {
         tankAp1[k].clear(); tankDelay1[k].clear(); tankAp2[k].line.clear(); tankDelay2[k].clear();
-        damp[k] = tankFeed[k] = 0.0f;
+        damp[k] = tankFeed[k] = lowSt[k] = 0.0f;
     }
     bwState = hpState = hpPrev = 0.0f;
+    duckEnv = 0.0f; duckGain = 1.0f;
 }
 
 void PlateReverb::process (float* l, float* r, int n, const MasterSettings& s)
 {
-    if (std::abs (s.reverbSize - lastSize) > 0.02f)
-        build (s.reverbSize);
+    const int type = juce::jlimit (0, 4, s.reverbType);
+    if (std::abs (s.reverbSize - lastSize) > 0.02f || type != lastType)
+        build (s.reverbSize, type);
 
     const float fs = (float) sr;
     const int pre = juce::jlimit (0, (int) preDelay.buf.size() - 2, (int) (s.reverbPreDelayMs * 0.001f * fs));
@@ -107,19 +139,31 @@ void PlateReverb::process (float* l, float* r, int n, const MasterSettings& s)
     const float hpCoef = std::exp (-juce::MathConstants<float>::twoPi * juce::jlimit (20.0f, 2000.0f, s.reverbLowCut) / fs);
     const float dampCoef = 0.05f + 0.8f * juce::jlimit (0.0f, 1.0f, s.reverbDamping);
     const float dif = juce::jlimit (0.0f, 1.0f, s.reverbDiffusion);
-    const float inDif1 = 0.75f * dif, inDif2 = 0.625f * dif;
+    const float inDif1 = 0.75f * dif * kTypeInDif[type], inDif2 = 0.625f * dif * kTypeInDif[type];
     const float decDif1 = 0.70f * (0.4f + 0.6f * dif), decDif2 = juce::jlimit (0.25f, 0.5f, 0.5f * (0.5f + 0.5f * dif));
     // jedna polovina rezervoara ~ (ap1 + d1 + ap2 + d2), dva puta se mnozi sa decay
     const float halfLoop = (float) (672 + 4453 + 1800 + 3720) * scale / fs;
-    const float decay = juce::jlimit (0.0f, 0.985f, std::pow (10.0f, -3.0f * halfLoop / (2.0f * juce::jmax (0.2f, s.reverbDecay))));
-    const float excursion = (float) (16.0 * sr / 29761.0) * juce::jlimit (0.0f, 1.0f, s.reverbMod);
-    const double lfoInc = juce::MathConstants<double>::twoPi * 0.7 / sr;
+    const float T = juce::jmax (0.2f, s.reverbDecay);
+    const float decay = juce::jlimit (0.0f, 0.985f, std::pow (10.0f, -3.0f * halfLoop / (2.0f * T)));
+    // bas traje Bass mult puta duze (ili krace) od sredine
+    const float dLow = std::pow (10.0f, -3.0f * halfLoop / (2.0f * T * juce::jlimit (0.5f, 2.0f, s.reverbBassMult)));
+    const float lowMul = juce::jlimit (0.0f, 0.995f, dLow * dLow / juce::jmax (0.001f, decay));
+    const float xc = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jlimit (80.0f, 2000.0f, s.reverbCrossover) / fs);
+    // modulacija: dva spora talasa razlicite brzine po kanalu (rep se stalno malo pomera: nema metalnog zvonjenja)
+    const float excursion = (float) (28.0 * sr / 29761.0) * juce::jlimit (0.0f, 1.0f, s.reverbMod) * std::sqrt (kTypeLen[type]);
+    const double lfoInc = juce::MathConstants<double>::twoPi * 0.61 / sr, lfoInc2 = juce::MathConstants<double>::twoPi * 0.93 / sr;
     const float width = juce::jlimit (0.0f, 1.0f, s.reverbWidth);
+    const float early = juce::jlimit (0.0f, 1.0f, s.reverbEarly) * 0.55f;
+    const float duck = juce::jlimit (0.0f, 1.0f, s.reverbDucking);
+    const float atk = 1.0f - std::exp (-1.0f / (0.01f * fs)), rel = 1.0f - std::exp (-1.0f / (0.35f * fs));
+    const float gSmooth = 1.0f - std::exp (-1.0f / (0.03f * fs));
 
     for (int i = 0; i < n; ++i)
     {
-        // ulaz: mono, low cut (1-polni HP), predelay, high cut (bandwidth)
-        float x = 0.5f * (l[i] + r[i]);
+        // ulaz: stereo (mid + malo side), low cut (1-polni HP), predelay, high cut (bandwidth)
+        const float inL = l[i], inR = r[i];
+        float x = 0.5f * (inL + inR);
+        const float side = 0.25f * (inL - inR);
         const float hp = hpCoef * (hpState + x - hpPrev);
         hpPrev = x; hpState = hp;
         preDelay.write (hp);
@@ -127,19 +171,39 @@ void PlateReverb::process (float* l, float* r, int n, const MasterSettings& s)
         bwState += bw * (x - bwState);
         x = bwState;
 
+        // ducking: prati jacinu onoga sto ulazi u reverb
+        if (duck > 0.0f)
+        {
+            const float a = std::abs (inL) + std::abs (inR);
+            duckEnv += (a > duckEnv ? atk : rel) * (a - duckEnv);
+            const float target = 1.0f / (1.0f + duck * 10.0f * duckEnv);
+            duckGain += gSmooth * (target - duckGain);
+        }
+        else duckGain = 1.0f;
+
+        erLine.write (x);
+        float erL = 0.0f, erR = 0.0f;
+        if (early > 0.0f)
+            for (int t = 0; t < 6; ++t)
+            {
+                erL += erLine.read (erTapL[t]) * kErGain[t] * ((t & 1) ? -1.0f : 1.0f);
+                erR += erLine.read (erTapR[t]) * kErGain[t] * ((t & 1) ? 1.0f : -1.0f);
+            }
+
         x = inAp[0].process (x, inDif1);
         x = inAp[1].process (x, inDif1);
         x = inAp[2].process (x, inDif2);
         x = inAp[3].process (x, inDif2);
 
-        lfoPhase += lfoInc;
-        if (lfoPhase > juce::MathConstants<double>::twoPi) lfoPhase -= juce::MathConstants<double>::twoPi;
-        const float mod[2] = { (float) std::sin (lfoPhase) * excursion, (float) std::cos (lfoPhase) * excursion };
+        lfoPhase += lfoInc;   if (lfoPhase > juce::MathConstants<double>::twoPi) lfoPhase -= juce::MathConstants<double>::twoPi;
+        lfoPhase2 += lfoInc2; if (lfoPhase2 > juce::MathConstants<double>::twoPi) lfoPhase2 -= juce::MathConstants<double>::twoPi;
+        const float mod[2] = { (float) (0.6 * std::sin (lfoPhase) + 0.4 * std::sin (lfoPhase2 * 1.31)) * excursion,
+                               (float) (0.6 * std::cos (lfoPhase * 1.07) + 0.4 * std::sin (lfoPhase2 + 1.1)) * excursion };
 
         float outFeed[2];
         for (int k = 0; k < 2; ++k)
         {
-            float v = x + tankFeed[1 - k];
+            float v = x + (k == 0 ? side : -side) + tankFeed[1 - k];
             // modulisani allpass (koeficijent sa obrnutim znakom, kao kod Dattorro)
             const float d = tankAp1[k].readFrac ((float) (tankAp1Len[k] - 1) + mod[k] + excursion);
             const float u = v + decDif1 * d;
@@ -149,7 +213,9 @@ void PlateReverb::process (float* l, float* r, int n, const MasterSettings& s)
             tankDelay1[k].write (v);
             v = tankDelay1[k].read (tankDelay1Len[k] - 1);
             damp[k] += (1.0f - dampCoef) * (v - damp[k]);
-            v = damp[k] * decay;
+            // bas i ostatak se gase razlicito (Bass mult)
+            lowSt[k] += xc * (damp[k] - lowSt[k]);
+            v = lowSt[k] * lowMul + (damp[k] - lowSt[k]) * decay;
             v = tankAp2[k].process (v, decDif2);
             tankDelay2[k].write (v);
             outFeed[k] = tankDelay2[k].read (tankDelay2Len[k] - 1) * decay;
@@ -165,11 +231,73 @@ void PlateReverb::process (float* l, float* r, int n, const MasterSettings& s)
         float yr = tankDelay1[0].read (t (353)) + tankDelay1[0].read (t (3627)) - tankAp2[0].line.read (t (1228))
                  + tankDelay2[0].read (t (2673)) - tankDelay1[1].read (t (2111)) - tankAp2[1].line.read (t (335))
                  - tankDelay2[1].read (t (121));
-        yl *= 0.6f; yr *= 0.6f;
-        const float mid = 0.5f * (yl + yr), side = 0.5f * (yl - yr) * width;
-        l[i] = mid + side;
-        r[i] = mid - side;
+        yl = yl * 0.6f + erL * early;
+        yr = yr * 0.6f + erR * early;
+        const float mid = 0.5f * (yl + yr), sd = 0.5f * (yl - yr) * width;
+        l[i] = (mid + sd) * duckGain;
+        r[i] = (mid - sd) * duckGain;
     }
+}
+
+//==============================================================================
+//  Preseti reverba
+//==============================================================================
+juce::StringArray reverbTypeNames() { return { "Plate", "Hall", "Room", "Chamber", "Cathedral" }; }
+
+const std::vector<ReverbPreset>& builtInReverbPresets()
+{
+    //                        type size decay pre  damp lowcut highcut dens  mod  width level bass  xover early duck
+    static const std::vector<ReverbPreset> p {
+        { "Warm Hall",            1, 0.65f, 2.3f, 25, 0.70f, 200, 5500, 0.85f, 0.70f, 1.0f, 0.80f, 1.10f, 400, 0.35f, 0.00f },
+        { "Piano Hall",           1, 0.65f, 2.2f, 25, 0.65f, 180, 6000, 0.85f, 0.60f, 1.0f, 0.80f, 1.10f, 350, 0.40f, 0.00f },
+        { "Piano Room",           2, 0.60f, 1.1f, 10, 0.60f, 150, 7000, 0.80f, 0.50f, 0.9f, 0.80f, 1.00f, 400, 0.60f, 0.00f },
+        { "EP / Rhodes Plate",    0, 0.55f, 1.6f, 15, 0.70f, 250, 5000, 0.85f, 0.70f, 1.0f, 0.80f, 1.00f, 400, 0.10f, 0.00f },
+        { "Sax Hall",             1, 0.70f, 2.4f, 35, 0.70f, 250, 5500, 0.85f, 0.65f, 1.0f, 0.80f, 1.00f, 400, 0.40f, 0.20f },
+        { "Sax Plate",            0, 0.60f, 1.8f, 30, 0.55f, 300, 7000, 0.85f, 0.65f, 1.0f, 0.80f, 0.90f, 450, 0.15f, 0.20f },
+        { "Strings Hall",         1, 0.80f, 3.2f, 30, 0.70f, 200, 6000, 0.90f, 0.75f, 1.0f, 0.80f, 1.20f, 350, 0.30f, 0.00f },
+        { "Pad Cathedral",        4, 0.85f, 6.0f, 40, 0.75f, 250, 4500, 0.90f, 0.90f, 1.0f, 0.80f, 1.10f, 400, 0.20f, 0.00f },
+        { "Synth Lead",           0, 0.60f, 1.4f, 45, 0.50f, 300, 8000, 0.80f, 0.60f, 1.0f, 0.80f, 0.90f, 450, 0.10f, 0.40f },
+        { "Accordion Room",       3, 0.60f, 1.3f, 15, 0.70f, 220, 5000, 0.85f, 0.60f, 0.9f, 0.80f, 1.00f, 400, 0.50f, 0.10f },
+        { "Organ Church",         4, 0.80f, 4.5f, 25, 0.70f, 120, 5000, 0.90f, 0.80f, 1.0f, 0.80f, 1.30f, 300, 0.30f, 0.00f },
+        { "Brass Hall",           1, 0.60f, 1.8f, 20, 0.65f, 200, 6500, 0.85f, 0.60f, 1.0f, 0.80f, 1.00f, 400, 0.50f, 0.10f },
+        { "Drums Room",           2, 0.45f, 0.8f,  5, 0.55f, 300, 8000, 0.90f, 0.40f, 1.0f, 0.80f, 0.90f, 450, 0.70f, 0.00f },
+        { "Vocal / Melody Plate", 0, 0.60f, 2.0f, 60, 0.60f, 250, 7000, 0.85f, 0.65f, 1.0f, 0.80f, 1.00f, 400, 0.10f, 0.35f },
+    };
+    return p;
+}
+
+void ReverbPreset::applyTo (MasterSettings& m) const
+{
+    m.reverbType = type; m.reverbSize = size; m.reverbDecay = decay; m.reverbPreDelayMs = preDelay; m.reverbDamping = damping;
+    m.reverbLowCut = lowCut; m.reverbHighCut = highCut; m.reverbDiffusion = diffusion; m.reverbMod = mod; m.reverbWidth = width;
+    m.reverbLevel = level; m.reverbBassMult = bassMult; m.reverbCrossover = crossover; m.reverbEarly = early; m.reverbDucking = ducking;
+}
+
+ReverbPreset ReverbPreset::from (const juce::String& nm, const MasterSettings& m)
+{
+    return { nm, m.reverbType, m.reverbSize, m.reverbDecay, m.reverbPreDelayMs, m.reverbDamping, m.reverbLowCut, m.reverbHighCut,
+             m.reverbDiffusion, m.reverbMod, m.reverbWidth, m.reverbLevel, m.reverbBassMult, m.reverbCrossover, m.reverbEarly, m.reverbDucking };
+}
+
+std::unique_ptr<juce::XmlElement> ReverbPreset::toXml() const
+{
+    auto e = std::make_unique<juce::XmlElement> ("ReverbPreset");
+    e->setAttribute ("name", name); e->setAttribute ("type", type);
+    e->setAttribute ("size", size); e->setAttribute ("decay", decay); e->setAttribute ("pre", preDelay); e->setAttribute ("damp", damping);
+    e->setAttribute ("lowCut", lowCut); e->setAttribute ("highCut", highCut); e->setAttribute ("diff", diffusion); e->setAttribute ("mod", mod);
+    e->setAttribute ("width", width); e->setAttribute ("level", level); e->setAttribute ("bass", bassMult); e->setAttribute ("xover", crossover);
+    e->setAttribute ("early", early); e->setAttribute ("duck", ducking);
+    return e;
+}
+
+ReverbPreset ReverbPreset::fromXml (const juce::XmlElement& e)
+{
+    MasterSettings d;
+    auto f = [&e] (const char* n, float def) { return (float) e.getDoubleAttribute (n, def); };
+    return { e.getStringAttribute ("name"), e.getIntAttribute ("type", d.reverbType), f ("size", d.reverbSize), f ("decay", d.reverbDecay),
+             f ("pre", d.reverbPreDelayMs), f ("damp", d.reverbDamping), f ("lowCut", d.reverbLowCut), f ("highCut", d.reverbHighCut),
+             f ("diff", d.reverbDiffusion), f ("mod", d.reverbMod), f ("width", d.reverbWidth), f ("level", d.reverbLevel),
+             f ("bass", d.reverbBassMult), f ("xover", d.reverbCrossover), f ("early", d.reverbEarly), f ("duck", d.reverbDucking) };
 }
 
 //==============================================================================

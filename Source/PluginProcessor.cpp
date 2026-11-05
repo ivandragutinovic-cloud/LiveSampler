@@ -83,6 +83,8 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("c3Is60", c3Is60);
     root.setAttribute ("globalDb", (double) globalDb);
     {
+        auto* rp = root.createNewChildElement ("ReverbPresets");
+        for (auto& x : userReverbPresets) rp->addChildElement (x.toXml().release());
         auto* e = root.createNewChildElement ("MasterEq");
         for (auto& k : GlobalEqSettings::names()) e->setAttribute (k, (double) globalEq.getByName (k));
     }
@@ -196,6 +198,9 @@ void LiveSamplerProcessor::loadData()
 
     c3Is60 = xml->getBoolAttribute ("c3Is60", true);
     globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
+    userReverbPresets.clear();
+    if (auto* rp = xml->getChildByName ("ReverbPresets"))
+        for (auto* x : rp->getChildWithTagNameIterator ("ReverbPreset")) userReverbPresets.push_back (ReverbPreset::fromXml (*x));
     if (auto* e = xml->getChildByName ("MasterEq"))
     {
         for (auto& k : GlobalEqSettings::names())
@@ -580,6 +585,8 @@ void LiveSamplerProcessor::rebuildConfig()
         pr.active = pr.part.on && u >= 0;
         if (perf.tuneOn && pr.part.scaleTune) pr.scaleCents = perf.tuneCents;
         pr.maxVoices = maxPolyphony;
+        // HARMONY Velocity: jacina terce (0.1 = oko -40 dB, 0.5 = -12 dB, 0.8 = -4 dB, 1.5 = +7 dB), boja ostaje kao kod melodije
+        pr.harmGain = std::pow (juce::jlimit (0.05f, 1.5f, terca.velocity), 2.0f);
         pr.vectorOn = perf.vectorOn;
         pr.vectorEqualPower = perf.vectorEqualPower;
     }
@@ -2657,7 +2664,7 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
 
                 int hn[2];
                 const int count = Terca::harmonize (c.terca, root, scale, note, hn);
-                const int hv = juce::jlimit (1, 127, juce::roundToInt ((float) vel * c.terca.velocity));
+                const int hv = juce::jlimit (1, 127, vel);   // jacina terce ide preko harmGain (glasnoca), ne preko velocity
                 for (int k = 0; k < count; ++k)
                     parts[p].noteOn (128 + note, hn[k] + shift, hv, k > 0);
                 if (count > 0)
@@ -2698,7 +2705,7 @@ void LiveSamplerProcessor::monoHarmUpdate (int p, const EngineConfig& c)
     }
     // novi id dok je stari jos drzan = mono legato prelaz (bez novog napada); stari se odmah pusta
     const int shift = pr.part.transpose + pr.part.octave * 12 + c.globalTranspose;
-    const int hv = juce::jlimit (1, 127, juce::roundToInt ((float) vel * c.terca.velocity));
+    const int hv = juce::jlimit (1, 127, vel);   // jacina terce ide preko harmGain (glasnoca), ne preko velocity
     const int newId = H.curId == 254 ? 255 : 254;
     for (int k = 0; k < count; ++k)
         parts[p].noteOn (newId, hn[k] + shift, hv, k > 0);

@@ -3,17 +3,36 @@
 
 struct MasterSettings
 {
-    float reverbSize = 0.5f, reverbDamping = 0.5f, reverbLevel = 0.8f;
+    float reverbSize = 0.6f, reverbDamping = 0.7f, reverbLevel = 0.8f;
     // plate reverb
     float reverbDecay = 2.2f;           // sekunde
-    float reverbPreDelayMs = 20.0f;
-    float reverbLowCut = 150.0f, reverbHighCut = 6000.0f;   // Hz, na ulazu u reverb
-    float reverbDiffusion = 0.7f, reverbMod = 0.3f, reverbWidth = 1.0f;
+    float reverbPreDelayMs = 25.0f;
+    float reverbLowCut = 200.0f, reverbHighCut = 5500.0f;   // Hz, na ulazu u reverb
+    float reverbDiffusion = 0.85f, reverbMod = 0.7f, reverbWidth = 1.0f;
+    // tip prostora: 0 Plate, 1 Hall, 2 Room, 3 Chamber, 4 Cathedral
+    int reverbType = 1;
+    float reverbBassMult = 1.1f;        // koliko dugo traje bas u odnosu na sredinu (0.5 - 2)
+    float reverbCrossover = 400.0f;     // granica bas / sredina za Bass mult (Hz)
+    float reverbEarly = 0.35f;          // rane refleksije (0 - 1)
+    float reverbDucking = 0.0f;         // reverb se utisa dok sviras (0 - 1)
     float delayTimeMs = 350.0f, delayFeedback = 0.35f, delayLevel = 0.6f;
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqHighDb = 0.0f;
     float compThresholdDb = 0.0f, compRatio = 1.0f;
     float masterDb = 0.0f;
 };
+
+// Preseti reverba (samo parametri reverba; ostalo u performansu ostaje)
+struct ReverbPreset
+{
+    juce::String name;
+    int type; float size, decay, preDelay, damping, lowCut, highCut, diffusion, mod, width, level, bassMult, crossover, early, ducking;
+    void applyTo (MasterSettings& m) const;
+    static ReverbPreset from (const juce::String& name, const MasterSettings& m);
+    std::unique_ptr<juce::XmlElement> toXml() const;
+    static ReverbPreset fromXml (const juce::XmlElement&);
+};
+const std::vector<ReverbPreset>& builtInReverbPresets();
+juce::StringArray reverbTypeNames();
 
 // MASTER EQ za ceo Workstation (ne zavisi od performansa)
 // PARAMETRIC: low cut + bas (shelf) + 2 srednja (bell, frekvencija i sirina) + visoki (shelf)
@@ -117,10 +136,14 @@ private:
     Line tankDelay1[2], tankDelay2[2];
     int tankDelay1Len[2] {}, tankDelay2Len[2] {};
     Allpass tankAp2[2];
-    float damp[2] {}, tankFeed[2] {};
+    float damp[2] {}, tankFeed[2] {}, lowSt[2] {};
     float bwState = 0.0f, hpState = 0.0f, hpPrev = 0.0f;
-    double lfoPhase = 0.0;
-    void build (float size);
+    double lfoPhase = 0.0, lfoPhase2 = 0.0;
+    Line erLine;                         // rane refleksije
+    int erTapL[6] {}, erTapR[6] {};
+    int lastType = -1;
+    float duckEnv = 0.0f, duckGain = 1.0f;
+    void build (float size, int type);
     int ms (int samples29k) const { return juce::jmax (2, (int) std::round (samples29k * scale)); }
 };
 

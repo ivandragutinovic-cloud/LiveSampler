@@ -262,6 +262,11 @@ static void masterToXml (const MasterSettings& m, juce::XmlElement& e)
     e.setAttribute ("revDiff", (double) m.reverbDiffusion);
     e.setAttribute ("revMod", (double) m.reverbMod);
     e.setAttribute ("revWidth", (double) m.reverbWidth);
+    e.setAttribute ("revType", m.reverbType);
+    e.setAttribute ("revBass", (double) m.reverbBassMult);
+    e.setAttribute ("revXover", (double) m.reverbCrossover);
+    e.setAttribute ("revEarly", (double) m.reverbEarly);
+    e.setAttribute ("revDuck", (double) m.reverbDucking);
     e.setAttribute ("dlyTime", (double) m.delayTimeMs);
     e.setAttribute ("dlyFb", (double) m.delayFeedback);
     e.setAttribute ("dlyLevel", (double) m.delayLevel);
@@ -287,6 +292,13 @@ static MasterSettings masterFromXml (const juce::XmlElement& e)
     m.reverbDiffusion = f ("revDiff", m.reverbDiffusion);
     m.reverbMod = f ("revMod", m.reverbMod);
     m.reverbWidth = f ("revWidth", m.reverbWidth);
+    // stari performansi (pre tipova): ostaju Plate bez ranih refleksija, kao sto su zvucali
+    const bool old = ! e.hasAttribute ("revType");
+    m.reverbType = juce::jlimit (0, 4, e.getIntAttribute ("revType", old ? 0 : m.reverbType));
+    m.reverbBassMult = f ("revBass", old ? 1.0f : m.reverbBassMult);
+    m.reverbCrossover = f ("revXover", m.reverbCrossover);
+    m.reverbEarly = f ("revEarly", old ? 0.0f : m.reverbEarly);
+    m.reverbDucking = f ("revDuck", 0.0f);
     m.delayTimeMs = f ("dlyTime", m.delayTimeMs);
     m.delayFeedback = f ("dlyFb", m.delayFeedback);
     m.delayLevel = f ("dlyLevel", m.delayLevel);
