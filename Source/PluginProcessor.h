@@ -411,7 +411,11 @@ private:
     std::array<std::atomic<int>, 128> impCc {}, impNote {};
     std::atomic<int> impPb { 64 }, impCh { 0 };
     std::atomic<bool> impSeen { false };
-    std::array<std::atomic<int>, 128> impPickup {};          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mora da stigne
+    std::array<std::atomic<int>, 128> impPickup {};
+    std::array<std::atomic<bool>, 128> impLatch {};          // CC dugmadi / transporta na Impulse-u (toggle mod)
+public:
+    bool isImpulseLatching (int channel, int cc) const { return cc >= 0 && cc < 128 && channel == impCh.load() && impLatch[(size_t) cc].load(); }
+private:          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mora da stigne
     std::array<int, 128> impPhysPrev {};                     // audio nit
     juce::AbstractFifo impFifo { 256 };
     std::array<juce::uint32, 256> impFifoData {};

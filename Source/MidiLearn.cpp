@@ -320,6 +320,13 @@ void MidiLearn::dispatch (int type, int channel, int number, int value)
             if (auto d = lastDup.find (dk); d != lastDup.end() && now - d->second < 40.0) continue;
             lastDup[dk] = now;
         }
+        // dugme koje drzi stanje (Impulse toggle): svaka poruka je pritisak, odmah (i kad se brzo pritiska)
+        if (type == 1 && isLatching && isLatching (channel, number))
+        {
+            if (t.trigger) t.trigger();
+            else if (t.getState && t.setState) t.setState (! t.getState());
+            continue;
+        }
         // button: press toggles. A release that comes quickly (momentary pad / key) does nothing;
         // a "0" that comes later (latching switch on iPad) turns it off.
         if (value >= 64)

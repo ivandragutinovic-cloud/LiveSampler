@@ -39,12 +39,14 @@ LiveSamplerProcessor::LiveSamplerProcessor()
     for (auto& x : impPickup) x = -1;
     impPhysPrev.fill (-1);
     loadImpulseLayout ({});
+    MidiLearn::get().isLatching = [this, a = alive] (int ch, int cc) { return a->load() && isImpulseLatching (ch, cc); };
     startTimer (500);
 }
 
 LiveSamplerProcessor::~LiveSamplerProcessor()
 {
     alive->store (false);
+    MidiLearn::get().isLatching = nullptr;
     stopTimer();
     remote.reset();
    #if JucePlugin_Build_Standalone
@@ -792,6 +794,9 @@ void LiveSamplerProcessor::loadImpulseLayout (const juce::var&)
     // raspored pravog Impulse-a (knobovi CC 21-28, faderi 41-49, dugmad 51-59, transport 114-119, padovi CC 80-87)
     auto def = impulseDefaults();
     impCtls = def;
+    for (auto& x : impLatch) x = false;
+    for (auto& c : impCtls)
+        if (c.type == 1 && (c.kind == "btn" || c.kind == "trans")) impLatch[(size_t) juce::jlimit (0, 127, c.num)] = true;
 }
 
 void LiveSamplerProcessor::impulseFromRemote (const juce::String& id, int value)
@@ -2750,7 +2755,13 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
 
     if (m.isController() && lt.matchesCC (m.getChannel(), m.getControllerNumber()))
     {
-        tercaTrigger (m.getControllerValue() >= 64, c);
+        if (isImpulseLatching (m.getChannel(), m.getControllerNumber()))
+        {
+            // Impulse dugme u toggle modu: svaki pritisak (127 ili 0) pali / gasi tercu
+            tercaTrigger (true, c);
+            tercaTrigger (false, c);
+        }
+        else tercaTrigger (m.getControllerValue() >= 64, c);
         return;
     }
     if ((m.isNoteOn() || m.isNoteOff()) && lt.matchesNote (m.getChannel(), m.getNoteNumber()))

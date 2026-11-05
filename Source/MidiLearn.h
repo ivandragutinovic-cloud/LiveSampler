@@ -53,7 +53,9 @@ public:
     juce::String learningId() const { return learnTargetId; }
     bool isAssigned (const juce::String& id) const { return assigns.count (id) > 0; }
     juce::String describe (const juce::String& id) const;
-    juce::StringArray idsFor (int type, int channel, int number) const;   // type 1 CC, 2 nota (message thread)
+    juce::StringArray idsFor (int type, int channel, int number) const;
+    // dugme koje drzi stanje (Impulse u toggle modu): svaka poruka (127 ili 0) je jedan pritisak, bez cekanja
+    std::function<bool (int channel, int number)> isLatching;   // type 1 CC, 2 nota (message thread)
     bool stateOf (const juce::String& id, bool& state) const;             // false = nije dugme sa stanjem
     void clear (const juce::String& id);
 

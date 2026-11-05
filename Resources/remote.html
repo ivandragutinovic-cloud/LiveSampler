@@ -1151,7 +1151,7 @@ function buildImp(m) {
     const fill = tr.querySelector("i"), cap = tr.querySelector("b");
     ctrls.push(() => { const v = valOf(fid), p = v / 127; fill.style.height = (p * 100) + "%"; cap.style.bottom = "calc(" + (p * 100) + "% - 7px)"; val.textContent = Math.round(v); });
     const b = el("button", "ib", "", c);
-    b.onclick = () => { send(bid, 127); setTimeout(() => send(bid, 0), 120); };
+    b.onclick = () => { send(bid, +get(bid)[3] > 0 ? 0 : 127); };   // kao Impulse u toggle modu: jedan pritisak = jedna poruka
     ctrls.push(() => { const x = get(bid); b.textContent = x[2]; b.classList.toggle("lit", +x[3] > 0); b.classList.toggle("st1", x[5] === 1); b.title = x[4] || "nije dodeljeno"; });
     const bw = el("div", "what", "", c); ctrls.push(() => { const x = get(bid); bw.textContent = x[4] ? x[4] + (x[5] === 1 ? " · ON" : x[5] === 0 ? " · OFF" : "") : "—"; bw.classList.toggle("none", !x[4]); });
   }
@@ -1162,7 +1162,7 @@ function buildImp(m) {
   const tg = el("div", "row", "", tbox); tg.style.width = "100%";
   ["t114", "t115", "t116", "t117", "t118", "t119"].forEach(id => {
     const b = el("button", "ib", "", tg); b.style.flex = "1";
-    b.onclick = () => { send(id, 127); setTimeout(() => send(id, 0), 120); };
+    b.onclick = () => { send(id, +get(id)[3] > 0 ? 0 : 127); };
     ctrls.push(() => { const x = get(id); b.innerHTML = esc(x[2]) + (x[4] ? "<br><small style='font-size:10px;color:var(--lcd)'>" + esc(x[4]) + "</small>" : ""); b.classList.toggle("lit", +x[3] > 0 || x[5] === 1); });
   });
   const pbox = el("div", "cell", "", lr); pbox.style.flex = "4";
