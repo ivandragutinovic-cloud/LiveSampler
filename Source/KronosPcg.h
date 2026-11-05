@@ -33,6 +33,12 @@ namespace Kronos
         std::array<int, 8> ampEg {};      // start, attack t, attack lvl, decay t, break, slope t, sustain, release t
         int ampLevel = 127, ampVelocity = 0, pan = 64;
         int send1 = 127, send2 = 127;     // Send MFX1/MFX2 (vazi kad je Bus Select = L/R)
+        // EG modulacija: izvor (16 = Velocity), nivoi (start, attack, break), tri vremenske modulacije (izvor + A/D/S/R)
+        struct EgMod { int lvlSrc = 0; std::array<int, 3> lvl {}; std::array<int, 3> tSrc {}; std::array<std::array<int, 4>, 3> t {}; };
+        EgMod ampMod, filterMod;
+        int drive = 0, boost = 0;         // Driver (0..99)
+        bool driveBypass = false;
+        int noteDelay = 0;                // Trigger Delay Start (x2 ms, 0x61 = Off)
     };
 
     struct Program

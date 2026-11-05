@@ -129,6 +129,24 @@ namespace Kronos
                 q.xfadeCurve[(size_t) z] = juce::jlimit (0, 2, (int) (b[2952 + z * 3] & 3));
             }
             q.zoneBottom[7] = 1;
+            {
+                auto egMod = [&] (OscParams::EgMod& m, int base)   // Prog_HD-1.txt: Level Mod / Time Mod 1-3
+                {
+                    m.lvlSrc = b[base];
+                    for (int k = 0; k < 3; ++k) m.lvl[(size_t) k] = s8 (b[base + 1 + k]);
+                    for (int k = 0; k < 3; ++k)
+                    {
+                        m.tSrc[(size_t) k] = b[base + 4 + k * 5];
+                        for (int j = 0; j < 4; ++j) m.t[(size_t) k][(size_t) j] = s8 (b[base + 5 + k * 5 + j]);
+                    }
+                };
+                egMod (q.filterMod, 3107);
+                egMod (q.ampMod, 3163);
+                q.drive = b[3135] & 0x7f;
+                q.driveBypass = (b[3135] & 0x80) != 0;
+                q.boost = b[3136] & 0x7f;
+                q.noteDelay = b[2971] & 0x7f;
+            }
             q.transpose   = s8 (b[3013]);
             q.tuneCents   = (int) (juce::int16) (b[3014] | (b[3015] << 8));
             q.lfo1Freq    = b[2977];

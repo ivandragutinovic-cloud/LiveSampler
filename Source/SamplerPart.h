@@ -117,6 +117,9 @@ private:
         int block = 0;
         int lane = -1, slot = 0;             // mono traka (-1 = poly)
         bool eqOn = false;
+        int delaySamples = 0;            // Note-On Delay: toliko semplova cuti i stoji na pocetku
+        float drive = 0.0f, driveNorm = 1.0f, lowBoost = 0.0f;   // Driver (Kronos): zasicenje + bas
+        float lbL = 0.0f, lbR = 0.0f, lbCoef = 0.0f;
         Biquad eq[3];
         int oscTranspose = 0;
         double pos = 0.0, inc = 1.0;

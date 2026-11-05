@@ -456,10 +456,17 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         }
         else
         {
-            v.ampEnv.start (amp, sampleRate);
+            // jacina udarca menja EG (kao Kronos Level / Time Mod: Velocity)
+            v.ampEnv.start (amp.forVelocity (vel01), sampleRate);
             v.pitchEnv.start (sb.pitchEg, sampleRate);
-            v.filterEnv.start (sb.filterEg, sampleRate);
+            v.filterEnv.start (sb.filterEg.forVelocity (vel01), sampleRate);
         }
+        v.delaySamples = legatoLevel >= 0.0f ? 0 : (int) (juce::jlimit (0.0f, 2.0f, sb.noteDelay) * sampleRate);
+        v.drive = juce::jlimit (0.0f, 1.0f, sb.drive);
+        v.driveNorm = 1.0f / (1.0f + v.drive * 6.0f);   // tihi signal ostaje iste jacine, vrhovi se zaobljavaju
+        v.lowBoost = juce::jlimit (0.0f, 1.0f, sb.lowBoost);
+        v.lbL = v.lbR = 0.0f;
+        v.lbCoef = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 180.0f / (float) sampleRate);
 
         v.filterOn = sb.filterType != FilterType::Off;
         v.cascade = sb.filterType == FilterType::LP24;
@@ -994,6 +1001,7 @@ void SamplerPart::renderVoices (int start, int num)
 
         for (int i = 0; i < num; ++i)
         {
+            if (v.delaySamples > 0) { --v.delaySamples; continue; }   // Note-On Delay
             if (--v.ctrl <= 0)
             {
                 v.ctrl = controlRate;
@@ -1045,6 +1053,23 @@ void SamplerPart::renderVoices (int start, int num)
                 {
                     l = v.filter2.processSample (0, l);
                     r = v.filter2.processSample (1, r);
+                }
+            }
+            if (v.drive > 0.001f || v.lowBoost > 0.001f)
+            {
+                // Kronos Driver: Low Boost (bas pre zasicenja) + meko zasicenje
+                if (v.lowBoost > 0.001f)
+                {
+                    v.lbL += v.lbCoef * (l - v.lbL);
+                    v.lbR += v.lbCoef * (r - v.lbR);
+                    l += v.lbL * v.lowBoost * 2.0f;
+                    r += v.lbR * v.lowBoost * 2.0f;
+                }
+                if (v.drive > 0.001f)
+                {
+                    const float k = 1.0f + v.drive * 6.0f;
+                    l = std::tanh (l * k) * v.driveNorm;
+                    r = std::tanh (r * k) * v.driveNorm;
                 }
             }
             if (v.eqOn)

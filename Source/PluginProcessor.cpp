@@ -1069,6 +1069,19 @@ namespace
         return x <= 40.0f ? 0.03f * std::pow (1.7f / 0.03f, x / 40.0f)
                           : 1.7f * std::pow (30.0f / 1.7f, (x - 40.0f) / 59.0f);
     }
+    // Filter Frequency 0..99 -> Hz (-3 dB tacka sa grafika na Kronosu: 0=30, 20=120, 40=600, 60=2.5k, 80=11k, 99=20k)
+    float kCutoffHz (int v)
+    {
+        static const float pts[][2] = { { 0, 30.0f }, { 20, 120.0f }, { 40, 600.0f }, { 60, 2500.0f }, { 80, 11000.0f }, { 99, 20000.0f } };
+        const float x = (float) juce::jlimit (0, 99, v);
+        for (int i = 0; i < 5; ++i)
+            if (x <= pts[i + 1][0])
+            {
+                const float t = (x - pts[i][0]) / (pts[i + 1][0] - pts[i][0]);
+                return pts[i][1] * std::pow (pts[i + 1][1] / pts[i][1], t);
+            }
+        return 20000.0f;
+    }
     float kLevelDb (int v)   { return v <= 0 ? -60.0f : 40.0f * std::log10 ((float) v / 127.0f); }
 
     EnvSettings kAmpEg (const std::array<int, 8>& e)
@@ -1121,7 +1134,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         // zvuk (Zvuk A = OSC1, Zvuk B = OSC2)
         sb.ampEg = kAmpEg (q.ampEg);
         sb.filterType = (q.filterRouting & 3) == 3 || (q.filterRouting & 3) == 1 ? FilterType::LP24 : FilterType::LP12;
-        sb.cutoff = kHz (q.cutoff, 20.0f, 1000.0f);
+        sb.cutoff = kCutoffHz (q.cutoff);
         sb.resonance = (float) juce::jlimit (0, 99, q.resonance) / 99.0f;
         // cutoff skala ima oko 10 oktava na 99 koraka, pa je jedan korak intenziteta ~0.1 oktave
         sb.filterEgInt = (float) q.filterEgInt * 0.1f;
@@ -1134,6 +1147,30 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         sb.vibDelay = q.lfo1Delay <= 0 ? 0.0f : kTime (q.lfo1Delay);
         sb.vibFade = q.lfo1Fade <= 0 ? 0.005f : kTime (q.lfo1Fade);
         sb.vibOffset = juce::jlimit (-1.0f, 1.0f, (float) q.lfo1Offset / 99.0f);
+        // EG po jacini udarca (Level Mod / Time Mod sa izvorom Velocity = 16)
+        auto velMod = [] (EnvSettings& e, const Kronos::OscParams::EgMod& m)
+        {
+            constexpr int velocitySrc = 16;
+            if (m.lvlSrc == velocitySrc)
+            {
+                e.velStart = (float) m.lvl[0] / 99.0f;
+                e.velAttack = (float) m.lvl[1] / 99.0f;
+                e.velBreak = (float) m.lvl[2] / 99.0f;
+            }
+            float t[4] {};
+            for (int k = 0; k < 3; ++k)
+                if (m.tSrc[(size_t) k] == velocitySrc)
+                    for (int j = 0; j < 4; ++j) t[j] += (float) m.t[(size_t) k][(size_t) j] / 99.0f;
+            e.velAttackT = juce::jlimit (-1.0f, 1.0f, t[0]);
+            e.velDecayT = juce::jlimit (-1.0f, 1.0f, t[1]);
+            e.velSlopeT = juce::jlimit (-1.0f, 1.0f, t[2]);
+            e.velReleaseT = juce::jlimit (-1.0f, 1.0f, t[3]);
+        };
+        velMod (sb.ampEg, q.ampMod);
+        velMod (sb.filterEg, q.filterMod);
+        sb.drive = q.driveBypass ? 0.0f : (float) q.drive / 99.0f;
+        sb.lowBoost = q.driveBypass ? 0.0f : (float) q.boost / 99.0f;
+        sb.noteDelay = q.noteDelay > 0 && q.noteDelay < 0x61 ? (float) q.noteDelay * 0.002f : 0.0f;
         // pitch EG: nivoi jos nisu nadjeni u PCG-u, pa intenzitet ostaje 0 da ne pokvari visinu
 
         // zone -> oscilatori; zona 1 je najjaca, svaka sledeca ide ispod nje.

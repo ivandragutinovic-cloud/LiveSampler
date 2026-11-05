@@ -70,6 +70,27 @@ struct EnvSettings
     float decayTime = 0.3f, breakLevel = 1.0f;
     float slopeTime = 0.3f, sustain = 1.0f;
     float releaseTime = 0.3f, releaseLevel = 0.0f;
+    // jacina udarca menja EG (Kronos: Level Mod / Time Mod sa izvorom Velocity), na pun udarac:
+    float velStart = 0.0f, velAttack = 0.0f, velBreak = 0.0f;   // dodaje se na nivo (-1..1)
+    float velAttackT = 0.0f, velDecayT = 0.0f, velSlopeT = 0.0f, velReleaseT = 0.0f;   // -1 = vreme /8, +1 = x8
+    bool hasVelMod() const { return velStart != 0.0f || velAttack != 0.0f || velBreak != 0.0f || velAttackT != 0.0f
+                                    || velDecayT != 0.0f || velSlopeT != 0.0f || velReleaseT != 0.0f; }
+    // EG za datu jacinu (0..1)
+    EnvSettings forVelocity (float v01) const
+    {
+        if (! hasVelMod()) return *this;
+        EnvSettings e = *this;
+        auto lvl = [v01] (float base, float m) { return juce::jlimit (-1.0f, 1.0f, base + m * v01); };
+        auto tm = [v01] (float t, float m) { return t * std::pow (2.0f, 3.0f * m * v01); };
+        e.start = lvl (start, velStart);
+        e.attackLevel = lvl (attackLevel, velAttack);
+        e.breakLevel = lvl (breakLevel, velBreak);
+        e.attackTime = tm (attackTime, velAttackT);
+        e.decayTime = tm (decayTime, velDecayT);
+        e.slopeTime = tm (slopeTime, velSlopeT);
+        e.releaseTime = tm (releaseTime, velReleaseT);
+        return e;
+    }
 };
 
 namespace FilterType { enum { Off = 0, LP24, LP12, HP, BP, Num }; }
@@ -77,6 +98,8 @@ namespace FilterType { enum { Off = 0, LP24, LP12, HP, BP, Num }; }
 struct SoundBlock
 {
     bool on = true;                     // OSC on/off (all its MS)
+    float drive = 0.0f, lowBoost = 0.0f;   // Kronos Driver: zasicenje (0..1) i pojacanje basa (0..1)
+    float noteDelay = 0.0f;                // Note-On Delay: OSC krece ovoliko posle udarca (s)
     // pitch
     float pitchEgInt = 0.0f;            // polutonovi na pun nivo pitch EG-a
     EnvSettings pitchEg { 0.0f, 0.001f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f, 0.1f, 0.0f };

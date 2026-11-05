@@ -15,6 +15,12 @@ static void envToXml (const EnvSettings& e, juce::XmlElement& x)
     x.setAttribute ("sustain", (double) e.sustain);
     x.setAttribute ("rTime", (double) e.releaseTime);
     x.setAttribute ("rLevel", (double) e.releaseLevel);
+    if (e.hasVelMod())
+    {
+        x.setAttribute ("vStart", (double) e.velStart); x.setAttribute ("vAttack", (double) e.velAttack); x.setAttribute ("vBreak", (double) e.velBreak);
+        x.setAttribute ("vAT", (double) e.velAttackT); x.setAttribute ("vDT", (double) e.velDecayT);
+        x.setAttribute ("vST", (double) e.velSlopeT); x.setAttribute ("vRT", (double) e.velReleaseT);
+    }
 }
 
 static EnvSettings envFromXml (const juce::XmlElement* x, EnvSettings e)
@@ -30,12 +36,14 @@ static EnvSettings envFromXml (const juce::XmlElement* x, EnvSettings e)
     e.sustain = f ("sustain", e.sustain);
     e.releaseTime = f ("rTime", e.releaseTime);
     e.releaseLevel = f ("rLevel", e.releaseLevel);
+    e.velStart = f ("vStart", 0.0f); e.velAttack = f ("vAttack", 0.0f); e.velBreak = f ("vBreak", 0.0f);
+    e.velAttackT = f ("vAT", 0.0f); e.velDecayT = f ("vDT", 0.0f); e.velSlopeT = f ("vST", 0.0f); e.velReleaseT = f ("vRT", 0.0f);
     return e;
 }
 
 #define BLOCK_FLOATS(X) X(pitchEgInt) X(vibRate) X(vibDepth) X(vibDelay) X(vibFade) X(vibOffset) X(mwToVib) X(atToVib) \
     X(cutoff) X(resonance) X(keyTrack) X(velToCutoff) X(filterEgInt) X(velToFilterEg) X(bendToCutoff) X(filterLfoRate) X(filterLfoDepth) \
-    X(mwToCutoff) X(atToCutoff) X(velSens) X(velCurve) X(atToAmp)
+    X(mwToCutoff) X(atToCutoff) X(velSens) X(velCurve) X(atToAmp) X(drive) X(lowBoost) X(noteDelay)
 
 std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
 {

@@ -2310,7 +2310,8 @@ static std::vector<std::vector<SoundEditor::Param>> sectionParams (int section)
                 P ("LFO rate", 0.05, 15, 3, 2, hzText2, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoRate; }),
                 P ("LFO depth", 0, 3, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterLfoDepth; }),
                 P ("ModWh→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].mwToCutoff; }),
-                P ("Aftert→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToCutoff; }) });
+                P ("Aftert→cut", -4, 4, 0, 0, octText, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToCutoff; }),
+                P ("Vel→EG atk", -1, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].filterEg.velAttackT; }) });
             rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].filterEg; }, true, true));
             break;
 
@@ -2318,7 +2319,12 @@ static std::vector<std::vector<SoundEditor::Param>> sectionParams (int section)
             rows.push_back ({
                 P ("Velocity", 0, 1, 0, 0.8, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].velSens; }),
                 P ("Vel curve", 0.3, 4, 1.4, 1.6, [] (double v) { return juce::String (v, 2); }, [] (U& u, int b) -> float& { return u.block[(size_t) b].velCurve; }),
-                P ("Aftert→amp", 0, 12, 0, 0, [] (double v) { return "+" + juce::String (v, 1) + " dB"; }, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToAmp; }) });
+                P ("Aftert→amp", 0, 12, 0, 0, [] (double v) { return "+" + juce::String (v, 1) + " dB"; }, [] (U& u, int b) -> float& { return u.block[(size_t) b].atToAmp; }),
+                P ("Vel→start", -1, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].ampEg.velStart; }),
+                P ("Vel→atk time", -1, 1, 0, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].ampEg.velAttackT; }),
+                P ("Drive", 0, 1, 0.2, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].drive; }),
+                P ("Low boost", 0, 1, 0.2, 0, UI::pctText, [] (U& u, int b) -> float& { return u.block[(size_t) b].lowBoost; }),
+                P ("Note delay", 0, 0.5, 0.05, 0, UI::timeText, [] (U& u, int b) -> float& { return u.block[(size_t) b].noteDelay; }) });
             rows.push_back (envParams ([] (U& u, int b) -> EnvSettings& { return u.block[(size_t) b].ampEg; }, false, false));
             break;
 
