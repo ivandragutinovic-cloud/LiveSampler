@@ -420,6 +420,9 @@ juce::StringArray LiveSamplerProcessor::neededInstruments (bool includeBank) con
     };
 
     addPerf (perf);
+    if (auditionUser >= 0 && auditionUser < (int) users.size())
+        for (auto& n : users[(size_t) auditionUser].usedInstruments())
+            names.addIfNotAlreadyThere (n);
     if (includeBank)
     {
         // unapred: dugmad trenutne strane set liste (da prebacivanje na svirci bude trenutno)
@@ -566,10 +569,17 @@ void LiveSamplerProcessor::onInstrumentLoaded (const juce::String& name, Instrum
 void LiveSamplerProcessor::rebuildConfig()
 {
     auto cfg = std::make_shared<EngineConfig>();
+    const bool audition = auditionUser >= 0 && auditionUser < (int) users.size();
     for (int i = 0; i < kNumParts; ++i)
     {
         auto& pr = cfg->parts[(size_t) i];
         pr.part = perf.parts[(size_t) i];
+        if (audition)
+        {
+            // presluskivanje usera: part 1 = samo taj user, cist (bez podesavanja performansa), ostali cute
+            pr.part = PerfPart();
+            if (i == 0) { pr.part.on = true; pr.part.user = users[(size_t) auditionUser].name; pr.part.scaleTune = false; }
+        }
         const int u = findUser (pr.part.user);
         if (u >= 0)
         {
@@ -582,7 +592,7 @@ void LiveSamplerProcessor::rebuildConfig()
             if (pr.user.isFm())
                 pr.fm = fmPatchFor (pr.user);
         }
-        pr.active = pr.part.on && u >= 0;
+        pr.active = pr.part.on && u >= 0 && (audition || soloMask == 0 || ((soloMask >> i) & 1) != 0);
         if (perf.tuneOn && pr.part.scaleTune) pr.scaleCents = perf.tuneCents;
         pr.maxVoices = maxPolyphony;
         // HARMONY Velocity: jacina terce (0.1 = oko -40 dB, 0.5 = -12 dB, 0.8 = -4 dB, 1.5 = +7 dB), boja ostaje kao kod melodije
@@ -1679,6 +1689,34 @@ void LiveSamplerProcessor::storePerformance (int slot)
     kontrolerChanged();
 }
 
+void LiveSamplerProcessor::setSolo (int part, bool on)
+{
+    if (part < 0 || part >= kNumParts) return;
+    const auto m = on ? (soloMask | (1u << part)) : (soloMask & ~(1u << part));
+    if (m == soloMask) return;
+    soloMask = m;
+    rebuildConfig();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::clearSolo()
+{
+    if (soloMask == 0) return;
+    soloMask = 0;
+    rebuildConfig();
+    sendChangeMessage();
+}
+
+void LiveSamplerProcessor::setAuditionUser (int u)
+{
+    if (u >= (int) users.size()) u = -1;
+    if (u == auditionUser) return;
+    auditionUser = u;
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
 void LiveSamplerProcessor::recallPerformance (int slot)
 {
     if (slot < 0 || slot >= kNumPerfSlots || ! slots[(size_t) slot].used)
@@ -1686,6 +1724,7 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     perf = slots[(size_t) slot];
     currentSlot = slot;
     currentBank = slot / kPerfPerBank;
+    soloMask = 0;     // SOLO vazi samo za performans u kome je ukljucen
     ++perfSerial;     // zvuci prethodnog performansa izdisu prirodno (SST)
     vectorX = 0.0f; vectorY = 0.0f;     // joystick krece iz centra, kao na Kronosu
     vectorUiDirty = true;

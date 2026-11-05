@@ -246,6 +246,14 @@ public:
     struct AudioInfo { juce::String driver, device; int buffer = 0; double rate = 0, latencyMs = 0; bool warn = false; juce::String advice; };
     AudioInfo getAudioInfo() const;
     juce::String getAudioShortText() const;     // "CPU 12% | 5.8 ms ASIO"
+    // SOLO: samo oznaceni partovi sviraju (privremeno, ne snima se; brise se kad se pozove drugi performans)
+    void setSolo (int part, bool on);
+    bool isSolo (int part) const { return part >= 0 && part < 16 && ((soloMask >> part) & 1) != 0; }
+    bool anySolo() const { return soloMask != 0; }
+    void clearSolo();
+    // USER presluskivanje: user svira sam (bez performansa); -1 = svira performans
+    void setAuditionUser (int userIndex);
+    int getAuditionUser() const { return auditionUser; }
     bool getShowKeyRows() const { return showKeyRows; }        // PERFORMANCE: redovi Low/High/Vel/Channel na partovima
     void setShowKeyRows (bool b) { showKeyRows = b; markSave(); sendChangeMessage(); }
     bool isDiskStreaming() const { return SampleLibrary::streamingEnabled.load(); }
@@ -343,6 +351,8 @@ private:
     PartSpan parts { partBanks[0] }, tails { partBanks[1] };
     ConfigPtr tailConfig;               // konfiguracija prethodnog performansa dok mu zvuci izdisu
     juce::uint32 perfSerial = 0;
+    juce::uint32 soloMask = 0;
+    int auditionUser = -1;
     bool sustainHeld = false;           // audio nit
     MasterEffects master;
     juce::AudioBuffer<float> mainBuf, reverbBuf, delayBuf;

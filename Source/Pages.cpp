@@ -156,6 +156,14 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     onButton.setColour (juce::TextButton::buttonOnColourId, colour);
     onButton.onClick = [this] { edit ([this] (PerfPart& pp) { pp.on = onButton.getToggleState(); }); };
     addAndMakeVisible (onButton);
+    soloButton.setButtonText ("S");
+    soloButton.setClickingTogglesState (true);
+    soloButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd9a400));
+    soloButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    soloButton.getProperties().set ("fontSize", 11.0f);
+    soloButton.setTooltip (T ("SOLO: only soloed parts play, all others are muted (not saved; clears when another performance is called)"));
+    soloButton.onClick = [this] { proc.setSolo (index, soloButton.getToggleState()); };
+    addAndMakeVisible (soloButton);
 
     userButton.setColour (juce::TextButton::buttonColourId, Pal::bg);
     userButton.getProperties().set ("fontSize", 14.0f);
@@ -250,6 +258,7 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
         auto& ml = MidiLearn::get();
         const juce::String id = "perf.part" + juce::String (i + 1) + ".";
         ml.bindButton (onButton, id + "on");
+        ml.bindButton (soloButton, id + "solo");
         ml.bindSlider (volume.slider, id + "volume");
         ml.bindSlider (pan.slider, id + "pan");
         ml.bindSlider (reverb.slider, id + "reverb");
@@ -567,6 +576,8 @@ void PartStrip::refresh()
 {
     const auto& p = proc.getPerformance().parts[(size_t) index];
     onButton.setToggleState (p.on, juce::dontSendNotification);
+    soloButton.setToggleState (proc.isSolo (index), juce::dontSendNotification);
+    onButton.setAlpha (proc.anySolo() && ! proc.isSolo (index) ? 0.45f : 1.0f);   // utisan zbog SOLO-a drugog parta
     userButton.setButtonText (p.isMissing() ? juce::String::fromUTF8 ("\xe2\x9a\xa0 ") + p.missingName : p.user.isEmpty() ? T ("— choose user —") : p.user);
     userButton.setColour (juce::TextButton::buttonColourId, p.isMissing() ? juce::Colour (0xff5a2230) : Pal::bg);
     userButton.setTooltip (p.isMissing() ? "This Kronos program is not resampled yet, so the part is silent. Right side menu: Resample from Kronos, "
@@ -635,6 +646,8 @@ void PartStrip::resized()
     {
         auto row = r.removeFromTop (26);
         partMenu.setBounds (row.removeFromRight (20));
+        row.removeFromRight (2);
+        soloButton.setBounds (row.removeFromRight (22));
         row.removeFromRight (2);
         onButton.setBounds (row);
     }
@@ -3040,6 +3053,15 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     };
     addAndMakeVisible (nameEdit);
 
+    auditionButton.setButtonText (T ("SOLO USER"));
+    auditionButton.setClickingTogglesState (true);
+    auditionButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd9a400));
+    auditionButton.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    auditionButton.setTooltip (T ("On: this user plays alone, as it is (no performance: no part volume, EQ, keyboard split or other parts). "
+                                  "Turns on when you click a user in the list. Off: you hear it through the performance (EDIT on a part)."));
+    auditionButton.onClick = [this] { setAudition (auditionButton.getToggleState()); };
+    addAndMakeVisible (auditionButton);
+
     const char* headers[] = { "Multisample", "", "", "Level dB", "Pan", "Transp", "Fine c", "Low", "High", "Vel lo / hi" };
     for (int i = 0; i < 10; ++i)
     {
@@ -3072,6 +3094,7 @@ void UserPage::edit (std::function<void (UserProgram&)> fn)
 void UserPage::selectUser (int index)
 {
     userIndex = juce::jlimit (0, juce::jmax (0, proc.getNumUsers() - 1), index);
+    applyAudition();
     rebuildVisible();
     list.updateContent();
     const auto it = std::find (visible.begin(), visible.end(), userIndex);
@@ -3155,8 +3178,27 @@ void UserPage::selectedRowsChanged (int lastRowSelected)
     if (lastRowSelected >= 0 && lastRowSelected < (int) visible.size() && visible[(size_t) lastRowSelected] != userIndex)
     {
         userIndex = visible[(size_t) lastRowSelected];
+        applyAudition();
         refresh();
     }
+}
+
+void UserPage::listBoxItemClicked (int row, const juce::MouseEvent&)
+{
+    if (row >= 0 && row < (int) visible.size())
+        setAudition (true);   // klik na usera u listi: cuje se sam, kakav jeste
+}
+
+void UserPage::setAudition (bool on)
+{
+    audition = on;
+    auditionButton.setToggleState (on, juce::dontSendNotification);
+    applyAudition();
+}
+
+void UserPage::applyAudition()
+{
+    proc.setAuditionUser (audition && pageActive && userIndex < proc.getNumUsers() ? userIndex : -1);
 }
 
 void UserPage::categoryMenu()
@@ -3296,7 +3338,12 @@ void UserPage::resized()
     list.setBounds (left);
 
     r.reduce (10, 8);
-    nameEdit.setBounds (r.removeFromTop (30).removeFromLeft (420));
+    {
+        auto top = r.removeFromTop (30);
+        nameEdit.setBounds (top.removeFromLeft (420));
+        top.removeFromLeft (10);
+        auditionButton.setBounds (top.removeFromLeft (110).reduced (0, 2));
+    }
     r.removeFromTop (4);
 
     // FM user: umesto MS1-MS8 FM editor na istom mestu (malo visi: envelope ima knobove)

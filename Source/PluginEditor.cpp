@@ -509,6 +509,7 @@ void LiveSamplerEditor::showTab (int tab)
     if (currentTab == TabMapping && userPage != nullptr && mappingEditor != nullptr
         && userPage->getUserIndex() != mappingEditor->getUserIndex())
         mappingEditor->setUserOsc (userPage->getUserIndex(), userPage->getSoundBlock() * kMsPerOsc);
+    if (userPage != nullptr) userPage->setPageActive (currentTab == TabUser || currentTab == TabMapping);   // SOLO USER samo na USER / MAPPING
     const auto all = pages();
     for (int i = 0; i < NumTabs; ++i)
     {
@@ -521,6 +522,7 @@ void LiveSamplerEditor::showTab (int tab)
 void LiveSamplerEditor::editUser (const juce::String& userName)
 {
     const int u = proc.findUser (userName);
+    userPage->setAudition (false);   // EDIT iz performansa: user se cuje kroz performans
     if (u >= 0)
         userPage->selectUser (u);
     showTab (TabUser);

@@ -27,7 +27,7 @@ private:
     void showEq();
     void showHarmLevel();
     void showPartMenu();
-    LearnButton onButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
+    LearnButton onButton, soloButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
     void stepUser (int dir);
     ValueKnob volume, pan, reverb, delay;
     LearnSlider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
@@ -292,8 +292,15 @@ public:
     int getSoundBlock() const { return sound.getBlock(); }
     void resized() override;
     void paint (juce::Graphics&) override;
+    // SOLO USER: user se presluskuje sam (bez performansa). Klik na usera u listi pali, EDIT iz performansa gasi.
+    void setAudition (bool on);
+    void setPageActive (bool active) { pageActive = active; applyAudition(); }
 
 private:
+    bool audition = false, pageActive = false;
+    void applyAudition();
+    LearnButton auditionButton;
+    void listBoxItemClicked (int row, const juce::MouseEvent&) override;
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
     void selectedRowsChanged (int lastRowSelected) override;
