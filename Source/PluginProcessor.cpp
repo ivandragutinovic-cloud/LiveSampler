@@ -751,7 +751,16 @@ void LiveSamplerProcessor::registerImpulseInputs()
 
 void LiveSamplerProcessor::impulseIncoming (const juce::MidiMessage& m)
 {
-    if (m.isController()) { impCc[(size_t) m.getControllerNumber()] = m.getControllerValue(); if (m.getChannel() != 10) impCh = m.getChannel(); }
+    if (m.isController())
+    {
+        const int cc = m.getControllerNumber(), v = m.getControllerValue();
+        const auto now = juce::Time::getMillisecondCounter();
+        if (v >= 64) impDownMs[(size_t) cc] = now;
+        else if (impCc[(size_t) cc].load() >= 64 && impDownMs[(size_t) cc] != 0 && now - impDownMs[(size_t) cc] < 350)
+            impMomentary[(size_t) cc] = true;     // pusteno odmah posle pritiska: dugme je momentary (drzanje se racuna)
+        impCc[(size_t) cc] = v;
+        if (m.getChannel() != 10) impCh = m.getChannel();
+    }
     else if (m.isNoteOnOrOff()) impNote[(size_t) m.getNoteNumber()] = m.isNoteOn() ? m.getVelocity() : 0;
     else if (m.isPitchWheel()) { impPb = m.getPitchWheelValue() >> 7; impCh = m.getChannel(); }
     else return;
@@ -2595,8 +2604,10 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
 
     if (tercaCapturing)
     {
+        // dugme za tercu je drzano: akord se samo uci (dur / mol / tonalitet), ne cuje se
         capturedMask |= 1 << (note % 12);
         tryRecognize (capturedMask | heldMask(), c);
+        return;
     }
 
     const bool tOn = tercaOn.load();

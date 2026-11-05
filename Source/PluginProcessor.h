@@ -413,8 +413,12 @@ private:
     std::atomic<bool> impSeen { false };
     std::array<std::atomic<int>, 128> impPickup {};
     std::array<std::atomic<bool>, 128> impLatch {};          // CC dugmadi / transporta na Impulse-u (toggle mod)
+    std::array<std::atomic<bool>, 128> impMomentary {};      // primeceno: dugme se pusta odmah (momentary)
+    std::array<juce::uint32, 128> impDownMs {};               // MIDI nit
 public:
-    bool isImpulseLatching (int channel, int cc) const { return cc >= 0 && cc < 128 && channel == impCh.load() && impLatch[(size_t) cc].load(); }
+    // toggle mod; dugme prebaceno na Impulse-u u momentary (brzo pusta: 127 pa 0 za < 350 ms) radi klasicno: pritisak / drzanje
+    bool isImpulseLatching (int channel, int cc) const
+    { return cc >= 0 && cc < 128 && channel == impCh.load() && impLatch[(size_t) cc].load() && ! impMomentary[(size_t) cc].load(); }
 private:          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mora da stigne
     std::array<int, 128> impPhysPrev {};                     // audio nit
     juce::AbstractFifo impFifo { 256 };
