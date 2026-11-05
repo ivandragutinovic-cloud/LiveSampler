@@ -171,6 +171,17 @@ namespace Kronos
         c.vectorEqualPower = (d[1211] & 0x08) != 0;
         c.return2 = juce::jlimit (0, 127, (int) d[1049]);
         c.scaleType = juce::jlimit (0, 26, (int) d[4793]);
+        for (int n = 0; n < 12; ++n)   // CombiAndSongTimbreSet.txt: IFX blok od 88, po 74 bajta
+        {
+            const auto* x = d + 88 + n * 74;
+            auto& f = c.ifx[(size_t) n];
+            f.on = (x[1] & 0x40) != 0;
+            f.chain = (x[1] & 0x80) != 0;
+            f.chainTo = x[2] & 0x0f;        // 2..12 (broj IFX-a)
+            f.bus = x[5] & 0x0f;
+            f.send1 = juce::jlimit (0, 127, (int) x[6]);
+            f.send2 = juce::jlimit (0, 127, (int) x[7]);
+        }
         c.scaleKey = juce::jlimit (0, 11, (int) d[4794]);
         for (int t = 0; t < 16; ++t)
         {
@@ -192,7 +203,8 @@ namespace Kronos
             tm.velLow = juce::jlimit (1, 127, (int) b[41]);
             tm.damper = (b[32] & 0x04) != 0;       // (Filter) Damper
             tm.footPedal = (b[34] & 0x08) != 0;    // (Filter) Foot Pedal
-            tm.useProgramScale = (b[34] & 0x20) != 0;   // CombiAndSongTimbreSet.txt 4836 bit 5
+            tm.useProgramScale = (b[34] & 0x20) != 0;
+            tm.busSelect = b[29] & 0x1f;             // 4831 bit 4~0   // CombiAndSongTimbreSet.txt 4836 bit 5
             tm.vectorDir = juce::jlimit (0, 4, (int) (b[52] & 0x07));     // CombiAndSongTimbreSet.txt: VJS Assign
             tm.vectorCenter = juce::jlimit (0, 4, (int) ((b[52] >> 3) & 0x07));
             readTrackEq (tm, b + 46);

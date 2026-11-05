@@ -1516,8 +1516,9 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
     p.vectorOn = c.vectorVolume;
     p.vectorEqualPower = c.vectorEqualPower;
     p.category = {};
-    p.master.reverbLevel = (float) c.return1 / 127.0f;   // MFX1 Return
-    p.master.delayLevel = (float) c.return2 / 127.0f;    // MFX2 Return
+    // MFX1 / MFX2 Return: kriva kao jacina (Return 40 = oko -20 dB, ne -10 dB) - ranije je reverb bio ~10 dB prejak
+    p.master.reverbLevel = juce::square ((float) c.return1 / 127.0f);
+    p.master.delayLevel = juce::square ((float) c.return2 / 127.0f);
     for (int t = 0; t < 16 && t < kNumParts; ++t)
     {
         const auto& tm = c.timbres[(size_t) t];
@@ -1574,8 +1575,22 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         // Drum kit na svom kanalu (npr. 10) ostaje na tom kanalu, da ne svira sa klavijature preko ostalih zvukova.
         const bool drumOwnChannel = prog != nullptr && prog->drumKit && tm.channel != 0 && tm.channel != kronosPcg->globalChannel;
         part.midiChannel = (! keepChannels && ! drumOwnChannel) || tm.channel == kronosPcg->globalChannel ? 0 : tm.channel;
-        part.reverbSend = (float) tm.send1 / 127.0f;
-        part.delaySend = (float) tm.send2 / 127.0f;
+        // Kronos: timbre na IFX-u salje u MFX preko Send1/Send2 IFX-a (poslednjeg u lancu), a ne preko svojih sendova.
+        // Nivoi sendova i returna idu krivom kao jacina (40 log, kao Volume), ne linearno.
+        {
+            int s1 = tm.send1, s2 = tm.send2;
+            if (tm.busSelect >= 1 && tm.busSelect <= 12)
+            {
+                int n = tm.busSelect - 1;
+                for (int guard = 0; guard < 12 && c.ifx[(size_t) n].chain && c.ifx[(size_t) n].chainTo - 1 > n && c.ifx[(size_t) n].chainTo <= 12; ++guard)
+                    n = c.ifx[(size_t) n].chainTo - 1;
+                s1 = c.ifx[(size_t) n].send1;
+                s2 = c.ifx[(size_t) n].send2;
+            }
+            auto curve = [] (int v) { const float x = (float) juce::jlimit (0, 127, v) / 127.0f; return x * x; };
+            part.reverbSend = curve (s1);
+            part.delaySend = curve (s2);
+        }
         // U kombiju svira Track EQ timbre-a umesto EQ-a programa. EQ parta se dodaje na EQ usera,
         // pa part dobija razliku (timbre - user). Za zvuk koji fali: razlika prema EQ-u programa,
         // jer ce presemplovan user dobiti bas taj EQ.

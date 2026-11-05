@@ -82,6 +82,7 @@ namespace Kronos
         bool eqBypass = false;
         float eqLowDb = 0.0f, eqMidDb = 0.0f, eqHighDb = 0.0f, eqMidFreq = 1000.0f;
         bool useProgramScale = true;             // Pitch: Use Program Scale (iskljuceno = svira kroz skalu kombija)
+        int busSelect = 0;                       // 0 L/R, 1..12 IFX1..12, 13.. individualni izlazi, 25 Off
     };
 
     struct Combi
@@ -94,6 +95,9 @@ namespace Kronos
         int return1 = 127, return2 = 127;   // MFX1 / MFX2 Return
         int category = 0;                   // Combi Category 0-17 (imena u Pcg::combiCategories)
         bool vectorVolume = false, vectorEqualPower = false;   // Vector Control: Enable Volume Control, Equal Power
+        // IFX 1-12: ukljucen, lanac (chain) na sledeci, Bus Select i Send1/2 na izlazu IFX-a
+        struct Ifx { bool on = false, chain = false; int chainTo = 0, bus = 0, send1 = 0, send2 = 0; };
+        std::array<Ifx, 12> ifx;
         int scaleType = 0;                  // 0 Equal Temperament ... 10 User All Notes, 11..26 User Octave Scale 00..15
         int scaleKey = 0;                   // C..B
         juce::String id() const { return bank + " " + juce::String (number).paddedLeft ('0', 3); }
