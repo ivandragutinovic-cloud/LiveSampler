@@ -2645,7 +2645,7 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (sr <= 0 || n <= 0) return;
             const double used = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
             const float load = (float) (used / (n / sr));
-            if (load > 0.95f) p.dropouts.fetch_add (1);
+            if (load > 1.0f) p.dropouts.fetch_add (1);   // blok nije stigao na vreme = stvarno pucketanje
             const float prev = p.audioLoad.load();
             p.audioLoad = load > prev ? load : prev * 0.995f + load * 0.005f;
         }
