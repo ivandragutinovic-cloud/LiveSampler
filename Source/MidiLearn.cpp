@@ -323,8 +323,14 @@ void MidiLearn::dispatch (int type, int channel, int number, int value)
         }
         else if (type == 1)
         {
+            // "0" koji dodje kasnije = dugme koje drzi stanje (Impulse u toggle modu, iPad prekidac): to je novi pritisak.
+            // Dugme sa stanjem se gasi; dugme bez stanja (HARMONY, PERF, scene...) se okida ponovo, kao drugi pritisak tastera.
             const bool momentary = lastPress.count (key) > 0 && now - lastPress[key] < 600.0;
-            if (! momentary && t.getState && t.setState && t.getState()) t.setState (false);
+            if (! momentary)
+            {
+                if (t.getState && t.setState) { if (t.getState()) t.setState (false); }
+                else if (t.trigger) t.trigger();
+            }
         }
     }
 }
