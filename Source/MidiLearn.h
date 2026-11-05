@@ -88,6 +88,7 @@ private:
     Event events[1024];
 
     std::map<int, double> lastPress;
+    std::map<int, double> lastDup;
     int blinkTick = 0;     // key -> ms of last "press" (momentary buttons)
 };
 

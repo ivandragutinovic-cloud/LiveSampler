@@ -697,7 +697,7 @@ namespace
         for (int i = 1; i <= 9; ++i) add ("b" + juce::String (i), "btn", i == 9 ? "M" : juce::String (i), 1, 50 + i, 0);
         const char* tn[] = { "Rew", "Fwd", "Stop", "Play", "Loop", "Rec" };
         for (int i = 0; i < 6; ++i) add ("t" + juce::String (114 + i), "trans", tn[i], 1, 114 + i, 0);
-        for (int i = 0; i < 8; ++i) add ("p" + juce::String (i + 1), "pad", "Pad " + juce::String (i + 1), 2, 36 + i, 10);
+        for (int i = 0; i < 8; ++i) add ("p" + juce::String (i + 1), "pad", "Pad " + juce::String (i + 1), 1, 80 + i, 0);   // Impulse padovi: CC 80-87
         add ("pb", "wheel", "Pitch", 3, 0, 0);
         add ("mw", "wheel", "Mod", 1, 1, 0);
         return c;
@@ -776,25 +776,10 @@ juce::String LiveSamplerProcessor::impulseTargetText (const ImpulseCtl& c, int& 
     return names.joinIntoString (", ");
 }
 
-void LiveSamplerProcessor::loadImpulseLayout (const juce::var& json)
+void LiveSamplerProcessor::loadImpulseLayout (const juce::var&)
 {
+    // raspored pravog Impulse-a (knobovi CC 21-28, faderi 41-49, dugmad 51-59, transport 114-119, padovi CC 80-87)
     auto def = impulseDefaults();
-    if (const auto* ctls = json.getProperty ("impulse", {}).getProperty ("controls", {}).getArray())
-    {
-        const int baseCh = (int) json.getProperty ("impulse", {}).getProperty ("ch", 0);
-        juce::ignoreUnused (baseCh);   // kanal iz Pikaso Stage je bio za njegov virtuelni Impulse; pravi kanal se cita sa Impulse-a
-        for (auto& d : def)
-            for (auto& x : *ctls)
-                if (x.getProperty ("id", {}).toString() == d.id)
-                {
-                    const auto t = x.getProperty ("type", "cc").toString();
-                    d.type = t == "note" ? 2 : t == "pb" ? 3 : 1;
-                    d.num = juce::jlimit (0, 127, (int) x.getProperty ("num", d.num));
-                    if (d.type == 2) d.ch = juce::jlimit (1, 16, (int) x.getProperty ("ch", d.ch));
-                    const auto nm = x.getProperty ("name", {}).toString();
-                    if (nm.isNotEmpty()) d.name = nm;
-                }
-    }
     impCtls = def;
 }
 

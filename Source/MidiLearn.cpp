@@ -313,6 +313,13 @@ void MidiLearn::dispatch (int type, int channel, int number, int value)
             if (type == 1 && t.setNorm) t.setNorm ((float) value / 127.0f);
             continue;
         }
+        // ista poruka dvaput za redom (isti CC i vrednost u < 40 ms, npr. stigla i direktno i prosledjena preko drugog porta): samo jednom
+        if (t.isButton)
+        {
+            const int dk = key * 128 + value;
+            if (auto d = lastDup.find (dk); d != lastDup.end() && now - d->second < 40.0) continue;
+            lastDup[dk] = now;
+        }
         // button: press toggles. A release that comes quickly (momentary pad / key) does nothing;
         // a "0" that comes later (latching switch on iPad) turns it off.
         if (value >= 64)
