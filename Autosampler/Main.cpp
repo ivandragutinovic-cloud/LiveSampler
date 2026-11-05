@@ -1556,7 +1556,13 @@ private:
     {
         const auto tag = msFolder (n).getChildFile ("kronos-ms.txt");
         if (! tag.existsAsFile()) return false;
-        return juce::StringArray::fromLines (tag.loadFileAsString())[0].trim().equalsIgnoreCase (n.romKey);
+        if (! juce::StringArray::fromLines (tag.loadFileAsString())[0].trim().equalsIgnoreCase (n.romKey)) return false;
+        // prazan ili nedovrsen folder (nema WAV-a, ili ROM bez mape) nije gotov: snima se ponovo
+        const auto folder = msFolder (n);
+        if (folder.getNumberOfChildFiles (juce::File::findFiles, "*.wav") == 0) return false;
+        if (! n.exi && ! n.external && ! n.drum && folder.getChildFile ("kronos-zones.txt").existsAsFile()
+            && ! folder.getChildFile ("LiveSampler-mapa.xml").existsAsFile()) return false;
+        return true;
     }
 
     // pre snimanja: ako u folderu stoje semplovi nekog drugog (starijeg) programa, brisu se
