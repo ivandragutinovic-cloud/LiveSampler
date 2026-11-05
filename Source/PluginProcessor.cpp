@@ -2629,7 +2629,13 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
         parts[p].noteOn (note, note + shift, vel);
         used |= (juce::uint16) (1 << p);
 
-        if (tOn && part.terca && ! tercaCapturing)
+        if (pr.user.isMono())
+        {
+            // mono: terca prati notu koja svira (legato), vidi monoHarmUpdate
+            monoHarm[(size_t) p].add (note, vel);
+            monoHarmUpdate (p, c);
+        }
+        else if (tOn && part.terca && ! tercaCapturing)
         {
             // terca samo na najvisi drzani ton u opsegu ovog dela (melodija)
             bool isTop = true;
@@ -2663,6 +2669,43 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
     harmonized[ch][note] |= harm;
 }
 
+void LiveSamplerProcessor::monoHarmUpdate (int p, const EngineConfig& c)
+{
+    auto& H = monoHarm[(size_t) p];
+    const auto& pr = c.parts[(size_t) p];
+    const bool want = tercaOn.load() && pr.active && pr.part.terca && pr.user.isMono() && ! tercaCapturing;
+    const int root = tercaRoot.load(), scale = tercaScale.load();
+
+    // melodija = ton koji mono deo svira (isti prioritet kao u useru)
+    int mel = -1, vel = 0;
+    if (want && H.n > 0)
+    {
+        int k = H.n - 1;
+        if (pr.user.priority == Priority::High) { for (int i = 0; i < H.n; ++i) if (H.note[i] > H.note[k]) k = i; }
+        else if (pr.user.priority == Priority::Low) { for (int i = 0; i < H.n; ++i) if (H.note[i] < H.note[k]) k = i; }
+        mel = H.note[k]; vel = H.vel[k];
+    }
+    if (mel == H.curMel && root == H.root && scale == H.scale && want == H.on) return;
+    H.root = root; H.scale = scale; H.on = want;
+
+    int hn[2] {}, count = 0;
+    if (mel >= 0) count = Terca::harmonize (c.terca, root, scale, mel, hn);
+    if (mel < 0 || count <= 0)
+    {
+        if (H.curId >= 0) parts[p].noteOff (H.curId);
+        H.curId = -1; H.curMel = mel;
+        return;
+    }
+    // novi id dok je stari jos drzan = mono legato prelaz (bez novog napada); stari se odmah pusta
+    const int shift = pr.part.transpose + pr.part.octave * 12 + c.globalTranspose;
+    const int hv = juce::jlimit (1, 127, juce::roundToInt ((float) vel * c.terca.velocity));
+    const int newId = H.curId == 254 ? 255 : 254;
+    for (int k = 0; k < count; ++k)
+        parts[p].noteOn (newId, hn[k] + shift, hv, k > 0);
+    if (H.curId >= 0) parts[p].noteOff (H.curId);
+    H.curId = newId; H.curMel = mel;
+}
+
 void LiveSamplerProcessor::routeNoteOff (int ch, int note)
 {
     if (heldCount[note] > 0)
@@ -2671,13 +2714,27 @@ void LiveSamplerProcessor::routeNoteOff (int ch, int note)
     for (int p = 0; p < kNumParts; ++p)
     {
         if (routed[ch][note] & (1 << p))
+        {
             parts[p].noteOff (note);
+            if (audioConfig != nullptr && audioConfig->parts[(size_t) p].user.isMono())
+            {
+                monoHarm[(size_t) p].remove (note);
+                monoHarmUpdate (p, *audioConfig);   // melodija se vratila na drzani taster ili je pustena: terca prati
+            }
+        }
         if (harmonized[ch][note] & (1 << p))
             parts[p].noteOff (128 + note);
         if (tailConfig != nullptr)
         {
             tails[p].noteOff (note);        // ton odsviran u prethodnom performansu
             tails[p].noteOff (128 + note);
+        }
+        auto& H = monoHarm[(size_t) p];
+        if (H.tailId >= 0)
+        {
+            for (int i = 0; i < H.tailN; ++i)
+                if (H.tailNote[i] == note) { for (int k = i; k + 1 < H.tailN; ++k) H.tailNote[k] = H.tailNote[k + 1]; --H.tailN; break; }
+            if (H.tailN <= 0) { tails[p].noteOff (H.tailId); H.tailId = -1; }
         }
     }
     routed[ch][note] = 0;
@@ -2852,6 +2909,7 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
             p.allNotesOff (m.isAllSoundOff());
         for (auto& p : tails)
             p.allNotesOff (m.isAllSoundOff());
+        for (auto& H : monoHarm) { H.reset(); H.tailId = -1; H.tailN = 0; }
         std::memset (routed, 0, sizeof (routed));
         std::memset (harmonized, 0, sizeof (harmonized));
         std::memset (heldCount, 0, sizeof (heldCount));
@@ -2900,6 +2958,14 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 std::swap (parts.d, tails.d);
                 tailConfig = audioConfig;
                 for (auto& p : parts) { p.allNotesOff (true); p.setSustain (sustainHeld); }
+                for (auto& H : monoHarm)
+                {
+                    // terca mono dela ostaje u repu dok se ne puste njeni tasteri
+                    H.tailId = H.curId;
+                    H.tailN = H.n;
+                    for (int i = 0; i < H.n; ++i) H.tailNote[i] = H.note[i];
+                    H.reset();
+                }
             }
             audioConfig = pendingConfig;
         }
@@ -2916,6 +2982,7 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             p.allNotesOff (true);
         for (auto& p : tails)
             p.allNotesOff (true);
+        for (auto& H : monoHarm) { H.reset(); H.tailId = -1; H.tailN = 0; }
         std::memset (routed, 0, sizeof (routed));
         std::memset (harmonized, 0, sizeof (harmonized));
         std::memset (heldCount, 0, sizeof (heldCount));
@@ -2940,6 +3007,10 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             parts[p].setVector (vectorX.load(), vectorY.load());
             parts[p].beginBlock (&c.parts[(size_t) p], len);
         }
+
+        if (start == 0)
+            for (int p = 0; p < kNumParts; ++p)
+                if (monoHarm[(size_t) p].n > 0 || monoHarm[(size_t) p].curId >= 0) monoHarmUpdate (p, c);
 
         if (start == 0 && impFifo.getNumReady() > 0)
         {

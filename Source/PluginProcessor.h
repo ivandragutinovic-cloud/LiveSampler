@@ -341,6 +341,19 @@ private:
     int maxBlock = 512;
     juce::uint16 routed[16][128] {};       // bit = deo (16 delova)
     juce::uint16 harmonized[16][128] {};
+    // terca za MONO boje: prati notu koja stvarno svira (prioritet usera) i prelazi legato zajedno sa melodijom
+    struct MonoHarm
+    {
+        int note[32] {}, vel[32] {}, n = 0;      // drzani tasteri ovog dela, redom pritiska
+        int curId = -1, curMel = -1, root = -1, scale = -1;
+        bool on = false;
+        int tailId = -1, tailNote[32] {}, tailN = 0;   // terca koja je ostala u prethodnom performansu (SST)
+        void add (int nt, int v) { remove (nt); if (n < 32) { note[n] = nt; vel[n] = v; ++n; } }
+        void remove (int nt) { for (int i = 0; i < n; ++i) if (note[i] == nt) { for (int k = i; k + 1 < n; ++k) { note[k] = note[k + 1]; vel[k] = vel[k + 1]; } --n; return; } }
+        void reset() { n = 0; curId = curMel = root = scale = -1; on = false; }
+    };
+    std::array<MonoHarm, kNumParts> monoHarm;
+    void monoHarmUpdate (int part, const EngineConfig&);
     int heldCount[128] {};
     bool tercaCapturing = false, recognizedInCapture = false;
     int capturedMask = 0;
