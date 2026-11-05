@@ -87,7 +87,14 @@ namespace Kronos
     {
         auto g = [] (juce::uint8 v) { return juce::jlimit (-18.0f, 18.0f, (float) (juce::int8) v * 0.5f); };
         t.eqBypass  = (e[0] & 0x80) != 0;
-        t.eqMidFreq = 100.0f * std::pow (10.0f, juce::jlimit (0, 165, (int) e[2]) * 2.0f / 165.0f);
+        // Korg tabela (00~A5 = 100 Hz..10 kHz), provereno na Kronosu: 5=150, 52=740, 58=860, 95=3.00k, 97=3.20k, 130=6.50k
+        {
+            const int v = juce::jlimit (0, 165, (int) e[2]);
+            t.eqMidFreq = v <= 40 ? 100.0f + 10.0f * (float) v
+                        : v <= 65 ? 500.0f + 20.0f * (float) (v - 40)
+                        : v <= 85 ? 1000.0f + 50.0f * (float) (v - 65)
+                                  : 2000.0f + 100.0f * (float) (v - 85);
+        }
         t.eqLowDb   = g (e[3]);
         t.eqMidDb   = g (e[4]);
         t.eqHighDb  = g (e[5]);

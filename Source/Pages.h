@@ -341,7 +341,7 @@ public:
 private:
     bool audition = false, pageActive = false;
     void applyAudition();
-    LearnButton auditionButton;
+    LearnButton auditionButton, originalButton;
     void listBoxItemClicked (int row, const juce::MouseEvent&) override;
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;

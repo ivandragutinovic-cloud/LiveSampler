@@ -3084,6 +3084,29 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     auditionButton.onClick = [this] { setAudition (auditionButton.getToggleState()); };
     addAndMakeVisible (auditionButton);
 
+    originalButton.setButtonText (T ("ORIGINAL"));
+    originalButton.setTooltip (T ("Load the original again: a user made from a Kronos program is read again from the PCG; "
+                                  "other users go back to how they were when made. Your changes on this user are lost."));
+    originalButton.onClick = [this]
+    {
+        if (userIndex < 0 || userIndex >= proc.getNumUsers()) return;
+        const auto nm = proc.getUser (userIndex).name;
+        juce::Component::SafePointer<UserPage> safe (this);
+        const int idx = userIndex;
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("Load original"),
+            T ("Load the original settings of \"") + nm + T ("\" again? All changes on this user are lost."),
+            T ("Load original"), T ("Cancel"), nullptr,
+            juce::ModalCallbackFunction::create ([safe, idx] (int ok)
+            {
+                if (safe == nullptr || ok == 0) return;
+                juce::String err;
+                if (! safe->proc.restoreUserOriginal (idx, err))
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, T ("Load original"), err);
+                safe->refresh();
+            }));
+    };
+    addAndMakeVisible (originalButton);
+
     const char* headers[] = { "Multisample", "", "", "Level dB", "Pan", "Transp", "Fine c", "Low", "High", "Vel lo / hi" };
     for (int i = 0; i < 10; ++i)
     {
@@ -3319,6 +3342,7 @@ void UserPage::refresh()
     }
     if (! nameEdit.isBeingEdited())
         nameEdit.setText (proc.getUser (userIndex).name, juce::dontSendNotification);
+    originalButton.setEnabled (proc.canRestoreUserOriginal (userIndex));
 }
 
 void UserPage::paint (juce::Graphics& g)
@@ -3365,6 +3389,8 @@ void UserPage::resized()
         nameEdit.setBounds (top.removeFromLeft (420));
         top.removeFromLeft (10);
         auditionButton.setBounds (top.removeFromLeft (110).reduced (0, 2));
+        top.removeFromLeft (8);
+        originalButton.setBounds (top.removeFromLeft (100).reduced (0, 2));
     }
     r.removeFromTop (4);
 

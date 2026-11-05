@@ -1671,6 +1671,12 @@ int LiveSamplerProcessor::createUser (const juce::String& baseName, const UserPr
 {
     UserProgram u = copyFrom != nullptr ? *copyFrom : UserProgram();
     u.name = uniqueUserName (baseName);
+    {
+        // snimak originala (bez starog snimka u sebi)
+        auto snap = u;
+        snap.originalXml = {};
+        if (auto x = snap.toXml()) u.originalXml = x->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+    }
     users.push_back (u);
     markSave();
     sendChangeMessage();
@@ -1712,6 +1718,63 @@ void LiveSamplerProcessor::updateUser (int index, const UserProgram& u)
     rebuildConfig();
     loadNeededInstruments();
     sendChangeMessage();
+}
+
+bool LiveSamplerProcessor::canRestoreUserOriginal (int index) const
+{
+    if (index < 0 || index >= (int) users.size()) return false;
+    return users[(size_t) index].kronosSource.isNotEmpty() || users[(size_t) index].originalXml.isNotEmpty();
+}
+
+bool LiveSamplerProcessor::restoreUserOriginal (int index, juce::String& error)
+{
+    if (index < 0 || index >= (int) users.size()) return false;
+    const auto cur = users[(size_t) index];
+    UserProgram fresh;
+    bool got = false;
+    if (cur.kronosSource.isNotEmpty())
+    {
+        // Kronos program: procitaj ponovo iz PCG-a (sa svim popravkama uvoza)
+        if (kronosPcg == nullptr || (cur.kronosPcg.isNotEmpty() && kronosFile.getFileName() != cur.kronosPcg))
+        {
+            const auto f = kronosFile.getParentDirectory().getChildFile (cur.kronosPcg);
+            juce::String e;
+            if (cur.kronosPcg.isNotEmpty() && f.existsAsFile()) loadKronosPcg (f, e);
+        }
+        if (kronosPcg != nullptr)
+        {
+            const auto bank = (juce::uint32) cur.kronosSource.upToFirstOccurrenceOf (":", false, false).getLargeIntValue();
+            const int num = cur.kronosSource.fromFirstOccurrenceOf (":", false, false).getIntValue();
+            if (const auto* prog = kronosPcg->findProgram (bank, num))
+            {
+                const int before = (int) users.size();
+                const int ni = cur.isFm() ? createUserFromKronosFm (*prog) : createUserFromKronos (*prog);
+                if (ni >= before && ni < (int) users.size())
+                {
+                    fresh = users[(size_t) ni];
+                    users.erase (users.begin() + ni);
+                    got = true;
+                }
+            }
+        }
+        if (! got && cur.originalXml.isEmpty())
+        {
+            error = T ("The Kronos program was not found. Load the PCG on the KRONOS page: ") + cur.kronosPcg;
+            return false;
+        }
+    }
+    if (! got)
+    {
+        auto x = juce::parseXML (cur.originalXml);
+        if (x == nullptr) { error = T ("No original saved for this user (made with an older version)."); return false; }
+        fresh = UserProgram::fromXml (*x);
+    }
+    fresh.name = cur.name;
+    fresh.category = cur.category;
+    fresh.originalXml = cur.originalXml.isNotEmpty() ? cur.originalXml : fresh.originalXml;
+    updateUser (index, fresh);
+    loadNeededInstruments();
+    return true;
 }
 
 void LiveSamplerProcessor::deleteUser (int index)

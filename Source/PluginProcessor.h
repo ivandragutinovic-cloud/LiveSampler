@@ -62,6 +62,9 @@ public:
     int createUserFromInstrument (const juce::String& instrument);
     void updateUser (int index, const UserProgram& u);         // promena se cuje odmah
     void deleteUser (int index);
+    // vrati usera na original: Kronos user se ponovo cita iz PCG-a, ostali iz snimka napravljenog pri pravljenju
+    bool restoreUserOriginal (int index, juce::String& error);
+    bool canRestoreUserOriginal (int index) const;
     void moveUser (int from, int to);                         // broj usera = mesto u listi
     const juce::StringArray& getUserCategories() const { return userCategories; }
     void editUserCategory (const juce::String& oldName, const juce::String& newName);   // old "" = new, new "" = delete
