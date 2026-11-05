@@ -273,6 +273,8 @@ public:
     void impulseIncoming (const juce::MidiMessage&);   // MIDI nit: samo pamti vrednosti
     bool isQtEdit() const { return qtEdit.load(); }
     void setQtEdit (bool b) { qtEdit = b; sendChangeMessage(); }
+    const GlobalEqSettings& getGlobalEq() const { return globalEq; }
+    void setGlobalEq (const GlobalEqSettings& e) { globalEq = e; rebuildConfig(); markSave(); sendChangeMessage(); }
     float getGlobalVolume() const { return globalDb; }
     void setGlobalVolume (float db) { globalDb = db; rebuildConfig(); markSave(); }
 
@@ -288,6 +290,7 @@ private:
     {
         std::array<PartRuntime, kNumParts> parts;
         MasterSettings master;
+        GlobalEqSettings globalEq;
         float globalDb = 0.0f;
         int globalTranspose = 0;
         int maxVoices = 128;
@@ -441,6 +444,7 @@ private:
     bool showKeyRows = false;
     bool gigMode = false;
     std::atomic<int> keyLearnMode { 0 }, keyLearnPart { 0 }, keyLearnFirst { -1 }, keyLearnNote { -1 };
+    GlobalEqSettings globalEq;
     float globalDb = 0.0f;
     bool saveNeeded = false;
     juce::uint32 lastSaveCheck = 0;

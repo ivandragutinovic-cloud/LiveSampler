@@ -3521,7 +3521,6 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
                            { "Width", 0, 1, 0, 1.0, UI::pctText }, { "Level", 0, 1, 0, 0.8, UI::pctText } });
     add ("DELAY", { { "Time", 20, 1500, 350, 350, [] (double v) { return juce::String (juce::roundToInt (v)) + " ms"; } },
                     { "Feedback", 0, 0.95, 0, 0.35, UI::pctText }, { "Level", 0, 1, 0, 0.6, UI::pctText } });
-    add ("EQ", { { "Low", -12, 12, 0, 0, db }, { "Mid", -12, 12, 0, 0, db }, { "High", -12, 12, 0, 0, db } });
     add ("PERFORMANCE", { { "Volume", -60, 6, -12, 0, UI::dbText } });
 
     auto setter = [this] (int i, std::function<void (MasterSettings&, float)> fn)
@@ -3542,22 +3541,106 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     setter (k++, [] (MasterSettings& m, float v) { m.delayTimeMs = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.delayFeedback = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.delayLevel = v; });
-    setter (k++, [] (MasterSettings& m, float v) { m.eqLowDb = v; });
-    setter (k++, [] (MasterSettings& m, float v) { m.eqMidDb = v; });
-    setter (k++, [] (MasterSettings& m, float v) { m.eqHighDb = v; });
     setter (k++, [] (MasterSettings& m, float v) { m.masterDb = v; });
 
+    // objasnjenja (mis preko dugmeta)
+    const char* tips[] = {
+        "Reverb room size: small room to big hall",
+        "How long the reverb tail rings (seconds)",
+        "Pause before the reverb starts: more predelay keeps the dry sound clear and in front",
+        "Damping of the high frequencies in the tail: more = darker, softer reverb",
+        "Low cut into the reverb: removes bass from the reverb so it does not boom",
+        "High cut into the reverb: removes the hiss and sharpness from the reverb",
+        "Density of the reverb: low = separate echoes, high = smooth tail",
+        "Slow movement in the tail (chorus-like): livelier, less metallic reverb",
+        "Stereo width of the reverb: 0 = mono, 100% = full stereo",
+        "Reverb return level: how loud the reverb is in the mix",
+        "Delay time between repeats (ms)",
+        "Feedback: how many repeats (more = longer echo)",
+        "Delay return level: how loud the echoes are in the mix",
+        "Volume of this performance (saved in the performance)" };
+    for (int i = 0; i < knobs.size() && i < 14; ++i) knobs[i]->slider.setTooltip (T (tips[i]));
+
+    // MASTER EQ: isti za sve performanse (zvucnici, sala), cuva se u podesavanjima Workstation-a
+    struct E { const char* key; const char* name; double lo, hi, centre, def; std::function<juce::String (double)> fmt; const char* tip; };
+    auto qf = [] (double v) { return juce::String (v, 2); };
+    const E es[] = {
+        { "hpfHz", "Low cut", 20, 400, 80, 20, UI::hzText, "Low cut filter: removes rumble and boom below this frequency (20 Hz = off)" },
+        { "lowDb", "Low", -15, 15, 0, 0, db, "Bass (shelf) for the whole Workstation" },
+        { "lowHz", "Low freq", 20, 1000, 100, 100, UI::hzText, "Below which frequency Low works" },
+        { "m1Db", "Mid 1", -15, 15, 0, 0, db, "First middle band (bell): e.g. cut 250-400 Hz when the sound is muddy" },
+        { "m1Hz", "Mid 1 freq", 40, 16000, 1000, 400, UI::hzText, "Center frequency of Mid 1" },
+        { "m1Q", "Mid 1 Q", 0.3, 8, 1, 1, qf, "Width of Mid 1: low = wide and soft, high = narrow (one problem frequency, feedback)" },
+        { "m2Db", "Mid 2", -15, 15, 0, 0, db, "Second middle band (bell): e.g. cut 2-4 kHz when it is harsh, boost for presence" },
+        { "m2Hz", "Mid 2 freq", 40, 16000, 1000, 2500, UI::hzText, "Center frequency of Mid 2" },
+        { "m2Q", "Mid 2 Q", 0.3, 8, 1, 1, qf, "Width of Mid 2: low = wide and soft, high = narrow" },
+        { "highDb", "High", -15, 15, 0, 0, db, "Treble (shelf) for the whole Workstation" },
+        { "highHz", "High freq", 1000, 18000, 8000, 8000, UI::hzText, "Above which frequency High works" } };
+    for (auto& e : es)
+    {
+        auto* k = geq.add (new ValueKnob (T (e.name), juce::Colours::white, e.lo, e.hi, e.centre, e.fmt, e.def));
+        k->slider.setTooltip (T (e.tip));
+        const juce::String key (e.key);
+        k->onChange = [this, key] (double v) { editEq ([key, v] (GlobalEqSettings& g) { g.setByName (key, (float) v); }); };
+        MidiLearn::get().bindSlider (k->slider, "mastereq." + key.toLowerCase());
+        geqKeys.add (key);
+        addChildComponent (k);
+    }
+    for (int i = 0; i < GlobalEqSettings::numGraphic; ++i)
+    {
+        auto* sl = gband.add (new juce::Slider (juce::Slider::LinearVertical, juce::Slider::TextBoxBelow));
+        sl->setRange (-12.0, 12.0, 0.5);
+        sl->setDoubleClickReturnValue (true, 0.0);
+        sl->setTextBoxStyle (juce::Slider::TextBoxBelow, false, 44, 18);
+        sl->setColour (juce::Slider::trackColourId, juce::Colours::white.withAlpha (0.7f));
+        sl->setColour (juce::Slider::thumbColourId, juce::Colours::white);
+        const float hz = GlobalEqSettings::graphicHz[i];
+        sl->setTooltip ((hz >= 1000 ? juce::String (hz / 1000.0f, hz < 10000 ? 1 : 0) + " kHz" : juce::String ((int) hz) + " Hz")
+                        + T (": boost or cut this band for the whole Workstation (double-click = 0 dB)"));
+        sl->onValueChange = [this, i, sl] { editEq ([i, v = (float) sl->getValue()] (GlobalEqSettings& g) { g.g[(size_t) i] = v; }); };
+        MidiLearn::get().bindSlider (*sl, "mastereq.g" + juce::String (i + 1));
+        addChildComponent (sl);
+    }
+    auto modeBtn = [this] (juce::TextButton& b, const char* text, const char* tip, std::function<void()> fn)
+    {
+        b.setButtonText (text);
+        b.setTooltip (T (tip));
+        b.setColour (juce::TextButton::buttonOnColourId, juce::Colours::white);
+        b.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+        b.onClick = std::move (fn);
+        addAndMakeVisible (b);
+    };
+    modeBtn (geqParam, "PARAMETRIC", "Parametric EQ: low cut, bass, 2 sweepable middles with width, treble", [this] { editEq ([] (GlobalEqSettings& g) { g.mode = 0; }); });
+    modeBtn (geqGraphic, "GRAPHIC 15", "Graphic EQ: 15 bands (2/3 octave, 25 Hz - 16 kHz), like on a PA mixer", [this] { editEq ([] (GlobalEqSettings& g) { g.mode = 1; }); });
+    modeBtn (geqFlat, "FLAT", "Reset the master EQ (all bands to 0 dB, low cut off)", [this] { editEq ([] (GlobalEqSettings& g) { for (auto& x : g.g) x = 0.0f; g.lowDb = g.m1Db = g.m2Db = g.highDb = 0.0f; g.hpfHz = 20.0f; }); });
+    geqOn.setButtonText ("ON");
+    geqOn.setClickingTogglesState (true);
+    geqOn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3ddc84));
+    geqOn.setColour (juce::TextButton::textColourOnId, juce::Colours::black);
+    geqOn.setTooltip (T ("Master EQ on / off (compare with and without)"));
+    geqOn.onClick = [this] { editEq ([on = geqOn.getToggleState()] (GlobalEqSettings& g) { g.on = on; }); };
+    MidiLearn::get().bindButton (geqOn, "mastereq.on");
+    addAndMakeVisible (geqOn);
+
     globalVolume = std::make_unique<ValueKnob> ("MASTER", juce::Colours::white, -60.0, 6.0, -12.0, UI::dbText, 0.0);
+    globalVolume->slider.setTooltip (T ("Master volume for the whole Workstation, all performances"));
     globalVolume->onChange = [this] (double v) { proc.setGlobalVolume ((float) v); };
     addAndMakeVisible (*globalVolume);
 
     // MIDI Learn
     const char* ids[] = { "reverb.size", "reverb.decay", "reverb.predelay", "reverb.damping", "reverb.lowcut", "reverb.highcut",
                           "reverb.density", "reverb.mod", "reverb.width", "reverb.level", "delay.time", "delay.feedback", "delay.level",
-                          "eq.low", "eq.mid", "eq.high", "perf.volume" };
-    for (int i = 0; i < knobs.size() && i < 17; ++i)
+                          "perf.volume" };
+    for (int i = 0; i < knobs.size() && i < 14; ++i)
         MidiLearn::get().bindSlider (knobs[i]->slider, juce::String ("fx.") + ids[i]);
     MidiLearn::get().bindSlider (globalVolume->slider, "master.volume");
+}
+
+void EffectsPage::editEq (std::function<void (GlobalEqSettings&)> fn)
+{
+    auto g = proc.getGlobalEq();
+    fn (g);
+    proc.setGlobalEq (g);
 }
 
 void EffectsPage::edit (std::function<void (MasterSettings&)> fn)
@@ -3572,10 +3655,20 @@ void EffectsPage::refresh()
     const auto& m = proc.getPerformance().master;
     const float vals[] = { m.reverbSize, m.reverbDecay, m.reverbPreDelayMs, m.reverbDamping, m.reverbLowCut, m.reverbHighCut,
                            m.reverbDiffusion, m.reverbMod, m.reverbWidth, m.reverbLevel, m.delayTimeMs, m.delayFeedback, m.delayLevel,
-                           m.eqLowDb, m.eqMidDb, m.eqHighDb, m.masterDb };
+                           m.masterDb };
     for (int i = 0; i < knobs.size(); ++i)
         knobs[i]->setValue (vals[i]);
     globalVolume->setValue (proc.getGlobalVolume());
+    const auto& g = proc.getGlobalEq();
+    for (int i = 0; i < geq.size(); ++i) { geq[i]->setValue (g.getByName (geqKeys[i])); geq[i]->setVisible (g.mode == 0); }
+    for (int i = 0; i < gband.size(); ++i)
+    {
+        if (! gband[i]->isMouseButtonDown()) gband[i]->setValue (g.g[(size_t) i], juce::dontSendNotification);
+        gband[i]->setVisible (g.mode == 1);
+    }
+    geqParam.setToggleState (g.mode == 0, juce::dontSendNotification);
+    geqGraphic.setToggleState (g.mode == 1, juce::dontSendNotification);
+    geqOn.setToggleState (g.on, juce::dontSendNotification);
 }
 
 void EffectsPage::paint (juce::Graphics& g)
@@ -3587,6 +3680,22 @@ void EffectsPage::paint (juce::Graphics& g)
         auto a = knobs[s.first]->getBounds();
         auto b = knobs[s.first + s.count - 1]->getBounds();
         UI::sectionTitle (g, juce::Rectangle<int> (a.getX(), a.getY() - 34, b.getRight() - a.getX(), 24), s.title, Pal::master);
+    }
+    {
+        auto a = geqOn.getBounds();
+        UI::sectionTitle (g, juce::Rectangle<int> (a.getX(), a.getY() - 34, getWidth() - a.getX() - 24, 24), T ("MASTER EQ (whole Workstation, all performances)"), juce::Colours::white);
+        if (proc.getGlobalEq().mode == 1)
+        {
+            g.setColour (Pal::dim);
+            g.setFont (juce::FontOptions (11.5f));
+            for (int i = 0; i < gband.size(); ++i)
+            {
+                const float hz = GlobalEqSettings::graphicHz[i];
+                auto bb = gband[i]->getBounds();
+                g.drawText (hz >= 1000 ? juce::String (hz / 1000.0f, hz < 10000 ? 1 : 0) + "k" : juce::String ((int) hz),
+                            bb.getX(), bb.getY() - 16, bb.getWidth(), 14, juce::Justification::centred);
+            }
+        }
     }
     auto gv = globalVolume->getBounds();
     UI::sectionTitle (g, juce::Rectangle<int> (gv.getX(), gv.getY() - 34, gv.getWidth(), 24), T ("MASTER (all performances)"), juce::Colours::white);
@@ -3602,19 +3711,33 @@ void EffectsPage::resized()
     r.removeFromBottom (28);
     const int rowH = r.getHeight() / 3;
     const int kw = juce::jmin (110, r.getWidth() / 10), kh = juce::jmin (110, rowH - 40), gap = 30;
-    // red 1: reverb, red 2: delay + EQ, red 3: kompresor + performans + master
-    const int rowOf[] = { 0, 1, 1, 2 };   // red 3: performans + master
+    // red 1: reverb, red 2: delay + EQ performansa + jacina performansa, red 3: MASTER EQ + MASTER
+    const int rowOf[] = { 0, 1, 1 };
     int x = 0, lastRow = -1, y = 0;
     for (int si = 0; si < sections.size(); ++si)
     {
-        const int row = rowOf[juce::jmin (si, 3)];
+        const int row = rowOf[juce::jmin (si, 2)];
         if (row != lastRow) { x = r.getX(); y = r.getY() + row * rowH + 36; lastRow = row; }
         auto& s = sections.getReference (si);
         for (int k = 0; k < s.count; ++k, x += kw)
             knobs[s.first + k]->setBounds (x, y, kw, kh);
         x += gap;
     }
-    globalVolume->setBounds (x + 60, y, 160, kh);
+    // jacina MASTER u redu 2, desno od jacine performansa
+    globalVolume->setBounds (x + 50, y, 160, kh);
+    // red 3: MASTER EQ (ceo Workstation)
+    auto row = juce::Rectangle<int> (r.getX(), r.getY() + 2 * rowH + 36, r.getWidth(), rowH - 36);
+    auto btns = row.removeFromLeft (120);
+    const int bh = juce::jmin (34, (btns.getHeight() - 12) / 4);
+    geqOn.setBounds (btns.removeFromTop (bh).reduced (0, 2));      btns.removeFromTop (4);
+    geqParam.setBounds (btns.removeFromTop (bh).reduced (0, 2));   btns.removeFromTop (4);
+    geqGraphic.setBounds (btns.removeFromTop (bh).reduced (0, 2)); btns.removeFromTop (4);
+    geqFlat.setBounds (btns.removeFromTop (bh).reduced (0, 2));
+    row.removeFromLeft (16);
+    const int pk = juce::jmin (100, row.getWidth() / juce::jmax (1, geq.size()));
+    for (int i = 0; i < geq.size(); ++i) geq[i]->setBounds (row.getX() + i * pk, row.getY(), pk, juce::jmin (kh, row.getHeight()));
+    const int gw = juce::jmin (64, row.getWidth() / GlobalEqSettings::numGraphic);
+    for (int i = 0; i < gband.size(); ++i) gband[i]->setBounds (row.getX() + i * gw, row.getY() + 16, gw - 6, row.getHeight() - 14);
 }
 
 //==============================================================================

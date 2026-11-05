@@ -386,6 +386,11 @@ private:
     LiveSamplerProcessor& proc;
     juce::OwnedArray<ValueKnob> knobs;
     std::unique_ptr<ValueKnob> globalVolume;
+    juce::OwnedArray<ValueKnob> geq;          // MASTER EQ (ceo Workstation): parametric
+    juce::StringArray geqKeys;
+    juce::OwnedArray<juce::Slider> gband;     // graphic 15
+    juce::TextButton geqOn, geqParam, geqGraphic, geqFlat;
+    void editEq (std::function<void (GlobalEqSettings&)> fn);
     struct Section { juce::String title; int first, count; };
     juce::Array<Section> sections;
 };

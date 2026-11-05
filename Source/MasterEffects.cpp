@@ -21,6 +21,12 @@ void Biquad::set (Kind kind, double sampleRate, double freq, double q, double ga
             A2 = (A + 1) + (A - 1) * cw - sq;
             break;
         }
+        case HighPass:
+        {
+            B0 = (1 + cw) / 2; B1 = -(1 + cw); B2 = (1 + cw) / 2;
+            A0 = 1 + alpha; A1 = -2 * cw; A2 = 1 - alpha;
+            break;
+        }
         case HighShelf:
         {
             const double sq = 2.0 * std::sqrt (A) * alpha;
@@ -193,7 +199,7 @@ void MasterEffects::prepare (double sampleRate, int maxBlock)
 void MasterEffects::process (juce::AudioBuffer<float>& main,
                              juce::AudioBuffer<float>& revSend,
                              juce::AudioBuffer<float>& dlySend,
-                             int n, const MasterSettings& s)
+                             int n, const MasterSettings& s, const GlobalEqSettings& g)
 {
     auto* ml = main.getWritePointer (0);
     auto* mr = main.getWritePointer (1);
@@ -229,13 +235,58 @@ void MasterEffects::process (juce::AudioBuffer<float>& main,
     if (! juce::exactlyEqual (s.eqMidDb, lastMid))   { mid.set  (Biquad::Peak,      sr, 1000.0, 0.8,   s.eqMidDb);  lastMid = s.eqMidDb; }
     if (! juce::exactlyEqual (s.eqHighDb, lastHigh)) { high.set (Biquad::HighShelf, sr, 7000.0, 0.707, s.eqHighDb); lastHigh = s.eqHighDb; }
 
-    const bool eqOn = std::abs (s.eqLowDb) > 0.05f || std::abs (s.eqMidDb) > 0.05f || std::abs (s.eqHighDb) > 0.05f;
+    // EQ po performansu je uklonjen iz EFFECTS (EQ se podesava u partovima / userima, a za ceo zvuk je MASTER EQ):
+    // stari performansi ga vise ne ukljucuju
+    const bool eqOn = false && (std::abs (s.eqLowDb) > 0.05f || std::abs (s.eqMidDb) > 0.05f || std::abs (s.eqHighDb) > 0.05f);
     if (eqOn)
     {
         for (int i = 0; i < n; ++i)
         {
             ml[i] = high.process (0, mid.process (0, low.process (0, ml[i])));
             mr[i] = high.process (1, mid.process (1, low.process (1, mr[i])));
+        }
+    }
+
+    // --- MASTER EQ (ceo Workstation) ---
+    if (! gInit || g != gLast)
+    {
+        auto clampHz = [this] (double f, double lo, double hi) { return juce::jlimit (lo, juce::jmin (hi, sr * 0.45), f); };
+        gHpf.set  (Biquad::HighPass,  sr, clampHz (g.hpfHz, 20.0, 400.0), 0.707, 0.0);
+        gLow.set  (Biquad::LowShelf,  sr, clampHz (g.lowHz, 20.0, 1000.0), 0.707, g.lowDb);
+        gM1.set   (Biquad::Peak,      sr, clampHz (g.m1Hz, 40.0, 16000.0), juce::jlimit (0.3, 8.0, (double) g.m1Q), g.m1Db);
+        gM2.set   (Biquad::Peak,      sr, clampHz (g.m2Hz, 40.0, 16000.0), juce::jlimit (0.3, 8.0, (double) g.m2Q), g.m2Db);
+        gHigh.set (Biquad::HighShelf, sr, clampHz (g.highHz, 1000.0, 18000.0), 0.707, g.highDb);
+        for (int b = 0; b < GlobalEqSettings::numGraphic; ++b)
+            gBand[(size_t) b].set (Biquad::Peak, sr, clampHz (GlobalEqSettings::graphicHz[b], 20.0, 20000.0), 2.15, g.g[(size_t) b]);   // 2/3 oktave
+        if (! g.active() || g.mode != gLast.mode)
+        {
+            gHpf.reset(); gLow.reset(); gM1.reset(); gM2.reset(); gHigh.reset();
+            for (auto& x : gBand) x.reset();
+        }
+        gLast = g; gInit = true;
+    }
+    if (g.active())
+    {
+        if (g.mode == 1)
+        {
+            for (int b = 0; b < GlobalEqSettings::numGraphic; ++b)
+            {
+                if (std::abs (g.g[(size_t) b]) <= 0.05f) continue;   // ravni opseg: bez racunanja
+                auto& f = gBand[(size_t) b];
+                for (int i = 0; i < n; ++i) { ml[i] = f.process (0, ml[i]); mr[i] = f.process (1, mr[i]); }
+            }
+        }
+        else
+        {
+            const bool hp = g.hpfHz > 21.0f;
+            for (int i = 0; i < n; ++i)
+            {
+                float l = ml[i], r = mr[i];
+                if (hp) { l = gHpf.process (0, l); r = gHpf.process (1, r); }
+                l = gHigh.process (0, gM2.process (0, gM1.process (0, gLow.process (0, l))));
+                r = gHigh.process (1, gM2.process (1, gM1.process (1, gLow.process (1, r))));
+                ml[i] = l; mr[i] = r;
+            }
         }
     }
 
@@ -265,4 +316,46 @@ void MasterEffects::process (juce::AudioBuffer<float>& main,
         ml[i] = l * limiterGain;
         mr[i] = r * limiterGain;
     }
+}
+
+//==============================================================================
+juce::StringArray GlobalEqSettings::names()
+{
+    juce::StringArray s { "on", "mode", "hpfHz", "lowDb", "lowHz", "m1Db", "m1Hz", "m1Q", "m2Db", "m2Hz", "m2Q", "highDb", "highHz" };
+    for (int i = 0; i < numGraphic; ++i) s.add ("g" + juce::String (i));
+    return s;
+}
+
+bool GlobalEqSettings::setByName (const juce::String& k, float v)
+{
+    if (k == "on") on = v > 0.5f;
+    else if (k == "mode") mode = v > 0.5f ? 1 : 0;
+    else if (k == "hpfHz") hpfHz = juce::jlimit (20.0f, 400.0f, v);
+    else if (k == "lowDb") lowDb = juce::jlimit (-15.0f, 15.0f, v);   else if (k == "lowHz") lowHz = juce::jlimit (20.0f, 1000.0f, v);
+    else if (k == "m1Db") m1Db = juce::jlimit (-15.0f, 15.0f, v);     else if (k == "m1Hz") m1Hz = juce::jlimit (40.0f, 16000.0f, v);
+    else if (k == "m1Q") m1Q = juce::jlimit (0.3f, 8.0f, v);
+    else if (k == "m2Db") m2Db = juce::jlimit (-15.0f, 15.0f, v);     else if (k == "m2Hz") m2Hz = juce::jlimit (40.0f, 16000.0f, v);
+    else if (k == "m2Q") m2Q = juce::jlimit (0.3f, 8.0f, v);
+    else if (k == "highDb") highDb = juce::jlimit (-15.0f, 15.0f, v); else if (k == "highHz") highHz = juce::jlimit (1000.0f, 18000.0f, v);
+    else if (k.startsWith ("g") && k.substring (1).containsOnly ("0123456789"))
+    {
+        const int i = k.substring (1).getIntValue();
+        if (i < 0 || i >= numGraphic) return false;
+        g[(size_t) i] = juce::jlimit (-12.0f, 12.0f, v);
+    }
+    else return false;
+    return true;
+}
+
+float GlobalEqSettings::getByName (const juce::String& k) const
+{
+    if (k == "on") return on ? 1.0f : 0.0f;
+    if (k == "mode") return (float) mode;
+    if (k == "hpfHz") return hpfHz;
+    if (k == "lowDb") return lowDb;   if (k == "lowHz") return lowHz;
+    if (k == "m1Db") return m1Db;     if (k == "m1Hz") return m1Hz;   if (k == "m1Q") return m1Q;
+    if (k == "m2Db") return m2Db;     if (k == "m2Hz") return m2Hz;   if (k == "m2Q") return m2Q;
+    if (k == "highDb") return highDb; if (k == "highHz") return highHz;
+    if (k.startsWith ("g")) { const int i = k.substring (1).getIntValue(); if (i >= 0 && i < numGraphic) return g[(size_t) i]; }
+    return 0.0f;
 }

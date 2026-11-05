@@ -485,6 +485,13 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "harmony")    proc.setTercaOn ((bool) v["on"]);
     else if (op == "vector")     proc.setVectorXY ((float) (double) v["x"], (float) (double) v["y"]);
     else if (op == "gvol")       proc.setGlobalVolume ((float) (double) v["db"]);
+    else if (op == "geq")
+    {
+        auto g = proc.getGlobalEq();
+        if (v["k"].toString() == "flat") { for (auto& x : g.g) x = 0.0f; g.lowDb = g.m1Db = g.m2Db = g.highDb = 0.0f; g.hpfHz = 20.0f; }
+        else g.setByName (v["k"].toString(), (float) (double) v["v"]);
+        proc.setGlobalEq (g);
+    }
     else if (op == "panic")      proc.panic();
     else if (op == "perfName")   { auto p = proc.getPerformance(); p.name = v["name"].toString().trim().substring (0, 40); if (p.name.isNotEmpty()) proc.updatePerformance (p); }
     // ---------- liste performansa ----------
@@ -720,6 +727,12 @@ juce::StringPairArray RemoteServer::buildSections()
         st->setProperty ("harmText", proc.getTercaText());
         st->setProperty ("voices", proc.getActiveVoices());
         st->setProperty ("gvol", proc.getGlobalVolume());
+        {
+            const auto& g = proc.getGlobalEq();
+            auto* e = new juce::DynamicObject();
+            for (auto& k : GlobalEqSettings::names()) e->setProperty (k, g.getByName (k));
+            st->setProperty ("geq", juce::var (e));
+        }
         st->setProperty ("vx", std::round (proc.getVectorX() * 100.0f) / 100.0f);
         st->setProperty ("vy", std::round (proc.getVectorY() * 100.0f) / 100.0f);
         st->setProperty ("c3", proc.getC3Is60());

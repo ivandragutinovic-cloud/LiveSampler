@@ -80,6 +80,10 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("version", 3);
     root.setAttribute ("c3Is60", c3Is60);
     root.setAttribute ("globalDb", (double) globalDb);
+    {
+        auto* e = root.createNewChildElement ("MasterEq");
+        for (auto& k : GlobalEqSettings::names()) e->setAttribute (k, (double) globalEq.getByName (k));
+    }
     root.setAttribute ("globalTranspose", globalTranspose);
     root.setAttribute ("liveLock", liveLock);
     root.setAttribute ("maxPolyphony", maxPolyphony);
@@ -190,6 +194,12 @@ void LiveSamplerProcessor::loadData()
 
     c3Is60 = xml->getBoolAttribute ("c3Is60", true);
     globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
+    if (auto* e = xml->getChildByName ("MasterEq"))
+    {
+        for (auto& k : GlobalEqSettings::names())
+            if (e->hasAttribute (k)) globalEq.setByName (k, (float) e->getDoubleAttribute (k));
+        if (e->hasAttribute ("midDb")) { globalEq.m1Db = (float) e->getDoubleAttribute ("midDb"); globalEq.m1Hz = (float) e->getDoubleAttribute ("midHz", 1000.0); }
+    }
     globalTranspose = juce::jlimit (-24, 24, xml->getIntAttribute ("globalTranspose", 0));
     liveLock = xml->getBoolAttribute ("liveLock", false);
     maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
@@ -573,6 +583,7 @@ void LiveSamplerProcessor::rebuildConfig()
     }
     cfg->master = perf.master;
     cfg->globalDb = globalDb;
+    cfg->globalEq = globalEq;
     cfg->globalTranspose = globalTranspose;
     cfg->perfSerial = perfSerial;
     cfg->terca = terca;
@@ -2669,6 +2680,13 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         const auto* d = m.getSysExData();
         if (m.getSysExDataSize() >= 4 && d[0] == 0x7D && d[1] == 0x50)
         {
+            if (d[2] == 0x03)
+            {
+                // master transpozicija iz Pikaso Stage: ceo Workstation, svi performansi (0x40 = 0)
+                const int st = juce::jlimit (-24, 24, (int) d[3] - 0x40);
+                juce::MessageManager::callAsync ([this, st, a = alive] { if (a->load()) setGlobalTranspose (st); });
+                return;
+            }
             if (d[2] == 0x01) tercaRoot = d[3] % 12;
             else if (d[2] == 0x02)
             {
@@ -2961,7 +2979,7 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
         auto ms = c.master;
         ms.masterDb += c.globalDb;
-        master.process (mainBuf, reverbBuf, delayBuf, len, ms);
+        master.process (mainBuf, reverbBuf, delayBuf, len, ms, c.globalEq);
 
         if (buffer.getNumChannels() >= 2)
         {

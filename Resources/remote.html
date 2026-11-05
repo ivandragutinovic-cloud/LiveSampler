@@ -898,9 +898,33 @@ function buildFx(m) {
     ["Low cut", "revLowCut", 20, 1000, 150, 150, "hz"], ["High cut", "revHighCut", 1000, 16000, 5000, 6000, "hz"], ["Density", "revDiff", 0, 1, 0, 0.7, "pct"], ["Modulation", "revMod", 0, 1, 0, 0.3, "pct"],
     ["Width", "revWidth", 0, 1, 0, 1, "pct"], ["Level", "revLevel", 0, 1, 0, 0.8, "pct"]]);
   sec("DELAY", [["Time", "dlyTime", 20, 1500, 350, 350, "ms"], ["Feedback", "dlyFb", 0, 0.95, 0, 0.35, "pct"], ["Level", "dlyLevel", 0, 1, 0, 0.6, "pct"]]);
-  sec("EQ", [["Low", "eqLow", -12, 12, 0, 0, "dbs"], ["Mid", "eqMid", -12, 12, 0, 0, "dbs"], ["High", "eqHigh", -12, 12, 0, 0, "dbs"]]);
   const g = sec("VOLUME", [["Performance", "volume", -60, 6, -12, 0, "db"]]);
-  knob(g, { label: "MASTER (all)", target: "status", path: "gvol", lo: -60, hi: 6, c: -12, def: 0, fmt: F.db, col: "#ffffff", get: () => +S.status.gvol || 0, set: v => { S.status.gvol = v; api({ op: "gvol", db: v }); } });
+  // MASTER EQ: ceo Workstation, svi performansi (parametric ili graphic 15)
+  {
+    const b = el("div", "sect", "", m); el("h3", "", "MASTER EQ (whole Workstation, all performances)", b);
+    const ge = () => S.status.geq || {};
+    const top = el("div", "row", "", b); top.style.marginBottom = "6px";
+    const setK = (k, v) => { (S.status.geq = S.status.geq || {})[k] = v; api({ op: "geq", k, v }); };
+    const onb = el("button", "", "ON", top), pb = el("button", "", "PARAMETRIC", top), gb = el("button", "", "GRAPHIC 15", top), fb = el("button", "", "FLAT", top);
+    onb.onclick = () => { setK("on", ge().on ? 0 : 1); render(); };
+    pb.onclick = () => { setK("mode", 0); built = ""; render(); };
+    gb.onclick = () => { setK("mode", 1); built = ""; render(); };
+    fb.onclick = () => { if (confirm("Reset the master EQ to flat?")) api({ op: "geq", k: "flat", v: 0 }); };
+    ctrls.push(() => { onb.classList.toggle("on", !!ge().on); pb.classList.toggle("on", !+ge().mode); gb.classList.toggle("on", +ge().mode === 1); });
+    const gg = el("div", "kgrid", "", b);
+    const kn = (label, k, lo, hi, c, def, fmt) => knob(gg, { label, target: "status", path: "geq" + k, lo, hi, c, def, fmt, col: "#ffffff",
+      get: () => { const v = ge()[k]; return v === undefined ? def : +v; }, set: v => setK(k, v) });
+    const q = v => (+v).toFixed(2);
+    if (+ge().mode === 1) {
+      [25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000].forEach((hz, i) =>
+        kn(hz >= 1000 ? (hz / 1000) + "k" : String(hz), "g" + i, -12, 12, 0, 0, F.dbs));
+    } else {
+      kn("Low cut", "hpfHz", 20, 400, 80, 20, F.hz); kn("Low", "lowDb", -15, 15, 0, 0, F.dbs); kn("Low freq", "lowHz", 20, 1000, 100, 100, F.hz);
+      kn("Mid 1", "m1Db", -15, 15, 0, 0, F.dbs); kn("Mid 1 freq", "m1Hz", 40, 16000, 1000, 400, F.hz); kn("Mid 1 Q", "m1Q", 0.3, 8, 1, 1, q);
+      kn("Mid 2", "m2Db", -15, 15, 0, 0, F.dbs); kn("Mid 2 freq", "m2Hz", 40, 16000, 1000, 2500, F.hz); kn("Mid 2 Q", "m2Q", 0.3, 8, 1, 1, q);
+      kn("High", "highDb", -15, 15, 0, 0, F.dbs); kn("High freq", "highHz", 1000, 18000, 8000, 8000, F.hz);
+    }
+  }
   el("div", "hint", "Effects are saved in the performance (SAVE). The master volume is for all performances.", m).style.marginTop = "8px";
 }
 
@@ -1322,6 +1346,7 @@ function render() {
   // stranice koje se crtaju iz stanja: ponovo kad se promeni ono sto vidis
   if (tab === "lists") key += "|" + listSub + listMode + slPage + slMode + "|" + JSON.stringify(listSub === "perf" ? S.lists && [S.lists.bank, S.lists.cur, S.lists.banks, S.lists.slots.slice(S.lists.bank * 128, S.lists.bank * 128 + 128)] : S.setlist);
   if (tab === "map") key += "|" + JSON.stringify(S.map && [S.map.name, S.map.loaded, S.map.dirty, S.map.userInst, (S.map.zones || []).length]) + mapSel;
+  if (tab === "fx") key += "|" + ((S.status.geq || {}).mode || 0);
   if (tab === "imp") key += "|" + ((S.status.imp || []).map(x => x[0] + x[2]).join(","));
   if (tab === "harm") key += "|" + tScale + "|" + JSON.stringify(S.terca && [(S.terca.Scale || []).map(s => s.name), (S.terca.Rule || []).length]);
   if (key !== built) {
