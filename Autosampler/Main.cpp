@@ -460,7 +460,13 @@ public:
             const int num = args[i + 1].fromFirstOccurrenceOf (":", false, false).getIntValue();
             if (isProg)
             {
-                if (auto* p = pcg->findProgram (bank, num)) addProgram (*p);
+                if (auto* p = pcg->findProgram (bank, num))
+                {
+                    if (! programHasRom (*p))
+                        setStatus (p->id() + " " + p->name + juce::String::fromUTF8 (": uses only your own samples (KSC), nothing to resample from the Kronos ROM. "
+                                   "The Workstation finds them in the KSC folder (SETTINGS sample folders)."));
+                    addProgram (*p);
+                }
             }
             else
             {

@@ -333,8 +333,19 @@ juce::String SampleLibrary::kronosTag (const juce::String& key, const juce::Stri
 juce::String SampleLibrary::findKronosMultisample (const juce::String& uuid, int index) const
 {
     const juce::ScopedLock sl (lock);
-    auto it = kronosMs.find (uuid.toLowerCase() + ":" + juce::String (index));
-    return it != kronosMs.end() ? it->second : juce::String();
+    const auto u = uuid.toLowerCase();
+    auto it = kronosMs.find (u + ":" + juce::String (index));
+    if (it != kronosMs.end()) return it->second;
+    // Kronos u programu ponekad upise UUID kolekcije sa podignutim najnizim bitom poslednjeg bajta
+    // (npr. ...e089 umesto ...e088 iz KSC-a, kod stereo multisemplova): isti multisempl, ista kolekcija
+    if (u.length() == 32)
+    {
+        const int lastByte = (int) u.substring (30).getHexValue32();
+        const auto alt = u.substring (0, 30) + juce::String::toHexString (lastByte ^ 1).paddedLeft ('0', 2);
+        it = kronosMs.find (alt + ":" + juce::String (index));
+        if (it != kronosMs.end()) return it->second;
+    }
+    return {};
 }
 
 void SampleLibrary::scanRoot (const juce::File& root)
