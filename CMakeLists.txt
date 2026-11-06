@@ -50,6 +50,8 @@ target_sources(LiveSampler PRIVATE
     Source/MidiLearn.cpp
     Source/RemoteServer.cpp
     Source/FmSynth.cpp
+    Source/VlSynth.cpp
+    Source/PluginHost.cpp
     Source/DiskStreamer.cpp
     Source/KronosPcg.cpp)
 
@@ -60,6 +62,7 @@ target_compile_definitions(LiveSampler PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_PLUGINHOST_VST3=1
     JUCE_ASIO=1
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 

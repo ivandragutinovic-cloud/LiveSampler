@@ -272,6 +272,42 @@ private:
 //==============================================================================
 //  FM editor (user sa FM sintezom umesto MS1-MS8): algoritam, 6 operatora, envelope
 //==============================================================================
+// VST3 plugin user: ime plugina i dugme za njegov prozor (zvuk se podesava u pluginu)
+class PluginUserPanel : public juce::Component
+{
+public:
+    PluginUserPanel (LiveSamplerProcessor&, std::function<int()> userIndex);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    static void openWindow (LiveSamplerProcessor&, int userIndex);
+private:
+    LiveSamplerProcessor& proc;
+    std::function<int()> userIndex;
+    juce::Label title, info;
+    juce::TextButton openButton;
+};
+
+class VlEditor : public juce::Component
+{
+public:
+    VlEditor (LiveSamplerProcessor&, std::function<int()> userIndex);
+    void refresh();
+    void resized() override;
+    void paint (juce::Graphics&) override;
+
+private:
+    Vl::Patch current() const;
+    void edit (std::function<void (Vl::Patch&)> fn);
+    LiveSamplerProcessor& proc;
+    std::function<int()> userIndex;
+    bool updating = false;
+    juce::Label modelLabel, sourceLabel, transLabel, hint;
+    LearnCombo model, source;
+    LearnSlider transpose;
+    juce::OwnedArray<ValueKnob> knobs;
+};
+
 class FmEditor : public juce::Component
 {
 public:
@@ -453,6 +489,8 @@ private:
     juce::Label nameEdit, headerLabels[10];
     juce::OwnedArray<OscRow> rows;
     FmEditor fm;
+    VlEditor vl;
+    PluginUserPanel plug;
     SoundEditor sound;
 };
 

@@ -79,6 +79,10 @@ juce::File LiveSamplerProcessor::getDataFile() const
 void LiveSamplerProcessor::saveNow()
 {
     if (restorePending) return;
+    // stanje VST pluginova (podesavanja u njihovom prozoru) ide u usera
+    for (int i = 0; i < (int) users.size(); ++i)
+        if (users[(size_t) i].isPlugin() && pluginHost.find (users[(size_t) i].name) != nullptr)
+            pluginHost.captureState (users[(size_t) i].name, users[(size_t) i].pluginState);
     juce::XmlElement root ("LiveSamplerData");
     root.setAttribute ("version", 3);
     root.setAttribute ("c3Is60", c3Is60);
@@ -629,10 +633,24 @@ void LiveSamplerProcessor::rebuildConfig()
             for (auto& o : pr.user.osc)
                 o.fineCents += pr.part.detuneCents;
             for (int o = 0; o < kNumOsc; ++o)
-                if (pr.user.osc[(size_t) o].on && pr.user.osc[(size_t) o].instrument != Fm::instrumentName)
+                if (pr.user.osc[(size_t) o].on && pr.user.osc[(size_t) o].instrument != Fm::instrumentName && pr.user.osc[(size_t) o].instrument != Vl::instrumentName)
                     pr.inst[(size_t) o] = getLoadedInstrument (pr.user.osc[(size_t) o].instrument);
             if (pr.user.isFm())
                 pr.fm = fmPatchFor (pr.user);
+            if (pr.user.isPlugin())
+            {
+                auto pl = pluginHost.instanceFor (pr.user, getSampleRate() > 0 ? getSampleRate() : 44100.0, juce::jmax (64, maxBlock));
+                bool dup = false;
+                for (int q = 0; q < i; ++q) dup = dup || (pl != nullptr && cfg->parts[(size_t) q].plugin == pl);
+                if (! dup) pr.plugin = pl;   // isti plugin user u dva parta: svira samo prvi
+                if (pr.plugin != nullptr) cfg->anyPlugin = true;
+            }
+            if (pr.user.isVl())
+            {
+                pr.vl = vlPatchFor (pr.user);
+                partBanks[0][i].ensureVlPool();
+                partBanks[1][i].ensureVlPool();
+            }
         }
         pr.active = pr.part.on && u >= 0 && (audition || soloMask == 0 || ((soloMask >> i) & 1) != 0);
         if (perf.tuneOn && pr.part.scaleTune) pr.scaleCents = perf.tuneCents;
@@ -974,6 +992,7 @@ void LiveSamplerProcessor::guardTick()
 void LiveSamplerProcessor::timerCallback()
 {
     guardTick();
+    pluginHost.collectGarbage();
     if (const int kn = keyLearnNote.exchange (-1); kn >= 0 && keyLearnMode.load() != 0)
     {
         const int pi = juce::jlimit (0, kNumParts - 1, keyLearnPart.load());
@@ -1261,7 +1280,7 @@ int LiveSamplerProcessor::createUserFromKronos (const Kronos::Program& prog)
         for (int z = 0; z < 8 && top >= 1; ++z)
         {
             const auto& zone = prog.osc[(size_t) o][(size_t) z];
-            if (! zone.used) break;
+            if (! zone.used) continue;   // prazna zona (npr. zona 1 Off, zvuk u zoni 2): preskoci, ne prekidaj
             const int bottom = juce::jmin (top, q.zoneBottom[(size_t) z]);
             const int range = q.xfadeRange[(size_t) z], curve = q.xfadeCurve[(size_t) z];
             const bool lowerExists = z < 7 && prog.osc[(size_t) o][(size_t) z + 1].used;
@@ -1507,6 +1526,80 @@ Fm::Patch LiveSamplerProcessor::kronosFmPatch (const Kronos::Program& p)
     if (p.raw.size() < (size_t) Kronos::programSize) return {};
     const int slot = p.exiAlg[0] == 7 ? 0 : 1;
     return Fm::Patch::fromMod7 (p.raw.data() + (slot == 0 ? 2908 : 3960), p.raw.data(), slot);
+}
+
+std::shared_ptr<const Vl::Patch> LiveSamplerProcessor::vlPatchFor (const UserProgram& u)
+{
+    const auto key = u.vlPatch.hashCode64();
+    if (auto it = vlCache.find (key); it != vlCache.end()) return it->second;
+    if (vlCache.size() > 300) vlCache.clear();   // editovanje pravi nove verzije
+    auto patch = std::make_shared<const Vl::Patch> (Vl::Patch::fromString (u.vlPatch));
+    vlCache[key] = patch;
+    return patch;
+}
+
+void LiveSamplerProcessor::processPlugins (const EngineConfig& c, int len)
+{
+    if (! c.anyPlugin) return;
+    for (int p = 0; p < kNumParts; ++p)
+    {
+        const auto& pr = c.parts[(size_t) p];
+        if (pr.plugin == nullptr || pr.plugin->inst == nullptr) continue;
+        auto& pl = *pr.plugin;
+        pl.tailSamples = 0;
+        if (pl.buf.getNumSamples() < len) { pl.midi.clear(); continue; }   // (ne bi trebalo: pripremljen za maxBlock)
+        pl.buf.clear();
+        juce::AudioBuffer<float> view (pl.buf.getArrayOfWritePointers(), pl.buf.getNumChannels(), len);
+        pl.inst->processBlock (view, pl.midi);
+        pl.midi.clear();
+        if (pr.active) parts[p].addExternal (view, len);
+    }
+}
+
+int LiveSamplerProcessor::createPluginUser (const juce::PluginDescription& d)
+{
+    UserProgram u;
+    u.name = d.name;
+    if (auto x = d.createXml()) u.pluginDesc = x->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader());
+    u.category = d.category.containsIgnoreCase ("string") ? "Strings" : juce::String();
+    for (auto& o : u.osc) o.on = false;
+    return createUser (u.name, &u);
+}
+
+std::shared_ptr<HostedPlugin> LiveSamplerProcessor::pluginFor (int userIndex)
+{
+    if (userIndex < 0 || userIndex >= (int) users.size() || ! users[(size_t) userIndex].isPlugin()) return nullptr;
+    return pluginHost.instanceFor (users[(size_t) userIndex], getSampleRate() > 0 ? getSampleRate() : 44100.0, juce::jmax (64, maxBlock));
+}
+
+void LiveSamplerProcessor::savePluginState (int userIndex)
+{
+    if (userIndex < 0 || userIndex >= (int) users.size() || ! users[(size_t) userIndex].isPlugin()) return;
+    juce::String st;
+    if (pluginHost.captureState (users[(size_t) userIndex].name, st) && st != users[(size_t) userIndex].pluginState)
+    {
+        users[(size_t) userIndex].pluginState = st;
+        markSave();
+    }
+}
+
+int LiveSamplerProcessor::createVlUser (int model)
+{
+    UserProgram u;
+    u.name = Vl::modelNames()[model].upToFirstOccurrenceOf (" (", false, false) + " VL";
+    u.osc[0].on = true;
+    u.osc[0].instrument = Vl::instrumentName;
+    u.vlPatch = Vl::Patch::makeDefault (model).toString();
+    // duvac: jedan glas, vezano (legato) sa malim klizanjem; amp EG pusta da zvukom upravlja dah
+    u.voiceMode = model == Vl::Bowed ? VoiceMode::Poly : VoiceMode::MonoLegato;
+    u.portaOn = model != Vl::Bowed;
+    u.portaFingered = true;
+    u.portamento = 0.04f;
+    auto& eg = u.block[0].ampEg;
+    eg.start = 1.0f; eg.attackTime = 0.001f; eg.attackLevel = 1.0f; eg.decayTime = 0.01f; eg.breakLevel = 1.0f;
+    eg.slopeTime = 0.01f; eg.sustain = 1.0f; eg.releaseTime = 0.6f; eg.releaseLevel = 0.0f;
+    u.category = model == Vl::Bowed ? "Strings" : "Winds";
+    return createUser (u.name, &u);
 }
 
 std::shared_ptr<const Fm::Patch> LiveSamplerProcessor::fmPatchFor (const UserProgram& u)
@@ -1857,6 +1950,7 @@ void LiveSamplerProcessor::updateUser (int index, const UserProgram& u)
     // preimenovanje: popravi reference u performansima
     if (oldName != updated.name)
     {
+        pluginHost.rename (oldName, updated.name);
         for (auto& p : perf.parts)
             if (p.user == oldName) p.user = updated.name;
         for (auto* arr : { &lockedParts, &ownParts })
@@ -1935,6 +2029,7 @@ void LiveSamplerProcessor::deleteUser (int index)
 {
     if (index < 0 || index >= (int) users.size())
         return;
+    pluginHost.forget (users[(size_t) index].name);
     users.erase (users.begin() + index);
     markSave();
     rebuildConfig();
@@ -2942,6 +3037,7 @@ juce::String LiveSamplerProcessor::getTercaText() const
 void LiveSamplerProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     maxBlock = juce::jmax (64, samplesPerBlock);
+    pluginHost.prepareAll (sampleRate, maxBlock);
     for (auto& bank : partBanks)
         for (auto& p : bank)
             p.prepare (sampleRate, maxBlock);
@@ -3058,6 +3154,16 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
 
         const int shift = (part.fixedHarm ? fixedHarmInterval (part, note, root, scale, c) : part.transpose)
                         + part.octave * 12 + c.globalTranspose;
+        if (pr.plugin != nullptr)
+        {
+            // VST plugin: ton ide pluginu (bez terce: plugin moze biti mono, npr. SWAM)
+            const int pn = juce::jlimit (0, 127, note + shift);
+            pr.plugin->midi.addEvent (juce::MidiMessage::noteOn (1, pn, (juce::uint8) juce::jlimit (1, 127, vel)), midiPos);
+            pr.plugin->played[(size_t) note] = (juce::int8) pn;
+            partHits[(size_t) p].fetch_add (1, std::memory_order_relaxed);
+            used |= (juce::uint16) (1 << p);
+            continue;
+        }
         parts[p].noteOn (note, note + shift, vel);
         partHits[(size_t) p].fetch_add (1, std::memory_order_relaxed);
         used |= (juce::uint16) (1 << p);
@@ -3148,6 +3254,12 @@ void LiveSamplerProcessor::routeNoteOff (int ch, int note)
     {
         if (routed[ch][note] & (1 << p))
         {
+            if (audioConfig != nullptr)
+                if (auto& pl = audioConfig->parts[(size_t) p].plugin; pl != nullptr && pl->played[(size_t) note] >= 0)
+                {
+                    pl->midi.addEvent (juce::MidiMessage::noteOff (1, (int) pl->played[(size_t) note]), midiPos);
+                    pl->played[(size_t) note] = -1;
+                }
             parts[p].noteOff (note);
             if (audioConfig != nullptr && audioConfig->parts[(size_t) p].user.isMono())
             {
@@ -3177,6 +3289,16 @@ void LiveSamplerProcessor::routeNoteOff (int ch, int note)
 void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineConfig& c)
 {
     const int ch = juce::jlimit (0, 15, m.getChannel() - 1);
+    // VST plugin partovi: kontrole (pedala, modulacija, dah CC2, expression, pitch bend, aftertouch) idu i pluginu
+    if (c.anyPlugin && (m.isController() || m.isPitchWheel() || m.isChannelPressure() || m.isAftertouch()))
+        for (auto& pr : c.parts)
+            if (pr.plugin != nullptr && pr.active && (pr.part.midiChannel == 0 || pr.part.midiChannel == ch + 1))
+            {
+                if ((m.isSustainPedalOn() || m.isSustainPedalOff()) && ! pr.part.sustainPedal) continue;
+                auto mm = m;
+                mm.setChannel (1);
+                pr.plugin->midi.addEvent (mm, midiPos);
+            }
     const auto& lt = c.terca.learn;
 
     // Pikaso Stage (SysEx, ID 7D = sopstveni uredjaj): F0 7D 50 01 kk F7 tonalitet harmonije (0-11),
@@ -3318,6 +3440,12 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
         for (auto& p : parts)
             p.setExpression (v);
     }
+    else if (m.isControllerOfType (2))       // breath controller (VL useri)
+    {
+        const float v = (float) m.getControllerValue() / 127.0f;
+        for (auto& p : parts) p.setBreath (v);
+        for (auto& p : tails) p.setBreath (v);
+    }
     else if (m.isControllerOfType (1))
     {
         const float v = (float) m.getControllerValue() / 127.0f;
@@ -3390,6 +3518,16 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (audioConfig != nullptr && pendingConfig != nullptr && pendingConfig->perfSerial != audioConfig->perfSerial)
             {
                 for (auto& p : tails) p.allNotesOff (true);
+                // pluginovi prethodnog performansa: pusti sve tonove, pa neka izdisu (~4 s) ako ih novi ne koristi
+                for (auto& pr : audioConfig->parts)
+                    if (pr.plugin != nullptr)
+                    {
+                        auto& pl = *pr.plugin;
+                        for (int k = 0; k < 128; ++k)
+                            if (pl.played[(size_t) k] >= 0) { pl.midi.addEvent (juce::MidiMessage::noteOff (1, (int) pl.played[(size_t) k]), 0); pl.played[(size_t) k] = -1; }
+                        pl.midi.addEvent (juce::MidiMessage::controllerEvent (1, 64, 0), 0);
+                        pl.tailSamples = (int) (getSampleRate() * 4.0);
+                    }
                 std::swap (parts.d, tails.d);
                 tailConfig = audioConfig;
                 for (auto& p : parts) { p.allNotesOff (true); p.setSustain (sustainHeld); }
@@ -3501,10 +3639,13 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 for (auto& p : parts) p.renderVoices (pos, t - pos);
                 pos = t;
             }
+            midiPos = t;
             handleMidi (meta.getMessage(), c);
         }
         for (auto& p : parts)
             p.renderVoices (pos, len - pos);
+        midiPos = 0;
+        processPlugins (c, len);
 
         mainBuf.clear (0, len);
         reverbBuf.clear (0, len);
@@ -3519,10 +3660,28 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             for (int p = 0; p < kNumParts; ++p)
             {
                 auto& t = tails[p];
-                if (t.getNumActiveVoices() == 0) continue;
+                const auto& tpr = tailConfig->parts[(size_t) p];
+                // plugin iz prethodnog performansa (ako ga novi ne koristi): pusta se da izdise jos malo
+                HostedPlugin* tp = nullptr;
+                if (tpr.plugin != nullptr && tpr.plugin->tailSamples > 0)
+                {
+                    bool inUse = false;
+                    for (auto& q : c.parts) inUse = inUse || q.plugin == tpr.plugin;
+                    if (! inUse) tp = tpr.plugin.get();
+                }
+                if (t.getNumActiveVoices() == 0 && tp == nullptr) continue;
                 ++alive;
-                t.beginBlock (&tailConfig->parts[(size_t) p], len);
+                t.beginBlock (&tpr, len);
                 t.renderVoices (0, len);
+                if (tp != nullptr && tp->inst != nullptr)
+                {
+                    tp->buf.clear();
+                    juce::AudioBuffer<float> view (tp->buf.getArrayOfWritePointers(), tp->buf.getNumChannels(), len);
+                    tp->inst->processBlock (view, tp->midi);
+                    tp->midi.clear();
+                    t.addExternal (view, len);
+                    tp->tailSamples -= len;
+                }
                 t.endBlock (mainBuf, reverbBuf, delayBuf, len);
             }
             if (alive == 0) tailConfig.reset();   // nije poslednja kopija (cuva je configGraveyard), oslobadja se na message niti
@@ -3711,7 +3870,7 @@ void LiveSamplerProcessor::startAutoLevel (float targetDb, int userIndex)
         for (int o = 0; o < kNumOsc; ++o)
         {
             const auto& os = u.osc[(size_t) o];
-            if (! os.on || os.instrument == Fm::instrumentName) continue;
+            if (! os.on || os.instrument == Fm::instrumentName || os.instrument == Vl::instrumentName) continue;
             j.rt.inst[(size_t) o] = getLoadedInstrument (os.instrument);
             if (j.rt.inst[(size_t) o] == nullptr) j.missing.addIfNotAlreadyThere (os.instrument);
         }

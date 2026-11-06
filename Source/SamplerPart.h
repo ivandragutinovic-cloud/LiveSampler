@@ -4,14 +4,18 @@
 #include "Model.h"
 #include "MasterEffects.h"
 #include "FmSynth.h"
+#include "VlSynth.h"
 
 // Sve sto deo performansa treba za sviranje (nepromenljivo dok traje jedan audio blok)
+struct HostedPlugin;
 struct PartRuntime
 {
     PerfPart part;
     UserProgram user;
     std::array<InstrumentPtr, kNumOsc> inst;
     std::shared_ptr<const Fm::Patch> fm;   // FM sinteza (user napravljen od MOD-7 programa)
+    std::shared_ptr<const Vl::Patch> vl;   // VL fizicko modelovanje (duvaci, gudalo)
+    std::shared_ptr<HostedPlugin> plugin;  // VST3 plugin user (zvuk pravi plugin, part radi jacinu, EQ, efekte)
     std::array<float, 12> scaleCents {};
     float harmGain = 1.0f;                 // jacina terce (HARMONY Velocity), mnozi glasove terce
     int maxVoices = 128;                   // polifonija ovog dela (SETTINGS); preko toga se krade najstariji glas   // orijentalno stimovanje za ovaj deo (nule = iskljuceno)
@@ -93,7 +97,11 @@ public:
     void setModWheel (float v) { modWheel = v; }
     void setAftertouch (float v) { aftertouch = v; }
     void setVector (float x, float y) { vecX = x; vecY = y; }
-    void setExpression (float v) { expression = v; }
+    void setExpression (float v) { expression = v; rawExpression = v; }
+    void setBreath (float v) { breath = v; }   // breath controller (CC2) za VL usere
+    // VL: bazen stanja (linije kasnjenja) za fizicki model; pravi se na message niti kad part dobije VL usera
+    void ensureVlPool();
+    void addExternal (const juce::AudioBuffer<float>& b, int numSamples);   // izlaz plugina ide kroz part (jacina, pan, EQ, send)
     void allNotesOff (bool immediate);
     void renderVoices (int startSample, int numSamples);
     void endBlock (juce::AudioBuffer<float>& mainOut, juce::AudioBuffer<float>& reverbSend,
@@ -139,6 +147,9 @@ private:
         double fmHz = 261.6;
         Fm::Voice fm;
         std::shared_ptr<const Fm::Patch> fmPatch;
+        bool vlOn = false;                   // VL glas (fizicki model)
+        Vl::Voice vl;
+        std::shared_ptr<const Vl::Patch> vlPatch;
         int loopStart = 0, loopEnd = 0, endPos = 0, loopXfade = 0;
         float vel01 = 1.0f, velGain = 1.0f, gainL = 1.0f, gainR = 1.0f, ampMod = 1.0f;
         bool fadingOut = false;
@@ -186,6 +197,12 @@ private:
 
     const PartRuntime* cfg = nullptr;
     double sampleRate = 44100.0;
+    float breath = 0.0f, rawExpression = 1.0f;
+    struct VlPool { std::array<Vl::State, 6> st; double sr = 0.0; };
+    std::unique_ptr<VlPool> vlPoolOwner;
+    std::atomic<VlPool*> vlPool { nullptr };
+    Vl::State* acquireVlState();
+    void renderVlVoice (Voice& v, float* outL, float* outR, int num, float fadeStep);
     juce::uint64 ageCounter = 0;
     juce::uint32 serialCounter = 0;
     MonoLane lanes[numLanes][3];

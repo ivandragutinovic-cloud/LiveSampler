@@ -2867,6 +2867,217 @@ FmEditor::FmEditor (LiveSamplerProcessor& p, std::function<int()> ui) : proc (p)
     }
 }
 
+//==============================================================================
+//  VST3 plugin user
+//==============================================================================
+namespace
+{
+    // prozor plugina: zatvaranje cuva stanje plugina u useru
+    class PluginWindow : public juce::DocumentWindow
+    {
+    public:
+        PluginWindow (LiveSamplerProcessor& p, int u, juce::AudioProcessorEditor* ed, const juce::String& name)
+            : juce::DocumentWindow (name, Pal::panel, juce::DocumentWindow::closeButton), proc (p), user (u), userName (name)
+        {
+            setUsingNativeTitleBar (true);
+            setContentOwned (ed, true);
+            setResizable (ed->isResizable(), false);
+            centreWithSize (getWidth(), getHeight());
+            setVisible (true);
+            setAlwaysOnTop (true);
+        }
+        void closeButtonPressed() override
+        {
+            const int u = proc.findUser (userName);
+            if (u >= 0) proc.savePluginState (u);
+            for (int i = 0; i < open().size(); ++i) if (open()[i] == this) { open().remove (i); break; }
+        }
+        static juce::OwnedArray<PluginWindow>& open() { static juce::OwnedArray<PluginWindow> w; return w; }
+        LiveSamplerProcessor& proc;
+        int user;
+        juce::String userName;
+    };
+}
+
+void PluginUserPanel::openWindow (LiveSamplerProcessor& proc, int u)
+{
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    const auto name = proc.getUser (u).name;
+    for (auto* w : PluginWindow::open()) if (w->userName == name) { w->toFront (true); return; }
+    auto hp = proc.pluginFor (u);
+    if (hp == nullptr || hp->inst == nullptr)
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "VST3",
+            T ("Cannot load the plugin ") + PluginHost::describe (proc.getUser (u).pluginDesc) + (hp != nullptr && hp->error.isNotEmpty() ? ":\n" + hp->error : juce::String()));
+        return;
+    }
+    auto* ed = hp->inst->createEditorIfNeeded();
+    if (ed == nullptr) { juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "VST3", T ("This plugin has no window.")); return; }
+    PluginWindow::open().add (new PluginWindow (proc, u, ed, name));
+}
+
+PluginUserPanel::PluginUserPanel (LiveSamplerProcessor& p, std::function<int()> ui) : proc (p), userIndex (std::move (ui))
+{
+    title.setFont (juce::FontOptions (17.0f, juce::Font::bold));
+    title.setColour (juce::Label::textColourId, Pal::text);
+    addAndMakeVisible (title);
+    info.setFont (juce::FontOptions (12.5f));
+    info.setColour (juce::Label::textColourId, Pal::dim);
+    info.setJustificationType (juce::Justification::topLeft);
+    info.setText (T ("The sound is made by the VST3 plugin: set it in the plugin window (its settings are saved in this user when you close the window and with the project). "
+                     "In performances this part works like any other: key zone, transpose, volume, pan, EQ, reverb / delay, LOCK PART, MIDI learn. "
+                     "Pedal, mod wheel, breath (CC2), expression, pitch bend and aftertouch go to the plugin. Harmony (terca) is not sent to plugins."), juce::dontSendNotification);
+    addAndMakeVisible (info);
+    openButton.setButtonText (T ("OPEN PLUGIN WINDOW"));
+    openButton.setColour (juce::TextButton::buttonColourId, Pal::accent.withAlpha (0.8f));
+    openButton.onClick = [this] { openWindow (proc, userIndex()); };
+    addAndMakeVisible (openButton);
+}
+
+void PluginUserPanel::refresh()
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    title.setText ("VST3:  " + PluginHost::describe (proc.getUser (u).pluginDesc), juce::dontSendNotification);
+}
+
+void PluginUserPanel::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+}
+
+void PluginUserPanel::resized()
+{
+    auto r = getLocalBounds().reduced (12, 10);
+    auto top = r.removeFromTop (34);
+    openButton.setBounds (top.removeFromRight (220).reduced (0, 2));
+    title.setBounds (top);
+    r.removeFromTop (8);
+    info.setBounds (r);
+}
+
+//==============================================================================
+//  VL editor (fizicki model)
+//==============================================================================
+namespace
+{
+    struct VlKnobDef { const char* name; float Vl::Patch::* field; double lo, hi, def; int fmt; const char* tip; };
+    // fmt: 0 = %, 1 = s, 2 = Hz, 3 = dB
+    const VlKnobDef vlKnobs[] = {
+        { "Pressure",   &Vl::Patch::pressure,   0, 1, 0.6, 0, "How hard you blow (bow): more = louder, brighter, easier to overblow" },
+        { "Embouchure", &Vl::Patch::embouchure, 0, 1, 0.5, 0, "Reed / lip stiffness (bowed: bow pressure). Changes the colour and the attack" },
+        { "Throat",     &Vl::Patch::throat,     0, 1, 0.5, 0, "Loss in the tube: low = dark, soft; high = open, bright, buzzy" },
+        { "Position",   &Vl::Patch::position,   0, 1, 0.5, 0, "Sax: reed position, flute: jet length, bowed: bow position" },
+        { "Air noise",  &Vl::Patch::noise,      0, 1, 0.15, 0, "Breath noise in the sound" },
+        { "Growl",      &Vl::Patch::growl,      0, 1, 0.0, 0, "Growl / flutter (rough sound, like singing into the horn)" },
+        { "Brightness", &Vl::Patch::brightness, 0, 1, 0.6, 0, "Tone filter on the output" },
+        { "Level",      &Vl::Patch::levelDb,  -24, 12, 0.0, 3, "Level of the model" },
+        { "Vibrato",    &Vl::Patch::vibDepth,   0, 1, 0.15, 0, "Vibrato depth" },
+        { "Vib rate",   &Vl::Patch::vibRate,    2, 9, 5.5, 2, "Vibrato speed" },
+        { "Vib delay",  &Vl::Patch::vibDelay,   0, 2, 0.35, 1, "Vibrato starts after this time" },
+        { "Attack",     &Vl::Patch::attack,  0.002, 0.5, 0.04, 1, "How fast the breath comes in" },
+        { "Release",    &Vl::Patch::release, 0.01, 2.0, 0.12, 1, "How fast the breath goes out after the key" },
+    };
+}
+
+VlEditor::VlEditor (LiveSamplerProcessor& p, std::function<int()> ui) : proc (p), userIndex (std::move (ui))
+{
+    auto lab = [this] (juce::Label& l, const char* t) { l.setText (t, juce::dontSendNotification); l.setFont (juce::FontOptions (12.0f, juce::Font::bold)); l.setColour (juce::Label::textColourId, Pal::dim); addAndMakeVisible (l); };
+    lab (modelLabel, "MODEL");
+    lab (sourceLabel, "BREATH FROM");
+    lab (transLabel, "TRANSPOSE");
+    const auto mn = Vl::modelNames();
+    for (int i = 0; i < mn.size(); ++i) model.addItem (mn[i], i + 1);
+    model.onChange = [this] { if (! updating) { const int m = model.getSelectedId() - 1; edit ([m] (Vl::Patch& pt) { const auto keep = pt; pt = Vl::Patch::makeDefault (m); pt.source = keep.source; pt.levelDb = keep.levelDb; pt.transpose = keep.transpose; }); } };
+    model.setTooltip (T ("Which instrument is modelled. Changing it loads that model's starting settings."));
+    addAndMakeVisible (model);
+    const auto sn = Vl::sourceNames();
+    for (int i = 0; i < sn.size(); ++i) source.addItem (sn[i], i + 1);
+    source.onChange = [this] { if (! updating) { const int s = source.getSelectedId() - 1; edit ([s] (Vl::Patch& pt) { pt.source = s; }); } };
+    source.setTooltip (T ("What controls the breath. With a breath controller (CC2) or expression pedal the sound lives under your control; velocity + aftertouch works on any keyboard."));
+    addAndMakeVisible (source);
+    UI::setupIncDec (transpose, -24, 24, 1, [] (double v) { return (v > 0 ? "+" : "") + juce::String ((int) v) + " st"; });
+    transpose.onValueChange = [this] { if (! updating) { const int v = (int) transpose.getValue(); edit ([v] (Vl::Patch& pt) { pt.transpose = v; }); } };
+    addAndMakeVisible (transpose);
+
+    for (auto& d : vlKnobs)
+    {
+        std::function<juce::String (double)> fmt = d.fmt == 1 ? UI::timeText : d.fmt == 2 ? UI::hzText : d.fmt == 3 ? UI::dbText : UI::pctText;
+        const double centre = d.fmt == 1 ? juce::jmin (d.hi, d.lo + (d.hi - d.lo) * 0.15) : (d.lo + d.hi) * 0.5;
+        auto* k = knobs.add (new ValueKnob (d.name, Pal::accent, d.lo, d.hi, centre, fmt, d.def));
+        k->slider.setTooltip (T (d.tip));
+        auto field = d.field;
+        k->onChange = [this, field] (double v) { if (! updating) edit ([field, v] (Vl::Patch& pt) { pt.*field = (float) v; }); };
+        addAndMakeVisible (k);
+    }
+    hint.setText (T ("Physical model: the sound is made by a virtual reed / lips / air jet / bow and tube, no samples. "
+                     "It plays one note at a time (legato, like a real wind) - change it in SOUND (voice mode). "
+                     "Best with a breath controller (CC2) or an expression pedal; on the keyboard use velocity + aftertouch."), juce::dontSendNotification);
+    hint.setFont (juce::FontOptions (12.0f));
+    hint.setColour (juce::Label::textColourId, Pal::dim);
+    hint.setJustificationType (juce::Justification::topLeft);
+    addAndMakeVisible (hint);
+}
+
+Vl::Patch VlEditor::current() const
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers() || ! proc.getUser (u).isVl()) return {};
+    return Vl::Patch::fromString (proc.getUser (u).vlPatch);
+}
+
+void VlEditor::edit (std::function<void (Vl::Patch&)> fn)
+{
+    const int u = userIndex();
+    if (u < 0 || u >= proc.getNumUsers()) return;
+    auto p = current();
+    fn (p);
+    auto user = proc.getUser (u);
+    user.vlPatch = p.toString();
+    proc.updateUser (u, user);
+    refresh();
+}
+
+void VlEditor::refresh()
+{
+    const auto p = current();
+    const juce::ScopedValueSetter<bool> svs (updating, true);
+    model.setSelectedId (p.model + 1, juce::dontSendNotification);
+    source.setSelectedId (p.source + 1, juce::dontSendNotification);
+    transpose.setValue (p.transpose, juce::dontSendNotification);
+    for (int i = 0; i < knobs.size(); ++i) knobs[i]->setValue ((double) (p.*(vlKnobs[i].field)));
+}
+
+void VlEditor::paint (juce::Graphics& g)
+{
+    g.setColour (Pal::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+}
+
+void VlEditor::resized()
+{
+    auto r = getLocalBounds().reduced (10, 8);
+    auto top = r.removeFromTop (28);
+    modelLabel.setBounds (top.removeFromLeft (56));
+    model.setBounds (top.removeFromLeft (230).reduced (0, 2));
+    top.removeFromLeft (16);
+    sourceLabel.setBounds (top.removeFromLeft (96));
+    source.setBounds (top.removeFromLeft (230).reduced (0, 2));
+    top.removeFromLeft (16);
+    transLabel.setBounds (top.removeFromLeft (84));
+    transpose.setBounds (top.removeFromLeft (120).reduced (0, 2));
+    r.removeFromTop (8);
+    const int perRow = 8, kw = juce::jmin (96, r.getWidth() / perRow);
+    for (int row = 0; row < 2; ++row)
+    {
+        auto line = r.removeFromTop (86);
+        for (int i = row * perRow; i < juce::jmin (knobs.size(), (row + 1) * perRow); ++i)
+            knobs[i]->setBounds (line.removeFromLeft (kw));
+        if (row == 1) hint.setBounds (line.reduced (12, 4));
+    }
+}
+
 Fm::Patch FmEditor::current() const
 {
     const int u = userIndex();
@@ -3050,7 +3261,7 @@ void FmEditor::resized()
 //  UserPage
 //==============================================================================
 UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
-    : proc (p), editor (e), fm (p, [this] { return userIndex; }), sound (p, [this] { return userIndex; })
+    : proc (p), editor (e), fm (p, [this] { return userIndex; }), vl (p, [this] { return userIndex; }), plug (p, [this] { return userIndex; }), sound (p, [this] { return userIndex; })
 {
     list.setModel (this);
     list.setRowHeight (26);
@@ -3065,10 +3276,47 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         juce::PopupMenu m;
         m.addItem (1, T ("New user (samples)..."));
         m.addItem (2, T ("New FM user (FM synthesis, DX style)"));
+        {
+            juce::PopupMenu vm;
+            const auto names = Vl::modelNames();
+            for (int i = 0; i < names.size(); ++i) vm.addItem (10 + i, names[i]);
+            m.addSubMenu (T ("New VL user (physical model: winds, bowed)"), vm);
+            juce::PopupMenu pm;
+            const auto plugs = proc.getPluginHost().instruments();
+            for (int i = 0; i < plugs.size() && i < 400; ++i) pm.addItem (1000 + i, plugs[i].name + (plugs[i].manufacturerName.isNotEmpty() ? "   (" + plugs[i].manufacturerName + ")" : juce::String()));
+            if (plugs.isEmpty()) pm.addItem (999, T ("No VST3 instruments known yet"), false);
+            pm.addSeparator();
+            pm.addItem (3, proc.getPluginHost().isScanning() ? T ("Scanning VST3 plugins...") : T ("Scan VST3 plugins (C:\\Program Files\\Common Files\\VST3)"), ! proc.getPluginHost().isScanning());
+            m.addSubMenu (T ("New VST3 plugin user (e.g. SWAM)"), pm);
+        }
         m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&newButton), [safe] (int r)
         {
             if (safe == nullptr || r == 0) return;
             if (r == 2) { safe->selectUser (safe->proc.createFmUser()); return; }
+            if (r >= 10 && r < 10 + Vl::NumModels) { safe->selectUser (safe->proc.createVlUser (r - 10)); return; }
+            if (r == 3)
+            {
+                safe->proc.getPluginHost().startScan ([safe]
+                {
+                    if (safe == nullptr) return;
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "VST3", safe->proc.getPluginHost().scanStatus()
+                        + T (".\nClick New > New VST3 plugin user to use one."));
+                });
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "VST3",
+                    T ("Scanning the VST3 folder in the background (can take a minute). You can keep playing; a message comes when it is done."));
+                return;
+            }
+            if (r >= 1000)
+            {
+                const auto plugs = safe->proc.getPluginHost().instruments();
+                if (r - 1000 < plugs.size())
+                {
+                    const int u = safe->proc.createPluginUser (plugs[r - 1000]);
+                    safe->selectUser (u);
+                    PluginUserPanel::openWindow (safe->proc, u);
+                }
+                return;
+            }
             UI::showInstrumentMenu (&safe->newButton, safe->proc.getInstrumentList(), {}, true, [safe] (const juce::String& inst)
             {
                 if (safe == nullptr) return;
@@ -3078,6 +3326,8 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
         });
     };
     addChildComponent (fm);
+    addChildComponent (vl);
+    addChildComponent (plug);
     copyButton.setButtonText ("Copy");
     copyButton.onClick = [this]
     {
@@ -3453,14 +3703,20 @@ void UserPage::refresh()
 
     const bool valid = userIndex >= 0 && userIndex < proc.getNumUsers();
     const bool isFm = valid && proc.getUser (userIndex).isFm();
+    const bool isVl = valid && ! isFm && proc.getUser (userIndex).isVl();
+    const bool isPlug = valid && proc.getUser (userIndex).isPlugin();
     for (auto* r : rows)
     {
-        r->setVisible (! isFm);
-        if (! isFm) r->refresh();
+        r->setVisible (! isFm && ! isVl && ! isPlug);
+        if (! isFm && ! isVl && ! isPlug) r->refresh();
     }
-    for (auto& l : headerLabels) l.setVisible (! isFm);
+    for (auto& l : headerLabels) l.setVisible (! isFm && ! isVl && ! isPlug);
+    if (plug.isVisible() != isPlug) { plug.setVisible (isPlug); resized(); }
+    if (isPlug) plug.refresh();
     if (fm.isVisible() != isFm) { fm.setVisible (isFm); resized(); }
+    if (vl.isVisible() != isVl) { vl.setVisible (isVl); resized(); }
     if (isFm) fm.refresh();
+    if (isVl) vl.refresh();
     sound.refresh();
 
     for (auto* c : std::initializer_list<juce::Component*> { &nameEdit, &copyButton, &deleteButton, &catButton, &numButton, &upButton, &downButton })
@@ -3535,6 +3791,20 @@ void UserPage::resized()
     if (fmUser)
     {
         fm.setBounds (r.removeFromTop (318));
+        r.removeFromTop (6);
+        sound.setBounds (r);
+        return;
+    }
+    if (userIndex >= 0 && userIndex < proc.getNumUsers() && proc.getUser (userIndex).isPlugin())
+    {
+        plug.setBounds (r.removeFromTop (150));
+        r.removeFromTop (6);
+        sound.setBounds (r);
+        return;
+    }
+    if (userIndex >= 0 && userIndex < proc.getNumUsers() && proc.getUser (userIndex).isVl())
+    {
+        vl.setBounds (r.removeFromTop (250));
         r.removeFromTop (6);
         sound.setBounds (r);
         return;

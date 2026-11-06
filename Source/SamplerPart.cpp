@@ -217,9 +217,52 @@ float KronosEnv::advance (int n)
 //==============================================================================
 //  SamplerPart
 //==============================================================================
+void SamplerPart::addExternal (const juce::AudioBuffer<float>& b, int n)
+{
+    if (b.getNumChannels() <= 0) return;
+    n = juce::jmin (n, partBuffer.getNumSamples(), b.getNumSamples());
+    partBuffer.addFrom (0, 0, b, 0, 0, n);
+    partBuffer.addFrom (1, 0, b, juce::jmin (1, b.getNumChannels() - 1), 0, n);
+}
+
+void SamplerPart::ensureVlPool()
+{
+    if (vlPool.load() != nullptr) return;
+    auto p = std::make_unique<VlPool>();
+    const double sr = juce::jmax (44100.0, sampleRate);
+    for (auto& s : p->st) s.prepare ((int) (sr / 18.0 * 2.2) + 16);   // najdublji ton ~18 Hz (truba: dupla cev)
+    p->sr = sr;
+    vlPool = p.get();
+    vlPoolOwner = std::move (p);
+}
+
+Vl::State* SamplerPart::acquireVlState()
+{
+    auto* pool = vlPool.load();
+    if (pool == nullptr || pool->sr + 1.0 < sampleRate) return nullptr;   // bazen pravljen za nizi sample rate
+    for (auto& s : pool->st)
+        if (! s.inUse) return &s;
+    // sve zauzeto: uzmi najstariji VL glas
+    Voice* oldest = nullptr;
+    for (auto& v : voices)
+        if (v.active && v.vlOn && v.vl.state != nullptr && (oldest == nullptr || v.age < oldest->age)) oldest = &v;
+    if (oldest == nullptr) return nullptr;
+    auto* s = oldest->vl.state;
+    oldest->active = false;
+    oldest->vlOn = false;
+    oldest->vl.state = nullptr;
+    return s;
+}
+
 void SamplerPart::prepare (double newSampleRate, int maxBlock)
 {
     sampleRate = newSampleRate;
+    for (auto& v : voices) { v.vlOn = false; v.vl.state = nullptr; v.vlPatch.reset(); }
+    if (auto* pool = vlPool.load())
+    {
+        for (auto& s : pool->st) s.inUse = false;
+        if (pool->sr + 1.0 < sampleRate) { vlPool = nullptr; vlPoolOwner.reset(); ensureVlPool(); }   // audio stoji: sme da se napravi ponovo
+    }
     partBuffer.setSize (2, maxBlock);
     partBuffer.clear();
     insertFx.prepare (sampleRate, maxBlock);
@@ -353,7 +396,8 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         const auto& inst = cfg->inst[(size_t) i];
         // FM sinteza (MOD-7 program): MS bez semplova, zvuk pravi Fm::Voice
         const bool fmOsc = cfg->fm != nullptr && o.instrument == Fm::instrumentName;
-        if (! o.on || ! u.block[(size_t) (i / kMsPerOsc)].on || (inst == nullptr && ! fmOsc) || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
+        const bool vlOsc = cfg->vl != nullptr && o.instrument == Vl::instrumentName;
+        if (! o.on || ! u.block[(size_t) (i / kMsPerOsc)].on || (inst == nullptr && ! fmOsc && ! vlOsc) || o.keyOff != keyOff || (blockMask & (1u << (i / kMsPerOsc))) == 0)
             continue;
         if (pitch < o.keyLow || pitch > o.keyHigh || velocity < o.velLow || velocity > o.velHigh)
             continue;
@@ -362,7 +406,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         static const Zone fmZone {};
         const Zone* zone = &fmZone;
         const SampleData* smp = nullptr;
-        if (! fmOsc)
+        if (! fmOsc && ! vlOsc)
         {
             // "jedan sempl na sve tastere": zona se uzima sa izabranog tastera, visina i dalje prati taster (key follow)
             zone = inst->findZone (o.zoneKey >= 0 ? o.zoneKey : juce::jlimit (0, 127, oscPitch), velocity);
@@ -376,6 +420,10 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         if (vp == nullptr)
             return;
         auto& v = *vp;
+        if (v.vlOn && v.vl.state != nullptr) { v.vl.state->inUse = false; v.vl.state = nullptr; }   // ukraden VL glas oslobadja stanje
+        Vl::State* vlState = nullptr;
+        if (vlOsc && (vlState = acquireVlState()) == nullptr)
+            continue;   // nema bazena (jos se pravi) ili je pun
         const int oscBlock = i / kMsPerOsc;
         const auto& sb = u.block[(size_t) oscBlock];
 
@@ -392,6 +440,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         if (smp != nullptr && smp->streamed && ! offline)
             v.stream = DiskStreamer::get().acquire (inst->samples[(size_t) zone->sample], v.streamToken);
         v.fmOn = fmOsc;
+        v.vlOn = vlOsc;
         v.block = oscBlock;
         v.oscTranspose = o.transpose;
         v.pos = smp != nullptr ? (double) smp->startOffset : 0.0;
@@ -402,7 +451,18 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         v.fixedPitch = zone->fixedPitch;
         v.keySlope = o.keySlope;
 
-        if (fmOsc)
+        if (vlOsc)
+        {
+            v.vlPatch = cfg->vl;
+            v.rootKey = 60.0;
+            v.fixedPitch = false;
+            v.pitchTarget += cfg->vl->transpose;
+            v.pitch += cfg->vl->transpose;
+            v.vl.start (*cfg->vl, vlState, juce::jlimit (0, 127, oscPitch + cfg->vl->transpose), vel01, sampleRate);
+            v.loop = false;
+            v.endPos = 0;
+        }
+        else if (fmOsc)
         {
             v.fmPatch = cfg->fm;
             v.rootKey = 60.0;
@@ -545,7 +605,7 @@ void SamplerPart::updateModulation (Voice& v)
     // key follow (pitch slope) oko root tastera zone
     const double played = v.fixedPitch ? v.rootKey : v.rootKey + (v.pitch - v.rootKey) * v.keySlope;
     v.inc = std::exp2 ((played + pitchMod - v.rootKey) / 12.0) * rateRatio;
-    if (v.fmOn) v.fmHz = 440.0 * std::exp2 ((played + pitchMod - 69.0) / 12.0);
+    if (v.fmOn || v.vlOn) v.fmHz = 440.0 * std::exp2 ((played + pitchMod - 69.0) / 12.0);
 
     // filter
     const float fEg = v.filterEnv.advance (controlRate);
@@ -583,6 +643,7 @@ void SamplerPart::releaseVoice (Voice& v)
     v.pitchEnv.release();
     v.filterEnv.release();
     if (v.fmOn) v.fm.release();
+    if (v.vlOn) v.vl.release();
 }
 
 int SamplerPart::chooseMonoKey (const MonoLane& L) const
@@ -794,7 +855,8 @@ void SamplerPart::noteOn (int id, int pitch, int velocity, bool additive)
     juce::uint32 present = 0;
     for (int i = 0; i < kNumOsc; ++i)
         if (u.osc[(size_t) i].on && u.block[(size_t) (i / kMsPerOsc)].on
-            && (cfg->inst[(size_t) i] != nullptr || (cfg->fm != nullptr && u.osc[(size_t) i].instrument == Fm::instrumentName)))
+            && (cfg->inst[(size_t) i] != nullptr || (cfg->fm != nullptr && u.osc[(size_t) i].instrument == Fm::instrumentName)
+                || (cfg->vl != nullptr && u.osc[(size_t) i].instrument == Vl::instrumentName)))
             present |= 1u << (i / kMsPerOsc);
 
     juce::uint32 polyMask = 0;
@@ -962,6 +1024,50 @@ void SamplerPart::renderFmVoice (Voice& v, float* outL, float* outR, int num, fl
     }
 }
 
+// VL glas: isti put kao FM (envelope, filter, EQ, pan, fade), zvuk pravi fizicki model
+void SamplerPart::renderVlVoice (Voice& v, float* outL, float* outR, int num, float fadeStep)
+{
+    if (v.vlPatch == nullptr || v.vl.state == nullptr) { v.active = false; return; }
+    const auto& patch = *v.vlPatch;
+    const float ctl = patch.source == Vl::BreathCC2 ? breath : patch.source == Vl::ExpressionCC11 ? rawExpression
+                    : patch.source == Vl::ModWheel ? modWheel : 0.0f;
+    for (int i = 0; i < num; ++i)
+    {
+        if (--v.ctrl <= 0)
+        {
+            v.ctrl = controlRate;
+            updateModulation (v);
+        }
+        float s = v.vl.tick (patch, v.fmHz, ctl, aftertouch);
+        float g = juce::jmax (0.0f, v.ampEnv.advance (1)) * v.ampMod;
+        if (v.fadingOut)
+        {
+            v.fadeGain -= v.fadeOutStep > 0.0f ? v.fadeOutStep : fadeStep;
+            if (v.fadeGain <= 0.0f) { v.active = false; return; }
+            g *= v.fadeOutStep > 0.0f ? std::sqrt (v.fadeGain) : v.fadeGain;
+        }
+        float l = s * g * v.gainL, r = s * g * v.gainR;
+        if (v.filterOn)
+        {
+            l = v.filter.processSample (0, l);
+            r = v.filter.processSample (1, r);
+            if (v.cascade)
+            {
+                l = v.filter2.processSample (0, l);
+                r = v.filter2.processSample (1, r);
+            }
+        }
+        if (v.eqOn)
+        {
+            l = v.eq[2].process (0, v.eq[1].process (0, v.eq[0].process (0, l)));
+            r = v.eq[2].process (1, v.eq[1].process (1, v.eq[0].process (1, r)));
+        }
+        outL[i] += l;
+        outR[i] += r;
+        if (! v.vl.isActive() || (! v.ampEnv.isActive() && ! v.keyDown)) { v.active = false; return; }
+    }
+}
+
 void SamplerPart::renderVoices (int start, int num)
 {
     if (num <= 0 || cfg == nullptr)
@@ -976,6 +1082,17 @@ void SamplerPart::renderVoices (int start, int num)
         if (! v.active)
             continue;
 
+        if (v.vlOn)
+        {
+            renderVlVoice (v, outL, outR, num, fadeStep);
+            if (! v.active)
+            {
+                if (v.vl.state != nullptr) { v.vl.state->inUse = false; v.vl.state = nullptr; }
+                v.vlOn = false;
+                v.vlPatch.reset();
+            }
+            continue;
+        }
         if (v.fmOn)
         {
             renderFmVoice (v, outL, outR, num, fadeStep);

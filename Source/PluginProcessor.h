@@ -5,6 +5,7 @@
 #include "MasterEffects.h"
 #include "Model.h"
 #include "KronosPcg.h"
+#include "PluginHost.h"
 
 class LiveSamplerProcessor : public juce::AudioProcessor,
                              public juce::ChangeBroadcaster,
@@ -229,6 +230,13 @@ public:
     bool takeVectorUiDirty() { return vectorUiDirty.exchange (false); }
     int userForKronosProgram (const Kronos::Program& p);
     int createUserFromKronosFm (const Kronos::Program& p);   // FM sinteza (MOD-7) umesto semplova
+    int createVlUser (int model);                             // VL fizicki model (Vl::Model)
+    int createPluginUser (const juce::PluginDescription& d);  // VST3 instrument
+    PluginHost& getPluginHost() { return pluginHost; }
+    void savePluginState (int userIndex);                     // stanje plugina (posle editovanja) u usera
+    std::shared_ptr<HostedPlugin> pluginFor (int userIndex);
+    std::shared_ptr<const Vl::Patch> vlPatchFor (const UserProgram& u);
+    std::map<juce::int64, std::shared_ptr<const Vl::Patch>> vlCache;
     std::shared_ptr<const Fm::Patch> fmPatchFor (const UserProgram& u);
     int createFmUser();                                        // novi FM user (jednostavan DX patch)   // postojeci user istog imena ili novi
     // Kombi -> trenutni performans (16 delova). Vraca spisak timbre-a koji nisu mogli da se prenesu.
@@ -334,10 +342,13 @@ public:
     void saveNow();
 
 private:
+    PluginHost pluginHost;        // prvi clan: instance pluginova se gase poslednje (posle svih config-a)
+    int midiPos = 0;              // audio nit: polozaj trenutnog MIDI dogadjaja u bloku (za plugin)
     struct EngineConfig
     {
         std::array<PartRuntime, kNumParts> parts;
         juce::uint16 lockedMask = 0;   // LOCK PART: u zoni zakljucanog parta svira samo on
+        bool anyPlugin = false;        // neki part svira VST plugin
         MasterSettings master;
         GlobalEqSettings globalEq;
         float globalDb = 0.0f;
@@ -347,6 +358,7 @@ private:
         TercaSettings terca;
         int harmNative = -1;            // skala za koju je napravljena ugradjena terca performansa (-1 = nema)
     };
+    void processPlugins (const EngineConfig& c, int len);
     using ConfigPtr = std::shared_ptr<const EngineConfig>;
 
     void handleAsyncUpdate() override;

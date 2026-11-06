@@ -168,6 +168,10 @@ struct UserProgram
     int fmSlot = 0;
     juce::String fmPatch;               // FM parametri (Fm::Patch kao XML); ima prednost nad fmProgram (posle editovanja)
     bool isFm() const { return fmPatch.isNotEmpty() || fmProgram.isNotEmpty(); }
+    juce::String vlPatch;               // VL fizicko modelovanje (Vl::Patch); prazno = nije VL
+    bool isVl() const { return vlPatch.isNotEmpty(); }
+    juce::String pluginDesc, pluginState;   // VST3 plugin: opis (XML PluginDescription) i stanje (base64); prazno = nije plugin
+    bool isPlugin() const { return pluginDesc.isNotEmpty(); }
 
     int fxType = 0;
     float fxRate = 0.3f, fxDepth = 0.5f, fxMix = 0.5f;
