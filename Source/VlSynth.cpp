@@ -166,7 +166,9 @@ float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch)
     const float growl = p.growl * (0.6f * (float) std::sin (growlPhase) + 0.4f * noiseSample());
 
     const float n = noiseSample();
-    const float excite = 0.002f * n * juce::jmin (1.0f, env * 20.0f);   // malo suma uvek: pokrece oscilaciju (bez toga petlja moze da ostane mirna)
+    // na pocetku tona jaci "udarac" vazduha: oscilacija krene odmah (inace sax treba ~0.5 s da progovori)
+    const float kick = time < 0.08 ? 0.03f * (float) (1.0 - time / 0.08) : 0.0f;
+    const float excite = (0.002f + kick) * n * juce::jmin (1.0f, env * 20.0f);   // malo suma uvek: pokrece oscilaciju (bez toga petlja moze da ostane mirna)
     float out = 0.0f;
     const float damp = loopDamp (p);   // prigusenje u petlji (one-pole)
 
@@ -176,7 +178,7 @@ float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch)
         case Sax:
         {
             // ispod ~0.55 jezicak ne oscilluje: tihi dah krece od praga, jaci ide preko
-            float breath = 0.5f * juce::jmin (1.0f, env * 8.0f) + env * (p.model == Sax ? 0.08f + 0.14f * p.pressure : 0.2f + 0.3f * p.pressure);
+            float breath = (p.model == Sax ? 0.56f : 0.5f) * juce::jmin (1.0f, env * 8.0f) + env * (p.model == Sax ? 0.05f + 0.1f * p.pressure : 0.2f + 0.3f * p.pressure);
             breath += breath * (p.noise * 0.25f * n + growl * 0.5f + vib * 0.08f) + excite;
             const float slope = -(0.18f + 0.3f * p.embouchure);
             const float offset = 0.7f;
