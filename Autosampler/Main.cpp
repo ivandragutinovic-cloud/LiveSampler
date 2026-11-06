@@ -425,8 +425,17 @@ public:
     }
 
     // Live Sampler pokrece: --pcg "<fajl>" --program <bankId>:<broj> ... --combi <bankId>:<broj> ...
+    juce::StringArray pendingCommands;   // stiglo dok snima: primenjuje se posle (lista se ne sme menjati dok nit radi)
+
     void applyCommandLine (const juce::String& commandLine)
     {
+        juce::Logger::writeToLog ("command: " + commandLine);
+        if (isThreadRunning())
+        {
+            pendingCommands.add (commandLine);
+            setStatus (juce::String::fromUTF8 ("Added sounds will go to the list when the current sampling finishes"));
+            return;
+        }
         auto args = juce::StringArray::fromTokens (commandLine, true);
         for (auto& a : args) a = a.unquoted();
         const int pi = args.indexOf ("--pcg");
@@ -820,6 +829,7 @@ private:
 
     void loadPcg (const juce::File& f)
     {
+        if (isThreadRunning()) { busyInfo(); return; }   // nit koristi PCG: ne sme se zameniti dok snima
         juce::String err;
         auto p = std::make_unique<Kronos::Pcg>();
         if (! p->load (f, err) || ! f.loadFileAsData (pcgData))
@@ -1099,6 +1109,7 @@ private:
     void addSelected()
     {
         if (pcg == nullptr) return;
+        if (isThreadRunning()) { busyInfo(); return; }
         auto sel = sourceList.getSelectedRows();
         for (int i = 0; i < sel.size(); ++i)
         {
@@ -1869,7 +1880,11 @@ private:
     {
         const juce::ScopedLock sl (statusLock);
         statusText = s;
+        // u log samo kad se promeni korak (ne svaka nota), da se vidi gde je stao ako se srusi
+        const auto key = s.upToFirstOccurrenceOf ("  ", false, false).substring (0, 40);
+        if (key != lastLoggedStatus) { lastLoggedStatus = key; juce::Logger::writeToLog ("status: " + s); }
     }
+    juce::String lastLoggedStatus;
 
     // izabere zvuk za posao: druga klavijatura (Program Change), EXi (SysEx), ROM multisempl (SysEx ili PCG)
     // Kronos: edit buffer prima samo program istog tipa kao banka u kojoj je (EXi banka ili HD-1 banka),
@@ -2200,7 +2215,21 @@ private:
         }
         send (juce::MidiMessage::allNotesOff (settings.channel));
         const auto rep = writeReport (threadShouldExit());
-        juce::MessageManager::callAsync ([this] { tidyRomFolders(); neededList.repaint(); updateInfo(); });
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (safe == nullptr) return;
+            // nit je mozda jos u zavrsnom delu: sacekaj da se ugasi pre menjanja liste
+            juce::Timer::callAfterDelay (300, [safe]
+            {
+                if (safe == nullptr || safe->isThreadRunning()) return;
+                safe->tidyRomFolders();
+                const auto cmds = safe->pendingCommands;
+                safe->pendingCommands.clear();
+                for (auto& c : cmds) safe->applyCommandLine (c);
+                safe->neededList.repaint();
+                safe->updateInfo();
+            });
+        });
         setStatus ((threadShouldExit() ? juce::String ("Stopped. ") : juce::String::fromUTF8 ("Done. In Pikaso Workstation click Refresh (SETTINGS), then create the users from the Kronos programs again. ")) + rep);
     }
 
@@ -2857,8 +2886,10 @@ public:
     const juce::String getApplicationVersion() override { return "1.0"; }
     static void crashHandler (void*)
     {
+        const auto trace = juce::SystemStats::getStackBacktrace();
+        juce::Logger::writeToLog ("CRASH\n" + trace);
         auto f = juce::File::getSpecialLocation (juce::File::userDesktopDirectory).getChildFile ("Pikaso Autosampler GRESKA.txt");
-        f.replaceWithText ("Pikaso Autosampler crashed.\n\n" + juce::SystemStats::getStackBacktrace());
+        f.replaceWithText ("Pikaso Autosampler crashed.\n\n" + trace);
     }
 
     void initialise (const juce::String& commandLine) override
