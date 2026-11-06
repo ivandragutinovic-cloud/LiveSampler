@@ -1954,6 +1954,12 @@ private:
             const auto [msb, lsb] = tries[k];
             juce::Logger::writeToLog ("select program: CC0=" + juce::String (msb) + " CC32=" + juce::String (lsb) + " PC=" + juce::String (number)
                                       + "  (now: " + origName + ")");
+            // Kronos ne ucitava ponovo program na kome vec stoji: ako je na tom mestu nas izmenjen program
+            // ("AS ROM ..." u edit bufferu), PC na isti broj ne radi nista. Zato prvo susedni program, pa trazeni.
+            send (juce::MidiMessage::controllerEvent (ch, 0, msb));
+            send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
+            send (juce::MidiMessage::programChange (ch, number > 0 ? number - 1 : number + 1));
+            wait (1500);
             send (juce::MidiMessage::controllerEvent (ch, 0, msb));
             send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
             send (juce::MidiMessage::programChange (ch, number));
