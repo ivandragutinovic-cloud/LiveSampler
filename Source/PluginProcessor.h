@@ -255,6 +255,9 @@ public:
     juce::String getAudioShortText() const;     // "CPU 12% | 5.8 ms ASIO"
     // SOLO: samo oznaceni partovi sviraju (privremeno, ne snima se; brise se kad se pozove drugi performans)
     void setSolo (int part, bool on);
+    // LOCK PART: part (npr. bas) ostaje isti kad se menjaju performansi, a u njegovoj zoni tastera svira samo on
+    void setPartLock (int part, bool on);
+    bool isPartLocked (int part) const { return part >= 0 && part < kNumParts && partLocked[(size_t) part]; }
     bool isSolo (int part) const { return part >= 0 && part < 16 && ((soloMask >> part) & 1) != 0; }
     bool anySolo() const { return soloMask != 0; }
     void clearSolo();
@@ -329,6 +332,7 @@ private:
     struct EngineConfig
     {
         std::array<PartRuntime, kNumParts> parts;
+        juce::uint16 lockedMask = 0;   // LOCK PART: u zoni zakljucanog parta svira samo on
         MasterSettings master;
         GlobalEqSettings globalEq;
         float globalDb = 0.0f;
@@ -519,6 +523,9 @@ private:          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mor
     int maxPolyphony = 128;
     bool showKeyRows = false;
     bool showActiveOnly = false;
+    std::array<bool, kNumParts> partLocked {};
+    std::array<PerfPart, kNumParts> lockedParts, ownParts;   // zakljucan part / part koji performans sam ima na tom mestu
+    void applyPartLocks (Performance& p);                    // ubaci zakljucane partove (ownParts pamti sopstvene)
     bool gigMode = false;
     std::atomic<int> keyLearnMode { 0 }, keyLearnPart { 0 }, keyLearnFirst { -1 }, keyLearnNote { -1 };
     GlobalEqSettings globalEq;

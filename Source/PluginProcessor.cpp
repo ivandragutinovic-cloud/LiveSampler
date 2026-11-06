@@ -170,6 +170,17 @@ void LiveSamplerProcessor::saveNow()
     auto cur = perf.toXml();
     cur->setTagName ("Current");
     root.addChildElement (cur.release());
+    {
+        int mask = 0;
+        Performance lp, op;
+        for (int i = 0; i < kNumParts; ++i)
+            if (partLocked[(size_t) i]) { mask |= 1 << i; lp.parts[(size_t) i] = lockedParts[(size_t) i]; op.parts[(size_t) i] = ownParts[(size_t) i]; }
+        if (mask != 0)
+        {
+            auto lx = lp.toXml(); lx->setTagName ("LockedParts"); lx->setAttribute ("mask", mask); root.addChildElement (lx.release());
+            auto ox = op.toXml(); ox->setTagName ("LockedOwnParts"); root.addChildElement (ox.release());
+        }
+    }
     root.addChildElement (terca.toXml().release());
 
     auto file = getDataFile();
@@ -308,6 +319,16 @@ void LiveSamplerProcessor::loadData()
 
     if (auto* cur = xml->getChildByName ("Current"))
         perf = Performance::fromXml (*cur);
+    partLocked.fill (false);
+    if (auto* lx = xml->getChildByName ("LockedParts"))
+    {
+        const int mask = lx->getIntAttribute ("mask", 0);
+        const auto lp = Performance::fromXml (*lx);
+        Performance op;
+        if (auto* ox = xml->getChildByName ("LockedOwnParts")) op = Performance::fromXml (*ox);
+        for (int i = 0; i < kNumParts; ++i)
+            if ((mask >> i) & 1) { partLocked[(size_t) i] = true; lockedParts[(size_t) i] = lp.parts[(size_t) i]; ownParts[(size_t) i] = op.parts[(size_t) i]; }
+    }
     if (auto* t = xml->getChildByName ("Terce"))
         terca = TercaSettings::fromXml (*t);
 }
@@ -592,6 +613,7 @@ void LiveSamplerProcessor::rebuildConfig()
     {
         auto& pr = cfg->parts[(size_t) i];
         pr.part = perf.parts[(size_t) i];
+        if (partLocked[(size_t) i] && ! audition) cfg->lockedMask |= (juce::uint16) (1 << i);
         if (audition)
         {
             // presluskivanje usera: part 1 = samo taj user, cist (bez podesavanja performansa), ostali cute
@@ -1701,6 +1723,7 @@ juce::StringArray LiveSamplerProcessor::loadKronosCombi (const Kronos::Combi& c,
         }
     }
     applyKronosScale (c, p);
+    applyPartLocks (p);   // zakljucan part ostaje (combi ne gazi bas)
     updatePerformance (p);
     return skipped;
 }
@@ -1784,6 +1807,9 @@ void LiveSamplerProcessor::updateUser (int index, const UserProgram& u)
     {
         for (auto& p : perf.parts)
             if (p.user == oldName) p.user = updated.name;
+        for (auto* arr : { &lockedParts, &ownParts })
+            for (auto& p : *arr)
+                if (p.user == oldName) p.user = updated.name;
         for (auto& s : slots)
             for (auto& p : s.parts)
                 if (p.user == oldName) p.user = updated.name;
@@ -1900,9 +1926,41 @@ void LiveSamplerProcessor::editUserCategory (const juce::String& oldName, const 
 //==============================================================================
 //  Performans
 //==============================================================================
+void LiveSamplerProcessor::applyPartLocks (Performance& p)
+{
+    for (int i = 0; i < kNumParts; ++i)
+        if (partLocked[(size_t) i])
+        {
+            ownParts[(size_t) i] = p.parts[(size_t) i];
+            p.parts[(size_t) i] = lockedParts[(size_t) i];
+        }
+}
+
+void LiveSamplerProcessor::setPartLock (int part, bool on)
+{
+    if (part < 0 || part >= kNumParts || partLocked[(size_t) part] == on) return;
+    if (on)
+    {
+        lockedParts[(size_t) part] = perf.parts[(size_t) part];
+        ownParts[(size_t) part] = currentSlot >= 0 && slots[(size_t) currentSlot].used ? slots[(size_t) currentSlot].parts[(size_t) part] : perf.parts[(size_t) part];
+        partLocked[(size_t) part] = true;
+    }
+    else
+    {
+        partLocked[(size_t) part] = false;
+        perf.parts[(size_t) part] = ownParts[(size_t) part];   // performans dobija nazad svoj part
+    }
+    markSave();
+    rebuildConfig();
+    loadNeededInstruments();
+    sendChangeMessage();
+}
+
 void LiveSamplerProcessor::updatePerformance (const Performance& p)
 {
     perf = p;
+    for (int i = 0; i < kNumParts; ++i)
+        if (partLocked[(size_t) i]) lockedParts[(size_t) i] = perf.parts[(size_t) i];   // izmena zakljucanog parta ostaje u njemu
     for (auto& pp : perf.parts)
         if (pp.user.isNotEmpty() && pp.missingSource.isNotEmpty()) pp.clearMissing();   // zamenjen drugim userom
     perfDirty = true;
@@ -1918,6 +1976,8 @@ void LiveSamplerProcessor::storePerformance (int slot)
         return;
     perf.used = true;
     slots[(size_t) slot] = perf;
+    for (int i = 0; i < kNumParts; ++i)
+        if (partLocked[(size_t) i]) slots[(size_t) slot].parts[(size_t) i] = ownParts[(size_t) i];   // zakljucan part se ne upisuje u performans
     currentSlot = slot;
     perfDirty = false;
     markSave();
@@ -1958,6 +2018,7 @@ void LiveSamplerProcessor::recallPerformance (int slot)
     if (slot < 0 || slot >= kNumPerfSlots || ! slots[(size_t) slot].used)
         return;
     perf = slots[(size_t) slot];
+    applyPartLocks (perf);
     currentSlot = slot;
     currentBank = slot / kPerfPerBank;
     soloMask = 0;     // SOLO vazi samo za performans u kome je ukljucen
@@ -2021,6 +2082,7 @@ void LiveSamplerProcessor::recallScene (int s)
     const auto& sc = perf.scenes[(size_t) s];
     for (int i = 0; i < kNumParts; ++i)
     {
+        if (partLocked[(size_t) i]) continue;   // scena ne dira zakljucan part
         const auto& a = sc.parts[(size_t) i];
         auto& p = perf.parts[(size_t) i];
         p.on = a.on && (p.user.isNotEmpty() || p.isMissing());
@@ -2929,6 +2991,18 @@ void LiveSamplerProcessor::routeNoteOn (int ch, int note, int vel, const EngineC
             continue;
         if (note < part.keyLow || note > part.keyHigh || vel < part.velLow || vel > part.velHigh)
             continue;
+        if (c.lockedMask != 0 && ((c.lockedMask >> p) & 1) == 0)
+        {
+            // zona zakljucanog parta pripada samo njemu
+            bool taken = false;
+            for (int q = 0; q < kNumParts && ! taken; ++q)
+            {
+                if (((c.lockedMask >> q) & 1) == 0 || ! c.parts[(size_t) q].active) continue;
+                const auto& lp = c.parts[(size_t) q].part;
+                taken = note >= lp.keyLow && note <= lp.keyHigh && (lp.midiChannel == 0 || lp.midiChannel == ch + 1);
+            }
+            if (taken) continue;
+        }
 
         const int shift = (part.fixedHarm ? fixedHarmInterval (part, note, root, scale, c) : part.transpose)
                         + part.octave * 12 + c.globalTranspose;

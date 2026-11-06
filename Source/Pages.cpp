@@ -474,6 +474,9 @@ namespace Vector
 void PartStrip::showPartMenu()
 {
     juce::PopupMenu m;
+    m.addItem (400, T ("LOCK PART: stays the same when you change performances, and only this part plays in its key zone"),
+               true, proc.isPartLocked (index));
+    m.addSeparator();
     m.addItem (1, T ("Copy part"));
     m.addItem (2, T ("Paste part"), Clip::part.has_value());
     m.addSeparator();
@@ -506,6 +509,7 @@ void PartStrip::showPartMenu()
     {
         if (safe == nullptr || r == 0) return;
         if (r == 300) { safe->edit ([] (PerfPart& pp) { pp.scaleTune = ! pp.scaleTune; }); return; }
+        if (r == 400) { safe->proc.setPartLock (safe->index, ! safe->proc.isPartLocked (safe->index)); return; }
         if (r == 301 || r == 302) { safe->proc.armKeyLearn (safe->index, r == 301 ? 1 : 2); return; }
         if (r == 200)
         {
@@ -596,6 +600,16 @@ void PartStrip::refresh()
 {
     const auto& p = proc.getPerformance().parts[(size_t) index];
     onButton.setToggleState (p.on, juce::dontSendNotification);
+    {
+        // zakljucan part: "LOCK 16" (ostaje isti u svim performansima)
+        const bool locked = proc.isPartLocked (index);
+        const auto txt = (locked ? juce::String ("LOCK ") : juce::String ("PART ")) + juce::String (index + 1);
+        if (onButton.getButtonText() != txt)
+        {
+            onButton.setButtonText (txt);
+            onButton.setTooltip (locked ? T ("Locked part: it stays when you change performances, and in its key zone only this part plays (part menu to unlock)") : juce::String());
+        }
+    }
     soloButton.setToggleState (proc.isSolo (index), juce::dontSendNotification);
     onButton.setAlpha (proc.anySolo() && ! proc.isSolo (index) ? 0.45f : 1.0f);   // utisan zbog SOLO-a drugog parta
     userButton.setButtonText (p.isMissing() ? juce::String::fromUTF8 ("\xe2\x9a\xa0 ") + p.missingName : p.user.isEmpty() ? T ("— choose user —") : p.user);
