@@ -44,13 +44,14 @@ Patch Patch::makeDefault (int model)
     {
         case Clarinet: p.pressure = 0.55f; p.embouchure = 0.5f; p.throat = 0.45f; p.noise = 0.08f; p.brightness = 0.5f;
                        p.dynFilter = 0.6f; p.harmonic = -0.2f; p.body = 0.5f; p.breathNoise = 0.25f; break;
-        case Sax:      p.pressure = 0.6f;  p.embouchure = 0.45f; p.throat = 0.55f; p.position = 0.25f; p.noise = 0.12f; p.brightness = 0.55f;
-                       p.dynFilter = 0.75f; p.harmonic = 0.25f; p.body = 0.7f; p.breathNoise = 0.35f; break;
-        case Brass:    p.pressure = 0.7f;  p.embouchure = 0.5f; p.throat = 0.6f; p.noise = 0.02f; p.vibDepth = 0.08f; p.brightness = 0.55f;
-                       p.dynFilter = 0.85f; p.harmonic = 0.4f; p.body = 0.6f; p.breathNoise = 0.12f; break;
-        case Flute:    p.pressure = 0.55f; p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.32f; p.noise = 0.25f; p.brightness = 0.55f; p.attack = 0.06f;
-                       p.dynFilter = 0.5f; p.harmonic = -0.3f; p.body = 0.3f; p.breathNoise = 0.6f; break;
-        case Bowed:    p.pressure = 0.6f;  p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.13f; p.noise = 0.0f; p.vibDepth = 0.2f; p.attack = 0.08f; p.release = 0.25f;
+        // sax, truba i flauta: izmereno prema Yamaha VL1 demo snimcima (alikvoti tiho / jako)
+        case Sax:      p.pressure = 0.9f;  p.embouchure = 0.38f; p.throat = 0.9f; p.position = 0.22f; p.noise = 0.12f; p.brightness = 0.2f;
+                       p.dynFilter = 0.88f; p.harmonic = 0.9f; p.body = 0.9f; p.breathNoise = 0.35f; break;
+        case Brass:    p.pressure = 0.95f; p.embouchure = 0.55f; p.throat = 0.66f; p.noise = 0.02f; p.vibDepth = 0.28f; p.brightness = 0.75f;
+                       p.dynFilter = 0.5f; p.harmonic = 0.9f; p.body = 0.9f; p.breathNoise = 0.12f; break;
+        case Flute:    p.pressure = 0.8f;  p.embouchure = 0.55f; p.throat = 0.45f; p.position = 0.32f; p.noise = 0.25f; p.brightness = 0.6f; p.attack = 0.06f;
+                       p.dynFilter = 0.6f; p.harmonic = 0.0f; p.body = 0.1f; p.breathNoise = 0.6f; p.vibDepth = 0.45f; break;
+        case Bowed:    p.pressure = 0.6f;  p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.13f; p.noise = 0.0f; p.vibDepth = 0.4f; p.attack = 0.08f; p.release = 0.25f;
                        p.brightness = 0.6f; p.dynFilter = 0.5f; p.harmonic = 0.0f; p.body = 0.8f; p.breathNoise = 0.15f; break;
         default: break;
     }
@@ -162,7 +163,7 @@ void Voice::updateModifiers (const Patch& p, double hz)
 {
     // dinamicki filter: dah otvara (tiho tamno, jako svetlo), blago prati visinu
     const float b = juce::jlimit (0.0f, 1.2f, env);
-    const double fc = juce::jlimit (150.0, sr * 0.45, 220.0 * std::exp2 (p.brightness * 5.0 + p.dynFilter * 3.5 * (b - 0.5))
+    const double fc = juce::jlimit (150.0, sr * 0.45, 220.0 * std::exp2 (p.brightness * 5.0 + p.dynFilter * 5.0 * (b - 0.5))
                                                      * std::pow (juce::jmax (30.0, hz) / 261.6, 0.4));
     svfG = (float) std::tan (juce::MathConstants<double>::pi * fc / sr);
     svfK = 1.2f;   // malo rezonance na ivici (Q ~0.83)
@@ -172,6 +173,7 @@ void Voice::updateModifiers (const Patch& p, double hz)
     rbj (body1, 0, f1 * sz, 1.6, p.body * 9.0, sr);
     rbj (body2, 0, f2 * sz, 2.2, p.body * 6.0, sr);
     rbj (nzHp, 1, 900.0, 0.7, 0.0, sr);
+    radCoef = (float) (1.0 - std::exp (-juce::MathConstants<double>::twoPi * 900.0 * sz / sr));
     rbj (nzLp, 2, 6000.0 * sz, 0.7, 0.0, sr);
 }
 
@@ -187,7 +189,7 @@ void Voice::start (const Patch& p, State* s, int note, float vel01, double sampl
     attackCoef  = 1.0f - std::exp (-1.0f / (juce::jmax (0.002f, p.attack)  * 0.3f * (float) sr));
     releaseCoef = 1.0f - std::exp (-1.0f / (juce::jmax (0.005f, p.release) * 0.3f * (float) sr));
     filt = filt2 = dcX = dcY = tone = lipY1 = lipY2 = outX = outY = 0.0f;
-    svfIc1 = svfIc2 = hDc = hDcY = softLp = 0.0f;
+    svfIc1 = svfIc2 = hDc = hDcY = softLp = radLp = 0.0f;
     for (auto* b : { &body1, &body2, &nzHp, &nzLp }) { b->z1 = b->z2 = 0.0f; }
     modCount = 0;
     time = 0.0; vibPhase = 0.0; growlPhase = 0.0;
@@ -199,7 +201,6 @@ void Voice::start (const Patch& p, State* s, int note, float vel01, double sampl
 float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch) noexcept
 {
     if (! active || state == nullptr) return 0.0f;
-    if (std::abs (hz - lastHz) > 0.01) setPitch (p, hz);
 
     // dah: koliko jako se duva (0..1)
     float amount = 0.0f;
@@ -219,6 +220,9 @@ float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch)
     vibPhase += juce::MathConstants<double>::twoPi * p.vibRate / sr;
     if (vibPhase > juce::MathConstants<double>::twoPi) vibPhase -= juce::MathConstants<double>::twoPi;
     const float vib = (float) (std::sin (vibPhase) * vibAmt) * p.vibDepth;
+    // vibrato visine (VL1 demo: ~4.5-5.5 Hz, oko 15-25 centi), plus malo daha u ritmu vibrata
+    hz *= std::exp2 ((double) vib * 50.0 / 1200.0);
+    if (std::abs (hz - lastHz) > lastHz * 0.0002 + 0.001) setPitch (p, hz);
     growlPhase += juce::MathConstants<double>::twoPi * 31.0 / sr;
     if (growlPhase > juce::MathConstants<double>::twoPi) growlPhase -= juce::MathConstants<double>::twoPi;
     const float growl = p.growl * (0.6f * (float) std::sin (growlPhase) + 0.4f * noiseSample());
@@ -236,7 +240,7 @@ float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch)
         case Sax:
         {
             // ispod ~0.55 jezicak ne oscilluje: tihi dah krece od praga, jaci ide preko
-            float breath = (p.model == Sax ? 0.56f : 0.5f) * juce::jmin (1.0f, env * 8.0f) + env * (p.model == Sax ? 0.05f + 0.1f * p.pressure : 0.2f + 0.3f * p.pressure);
+            float breath = (p.model == Sax ? 0.59f : 0.5f) * juce::jmin (1.0f, env * 8.0f) + env * (p.model == Sax ? 0.05f + 0.1f * p.pressure : 0.2f + 0.3f * p.pressure);
             breath += breath * (p.noise * 0.25f * n + growl * 0.5f + vib * 0.08f) + excite;
             const float slope = -(0.18f + 0.3f * p.embouchure);
             const float offset = 0.7f;
@@ -349,6 +353,13 @@ float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch)
         svfIc1 = 2.0f * v1 - svfIc1;
         svfIc2 = 2.0f * v2 - svfIc2;
         out = v2;
+    }
+    // zvono zraci visoke tonove jace od niskih (truba, sax): prigusi osnovu ispod ~1 kHz
+    {
+        static constexpr float radiation[NumModels] = { 0.3f, 0.45f, 0.85f, 0.0f, 0.0f };
+        const float k = radiation[p.model] * (0.4f + 0.6f * p.body);
+        radLp += radCoef * (out - radLp);
+        out -= k * radLp;
     }
     // telo / zvono
     out = body2.process (body1.process (out));

@@ -24,8 +24,8 @@ namespace Vl
         float position = 0.5f;      // sax: mesto jezicka, flauta: odnos mlaza, gudalo: mesto gudala
         float noise = 0.15f;        // sum vazduha
         float growl = 0.0f;         // rezanje (growl)
-        float vibDepth = 0.15f;     // vibrato (polutonovi * 0.5)
-        float vibRate = 5.5f;       // Hz
+        float vibDepth = 0.35f;     // vibrato: 1.0 = +-50 centi (VL1 demo: oko 0.3-0.5)
+        float vibRate = 4.8f;       // Hz
         float vibDelay = 0.35f;     // s posle pocetka tona
         float attack = 0.04f;       // s
         float release = 0.12f;      // s
@@ -95,7 +95,7 @@ namespace Vl
         // modifikatori
         Bq body1, body2, nzHp, nzLp;
         float svfIc1 = 0.0f, svfIc2 = 0.0f, svfG = 0.5f, svfK = 1.4f;
-        float hDc = 0.0f, hDcY = 0.0f, softLp = 0.0f;
+        float hDc = 0.0f, hDcY = 0.0f, softLp = 0.0f, radLp = 0.0f, radCoef = 0.1f;
         int modCount = 0;
         void updateModifiers (const Patch& p, double hz);
         double time = 0.0, vibPhase = 0.0, growlPhase = 0.0;
