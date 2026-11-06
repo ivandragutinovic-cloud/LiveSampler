@@ -5401,7 +5401,7 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
     addAndMakeVisible (missingLabel);
 
     help.setText (T ("Click: load. Drag: move (onto a taken slot = swap, onto a list button = other list, down onto a set list button = put it there). WRITE + click: save. Right-click: menu. "
-                     "Orange frame = performance without a category. "
+                     "Orange frame = performance without a category. Yellow triangle = samples missing (resample). "
                      "MIDI: Bank Select (CC0) selects the list, Program Change 0-127 the performance."), juce::dontSendNotification);
     help.setFont (juce::FontOptions (12.0f));
     help.setColour (juce::Label::textColourId, Pal::dim);
@@ -5542,6 +5542,21 @@ void ListsPage::paint (juce::Graphics& g)
                     g.drawText (s.category, textArea.removeFromRight (catW), juce::Justification::centredRight, false);
                 }
             }
+            // trougao upozorenja: neki part ceka zvuk koji jos nije presemplovan (fale semplovi za user)
+            bool missingSamples = false;
+            for (auto& pp : s.parts) missingSamples = missingSamples || pp.isMissing();
+            if (missingSamples)
+            {
+                auto tri = textArea.removeFromLeft (15.0f).withSizeKeepingCentre (13.0f, 12.0f);
+                juce::Path pth;
+                pth.addTriangle (tri.getCentreX(), tri.getY(), tri.getRight(), tri.getBottom(), tri.getX(), tri.getBottom());
+                g.setColour (juce::Colour (0xffffc21a).withAlpha (dimmed ? 0.4f : 1.0f));
+                g.fillPath (pth);
+                g.setColour (juce::Colours::black);
+                g.setFont (juce::FontOptions (9.5f, juce::Font::bold));
+                g.drawText ("!", tri.translated (0.0f, 1.5f), juce::Justification::centred, false);
+                textArea.removeFromLeft (3.0f);
+            }
             g.setFont (nameFont);
             g.setColour (textCol);
             // malo suzi slova pre nego sto odsece ime
@@ -5561,7 +5576,13 @@ juce::String ListsPage::getTooltip()
     if (cell < 0) return {};
     const auto& s = proc.getSlot (proc.getCurrentBank() * kPerfPerBank + cell);
     if (! s.used) return {};
-    return juce::String (cell).paddedLeft ('0', 3) + "  " + s.name + (proc.categoryIndex (s) >= 0 ? "   (" + s.category + ")" : juce::String ("   (" + T ("no category") + ")"));
+    auto tip = juce::String (cell).paddedLeft ('0', 3) + "  " + s.name + (proc.categoryIndex (s) >= 0 ? "   (" + s.category + ")" : juce::String ("   (" + T ("no category") + ")"));
+    juce::StringArray miss;
+    for (int k = 0; k < kNumParts; ++k)
+        if (s.parts[(size_t) k].isMissing()) miss.add ("Part " + juce::String (k + 1) + ": " + s.parts[(size_t) k].missingName);
+    if (! miss.isEmpty())
+        tip << "\n" << juce::String::fromUTF8 ("\xe2\x9a\xa0 ") << T ("Samples missing (resample in the Autosampler):") << "\n" << miss.joinIntoString ("\n");
+    return tip;
 }
 
 juce::Rectangle<float> ListsPage::cellRect (int i) const
