@@ -123,6 +123,36 @@ void MidiLearn::bindButton (juce::Button& b, const juce::String& id)
     if (auto* lb = dynamic_cast<LearnButton*> (&b)) lb->setLearnId (id);
 }
 
+void MidiLearn::addHoldButton (const juce::String& id, int holdMs, std::function<void()> action, juce::Component* forMark)
+{
+    Target t;
+    t.isButton = true;
+    t.trigger = std::move (action);
+    t.holdMs = juce::jmax (100, holdMs);
+    addTarget (id, std::move (t));
+    if (auto* lb = dynamic_cast<LearnButton*> (forMark)) lb->setLearnId (id);
+}
+
+void MidiLearn::checkHolds()
+{
+    if (holdStart.empty()) return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    for (auto it = holdStart.begin(); it != holdStart.end();)
+    {
+        auto t = targets.find (it->first);
+        auto a = assigns.find (it->first);
+        if (t == targets.end() || a == assigns.end()) { it = holdStart.erase (it); continue; }
+        if (now - it->second >= (double) t->second.holdMs)
+        {
+            holdFired.insert ((a->second.type * 16 + a->second.channel) * 128 + a->second.number);
+            auto fn = t->second.trigger;
+            it = holdStart.erase (it);
+            if (fn) fn();
+        }
+        else ++it;
+    }
+}
+
 void MidiLearn::bindCombo (juce::ComboBox& c, const juce::String& id)
 {
     juce::Component::SafePointer<juce::ComboBox> safe (&c);
@@ -231,6 +261,7 @@ void MidiLearn::timerCallback()
 {
     // blink the control that is waiting for MIDI
     if (isLearning() && ++blinkTick % 18 == 0) sendChangeMessage();
+    checkHolds();
     const int ready = fifo.getNumReady();
     if (ready == 0) return;
     int s1, n1, s2, n2;
@@ -255,9 +286,13 @@ void MidiLearn::timerCallback()
             a.type = e.type;
             a.channel = e.channel;
             a.number = e.number;
-            // one control per CC / key: the new one takes it over
+            // one control per CC / key: the new one takes it over. Izuzetak: hold dugme (drzi se dugo) i obicno dugme
+            // mogu da dele isti taster (kratko = obicno, dugo = hold)
+            auto isHold = [this] (const juce::String& id) { auto t = targets.find (id); return t != targets.end() && t->second.holdMs > 0; };
+            const bool newHold = isHold (learnTargetId);
             for (auto it = assigns.begin(); it != assigns.end();)
-                if (it->second.type == a.type && it->second.channel == a.channel && it->second.number == a.number) it = assigns.erase (it);
+                if (it->second.type == a.type && it->second.channel == a.channel && it->second.number == a.number
+                    && (isHold (it->first) == newHold || it->first == learnTargetId)) it = assigns.erase (it);
                 else ++it;
             assigns[learnTargetId] = a;
             learnTargetId = {};
@@ -304,6 +339,34 @@ void MidiLearn::dispatch (int type, int channel, int number, int value)
 {
     const int key = (type * 16 + channel) * 128 + number;
     const double now = juce::Time::getMillisecondCounterHiRes();
+    const bool latching = type == 1 && isLatching && isLatching (channel, number);
+    // hold dugmad na ovom tasteru (ne rade za taster koji drzi stanje: on se ne moze drzati)
+    int holdMs = 0;
+    if (! latching)
+        for (auto& kv : assigns)
+            if (kv.second.type == type && kv.second.channel == channel && kv.second.number == number)
+                if (auto t = targets.find (kv.first); t != targets.end() && t->second.holdMs > 0)
+                {
+                    holdMs = holdMs == 0 ? t->second.holdMs : juce::jmin (holdMs, t->second.holdMs);
+                    if (value >= 64) holdStart[kv.first] = now; else holdStart.erase (kv.first);
+                }
+    // obicna dugmad koja dele taster sa hold dugmetom: kratak pritisak se okida pri pustanju
+    bool shortPress = false;
+    if (holdMs > 0)
+    {
+        if (value >= 64)
+        {
+            // dupla poruka (isti pritisak stigao dvaput) ne pocinje novo merenje
+            if (deferStart.count (key) == 0) { deferStart[key] = now; holdFired.erase (key); }
+            return;
+        }
+        const auto d = deferStart.find (key);
+        if (d == deferStart.end()) return;
+        shortPress = holdFired.count (key) == 0 && now - d->second < (double) holdMs;
+        deferStart.erase (d);
+        holdFired.erase (key);
+        if (! shortPress) return;
+    }
     for (auto& kv : assigns)
     {
         const auto& a = kv.second;
@@ -311,6 +374,14 @@ void MidiLearn::dispatch (int type, int channel, int number, int value)
         auto it = targets.find (kv.first);
         if (it == targets.end()) continue;
         auto& t = it->second;
+        if (t.holdMs > 0) continue;   // hold dugme se okida u checkHolds
+        if (shortPress && ! t.isButton) continue;
+        if (shortPress && t.isButton)
+        {
+            if (t.trigger) t.trigger();
+            else if (t.getState && t.setState) t.setState (! t.getState());
+            continue;
+        }
         if (! t.isButton)
         {
             if (type == 1 && t.setNorm) t.setNorm ((float) value / 127.0f);

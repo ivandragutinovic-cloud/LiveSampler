@@ -562,6 +562,12 @@ private:
     juce::TextButton resetDrops;
     void timerCallback() override;
     std::unique_ptr<juce::FileChooser> chooser;
+    // MREZA miniPC-a: KUCA.bat / SVIRKA.bat preko zadatka u Task Scheduler-u (admin), dugme ili MIDI (dva pritiska)
+    LearnButton netHome, netGig, netSetup, powerOff;
+    juce::Label netLabel;
+    void netPress (int which, bool fromMidi);
+    void shutdownPc (bool fromMidi);
+    void netSetupMenu();
 };
 
 //==============================================================================

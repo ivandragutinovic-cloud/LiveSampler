@@ -1,5 +1,6 @@
 #pragma once
 #include <JuceHeader.h>
+#include <set>
 
 //==============================================================================
 //  MIDI Learn: any knob or button can be assigned a CC (knobs and buttons)
@@ -23,6 +24,7 @@ public:
         std::function<bool()> getState;          // buttons
         std::function<void (bool)> setState;     // buttons
         std::function<void()> trigger;           // buttons without on/off state (one shot)
+        int holdMs = 0;                          // > 0: okida se tek kad se taster drzi toliko (moze da deli CC sa obicnim dugmetom)
     };
 
     struct Assign
@@ -44,6 +46,8 @@ public:
     void bindSlider (juce::Slider& s, const juce::String& id);
     void bindButton (juce::Button& b, const juce::String& id);
     void bindCombo (juce::ComboBox& c, const juce::String& id);
+    // dugme koje se preko MIDI-ja okida samo dugim drzanjem; isti taster kratko radi ono sto mu je inace naucen
+    void addHoldButton (const juce::String& id, int holdMs, std::function<void()> action, juce::Component* forMark = nullptr);
 
     // UI
     // extraItems: dodatne stavke (id >= 100) ispod MIDI Learn-a, npr. podesavanja tog dugmeta
@@ -92,6 +96,10 @@ private:
     Event events[1024];
 
     std::map<int, double> lastPress;
+    std::map<juce::String, double> holdStart;   // drzanje u toku (hold dugme)
+    std::map<int, double> deferStart;           // obicno dugme koje deli taster sa hold dugmetom: ceka pustanje
+    std::set<int> holdFired;
+    void checkHolds();
     std::map<int, double> lastDup;
     int blinkTick = 0;     // key -> ms of last "press" (momentary buttons)
 };

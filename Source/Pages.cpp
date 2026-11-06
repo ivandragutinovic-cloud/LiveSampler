@@ -4233,8 +4233,88 @@ void EffectsPage::resized()
 //==============================================================================
 //  SettingsPage
 //==============================================================================
+#if JUCE_WINDOWS
+extern "C" __declspec(dllimport) void* __stdcall ShellExecuteW (void*, const wchar_t*, const wchar_t*, const wchar_t*, const wchar_t*, int);
+#pragma comment (lib, "shell32.lib")
+#endif
+
+namespace NetSwitch
+{
+    const char* taskName (int which) { return which == 0 ? "Pikaso KUCA" : "Pikaso SVIRKA"; }
+    juce::File configFile() { return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("LiveSampler").getChildFile ("network.txt"); }
+    juce::File script (int which)
+    {
+        const auto lines = juce::StringArray::fromLines (configFile().loadFileAsString());
+        return lines.size() > which && lines[which].trim().isNotEmpty() ? juce::File (lines[which].trim()) : juce::File();
+    }
+    void setScript (int which, const juce::File& f)
+    {
+        auto lines = juce::StringArray::fromLines (configFile().loadFileAsString());
+        while (lines.size() < 2) lines.add ({});
+        lines.set (which, f.getFullPathName());
+        configFile().getParentDirectory().createDirectory();
+        configFile().replaceWithText (lines.joinIntoString ("\n"));
+    }
+    // napravi oba zadatka (trazi administratora jednom): pokrecu se kasnije bez pitanja
+    bool createTasks (juce::String& err)
+    {
+       #if JUCE_WINDOWS
+        juce::String cmd = "/c";
+        for (int w = 0; w < 2; ++w)
+        {
+            const auto f = script (w);
+            if (! f.existsAsFile()) continue;
+            cmd << (cmd == "/c" ? " " : " & ") << "schtasks /Create /F /TN \"" << taskName (w) << "\" /SC ONCE /ST 00:00 /RL HIGHEST /TR \"cmd /c \\\"" << f.getFullPathName() << "\\\"\"";
+        }
+        if (cmd == "/c") { err = T ("Choose KUCA.bat / SVIRKA.bat first."); return false; }
+        const auto r = (juce::pointer_sized_int) ShellExecuteW (nullptr, L"runas", L"cmd.exe", cmd.toWideCharPointer(), nullptr, 0 /* SW_HIDE */);
+        if (r <= 32) { err = T ("Windows did not allow it (administrator was not confirmed)."); return false; }
+        return true;
+       #else
+        err = "Windows only"; return false;
+       #endif
+    }
+    bool run (int which, juce::String& err)
+    {
+        juce::ChildProcess cp;
+        if (! cp.start (juce::StringArray { "schtasks", "/Run", "/TN", taskName (which) })) { err = "schtasks"; return false; }
+        const auto out = cp.readAllProcessOutput();
+        if (cp.getExitCode() != 0) { err = out.trim().isNotEmpty() ? out.trim() : T ("Task not found: click SETUP first."); return false; }
+        return true;
+    }
+}
+
 SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
 {
+    netLabel.setText (T ("NETWORK (mini PC)"), juce::dontSendNotification);
+    netLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    netLabel.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (netLabel);
+    const juce::String holdTip = T ("MIDI Learn (right click): works only when the key / button is HELD 3 s. "
+                                    "The same key can also be learned to another button: a short press does that, a long hold does this. "
+                                    "Needs a momentary button (sends 127 on press and 0 on release).");
+    netHome.setButtonText (T ("HOME WI-FI (KUCA)"));
+    netHome.setTooltip (T ("Runs KUCA.bat: hotspot off, connect to the home Wi-Fi \"Ivan\". The iPad disconnects.") + "\n" + holdTip);
+    netHome.onClick = [this] { netPress (0, false); };
+    netGig.setButtonText (T ("GIG HOTSPOT (SVIRKA)"));
+    netGig.setTooltip (T ("Runs SVIRKA.bat: leave the home Wi-Fi and turn the hotspot on for the iPad.") + "\n" + holdTip);
+    netGig.onClick = [this] { netPress (1, false); };
+    netSetup.setButtonText (T ("SETUP..."));
+    netSetup.setTooltip (T ("Choose where KUCA.bat and SVIRKA.bat are and create the Windows tasks (asks for administrator once)"));
+    netSetup.onClick = [this] { netSetupMenu(); };
+    powerOff.setButtonText (T ("SHUT DOWN PC"));
+    powerOff.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff7a1f1f));
+    powerOff.setTooltip (T ("Saves everything and shuts down the mini PC (after 10 s; a message lets you cancel).") + "\n" + holdTip);
+    powerOff.onClick = [this] { shutdownPc (false); };
+    for (auto* b : { &netHome, &netGig, &netSetup, &powerOff }) addAndMakeVisible (b);
+    {
+        auto& ml = MidiLearn::get();
+        juce::Component::SafePointer<SettingsPage> safe (this);
+        ml.addHoldButton ("settings.net.home", 3000, [safe] { if (safe != nullptr) safe->netPress (0, true); }, &netHome);
+        ml.addHoldButton ("settings.net.gig", 3000, [safe] { if (safe != nullptr) safe->netPress (1, true); }, &netGig);
+        ml.addHoldButton ("settings.power.off", 3000, [safe] { if (safe != nullptr) safe->shutdownPc (true); }, &powerOff);
+    }
+
     folders.setModel (this);
     folders.setRowHeight (30);
     folders.setColour (juce::ListBox::outlineColourId, Pal::panelHi);
@@ -4445,8 +4525,91 @@ void SettingsPage::resized()
         resetDrops.setBounds (row.removeFromRight (140).withHeight (28));
         audioLabel.setBounds (row);
     }
-    r.removeFromTop (12);
+    r.removeFromTop (8);
+    {
+        auto row = r.removeFromTop (34);
+        netLabel.setBounds (row.removeFromLeft (150));
+        netHome.setBounds (row.removeFromLeft (190).reduced (0, 2));
+        row.removeFromLeft (8);
+        netGig.setBounds (row.removeFromLeft (210).reduced (0, 2));
+        row.removeFromLeft (8);
+        netSetup.setBounds (row.removeFromLeft (110).reduced (0, 2));
+        row.removeFromLeft (24);
+        powerOff.setBounds (row.removeFromLeft (150).reduced (0, 2));
+    }
+    r.removeFromTop (8);
     info.setBounds (r);
+}
+
+void SettingsPage::netPress (int which, bool fromMidi)
+{
+    auto go = [safe = juce::Component::SafePointer<SettingsPage> (this), which]
+    {
+        if (safe == nullptr) return;
+        safe->proc.saveNow();
+        juce::String err;
+        if (! NetSwitch::run (which, err))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, T ("NETWORK"), err);
+        else
+            safe->info.setText (which == 0 ? T ("KUCA.bat started: in ~30 s connect from the home PC with Remote Desktop to pikaso-minipc")
+                                           : T ("SVIRKA.bat started: hotspot is turning on"), juce::dontSendNotification);
+    };
+    if (fromMidi) { go(); return; }   // drzan 3 s: to je potvrda
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("NETWORK"),
+        which == 0 ? T ("Switch the mini PC to the home Wi-Fi? The hotspot turns off and the iPad disconnects.")
+                   : T ("Turn on the gig hotspot? The mini PC leaves the home Wi-Fi."),
+        T ("Yes"), T ("Cancel"), nullptr, juce::ModalCallbackFunction::create ([go] (int ok) { if (ok != 0) go(); }));
+}
+
+void SettingsPage::shutdownPc (bool fromMidi)
+{
+    auto go = [safe = juce::Component::SafePointer<SettingsPage> (this)]
+    {
+        if (safe == nullptr) return;
+        safe->proc.saveNow();
+       #if JUCE_WINDOWS
+        juce::ChildProcess cp;
+        cp.start (juce::StringArray { "shutdown", "/s", "/t", "10", "/c", "Pikaso Workstation: shutting down in 10 s (cancel: shutdown /a)" });
+       #endif
+        safe->info.setText (T ("Shutting down in 10 s. To cancel: Win+R, type  shutdown /a"), juce::dontSendNotification);
+    };
+    if (fromMidi) { go(); return; }
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, T ("SHUT DOWN PC"),
+        T ("Save everything and shut down the mini PC?"), T ("Shut down"), T ("Cancel"), nullptr,
+        juce::ModalCallbackFunction::create ([go] (int ok) { if (ok != 0) go(); }));
+}
+
+void SettingsPage::netSetupMenu()
+{
+    juce::PopupMenu m;
+    const auto k = NetSwitch::script (0), g = NetSwitch::script (1);
+    m.addItem (1, T ("Choose KUCA.bat...") + (k.existsAsFile() ? "  (" + k.getFullPathName() + ")" : juce::String()));
+    m.addItem (2, T ("Choose SVIRKA.bat...") + (g.existsAsFile() ? "  (" + g.getFullPathName() + ")" : juce::String()));
+    m.addSeparator();
+    m.addItem (3, T ("Create Windows tasks (administrator)"), k.existsAsFile() || g.existsAsFile());
+    juce::Component::SafePointer<SettingsPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&netSetup), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        if (r == 3)
+        {
+            juce::String err;
+            if (! NetSwitch::createTasks (err))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, T ("NETWORK"), err);
+            else
+                safe->info.setText (T ("Tasks created: HOME / GIG buttons are ready (press twice). You can MIDI Learn them."), juce::dontSendNotification);
+            return;
+        }
+        const int which = r - 1;
+        safe->chooser = std::make_unique<juce::FileChooser> (which == 0 ? T ("Choose KUCA.bat") : T ("Choose SVIRKA.bat"),
+                                                             juce::File::getSpecialLocation (juce::File::userDesktopDirectory), "*.bat");
+        safe->chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                                    [safe, which] (const juce::FileChooser& fc)
+                                    {
+                                        if (safe != nullptr && fc.getResult().existsAsFile())
+                                            NetSwitch::setScript (which, fc.getResult());
+                                    });
+    });
 }
 
 //==============================================================================
