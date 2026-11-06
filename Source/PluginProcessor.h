@@ -259,6 +259,8 @@ public:
     int getAuditionUser() const { return auditionUser; }
     bool getShowKeyRows() const { return showKeyRows; }        // PERFORMANCE: redovi Low/High/Vel/Channel na partovima
     void setShowKeyRows (bool b) { showKeyRows = b; markSave(); sendChangeMessage(); }
+    bool getShowActiveOnly() const { return showActiveOnly; }  // PERFORMANCE: prikazi samo ukljucene partove
+    void setShowActiveOnly (bool b) { showActiveOnly = b; markSave(); sendChangeMessage(); }
     bool isDiskStreaming() const { return SampleLibrary::streamingEnabled.load(); }
     void setDiskStreaming (bool on);       // ponovo ucita sve semplove u RAM-u
     int getMaxPolyphony() const { return maxPolyphony; }
@@ -512,6 +514,7 @@ private:          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mor
     std::atomic<int> dropouts { 0 };
     int maxPolyphony = 128;
     bool showKeyRows = false;
+    bool showActiveOnly = false;
     bool gigMode = false;
     std::atomic<int> keyLearnMode { 0 }, keyLearnPart { 0 }, keyLearnFirst { -1 }, keyLearnNote { -1 };
     GlobalEqSettings globalEq;

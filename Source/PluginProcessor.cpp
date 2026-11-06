@@ -95,6 +95,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("maxPolyphony", maxPolyphony);
     root.setAttribute ("gigMode", gigMode);
     root.setAttribute ("showKeyRows", showKeyRows);
+    root.setAttribute ("showActiveOnly", showActiveOnly);
     root.setAttribute ("midiInputs", wantedMidiInputs.joinIntoString ("|"));
     root.setAttribute ("diskStreaming", SampleLibrary::streamingEnabled.load());
     root.setAttribute ("currentSlot", currentSlot);
@@ -215,6 +216,7 @@ void LiveSamplerProcessor::loadData()
     maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
     gigMode = xml->getBoolAttribute ("gigMode", false);
     showKeyRows = xml->getBoolAttribute ("showKeyRows", false);
+    showActiveOnly = xml->getBoolAttribute ("showActiveOnly", false);
     wantedMidiInputs = juce::StringArray::fromTokens (xml->getStringAttribute ("midiInputs"), "|", "");
     wantedMidiInputs.removeEmptyStrings();
     if (! xml->hasAttribute ("midiInputs")) wantedMidiInputs.add ("Pikaso-miniPC");   // dugmad kategorija iz Pikaso Stage

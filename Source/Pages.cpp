@@ -1316,6 +1316,15 @@ PerformancePage::PerformancePage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     keysButton.setTooltip (T ("Show Low / High key, velocity and MIDI channel on every part. Key ranges can also be dragged in the bar below, or set by playing (part menu)."));
     keysButton.onClick = [this] { proc.setShowKeyRows (keysButton.getToggleState()); for (auto* s : strips) s->resized(); };
     addAndMakeVisible (keysButton);
+
+    activeButton.setButtonText (T ("ACTIVE"));
+    activeButton.setClickingTogglesState (true);
+    activeButton.setColour (juce::TextButton::buttonOnColourId, Pal::accent);
+    activeButton.setTooltip (T ("Show only the parts that are on (with a user), side by side on one page. Click again to see all 16 parts."));
+    activeButton.setToggleState (p.getShowActiveOnly(), juce::dontSendNotification);
+    activeButton.onClick = [this] { proc.setShowActiveOnly (activeButton.getToggleState()); page = 0; resized(); refresh(); };
+    addAndMakeVisible (activeButton);
+    MidiLearn::get().bindButton (activeButton, "perf.activeonly");
     styleLabel (nameLabel, T ("PERFORMANCE NAME"), 12.5f);
     addAndMakeVisible (nameLabel);
 
@@ -1391,9 +1400,23 @@ void PerformancePage::updateVectorButtons()
     vectorCcY.setButtonText (learnAxis == 1 ? T ("move...") : "Y: CC " + juce::String (proc.getVectorCc (1)));
 }
 
+std::vector<int> PerformancePage::shownParts() const
+{
+    std::vector<int> v;
+    const auto& perf = proc.getPerformance();
+    if (proc.getShowActiveOnly())
+        for (int i = 0; i < kNumParts; ++i)
+            if (perf.parts[(size_t) i].on && perf.parts[(size_t) i].user.isNotEmpty()) v.push_back (i);
+    if (v.empty())   // nijedan ukljucen (ili prikaz svih): svih 16
+        for (int i = 0; i < kNumParts; ++i) v.push_back (i);
+    return v;
+}
+
 void PerformancePage::refresh()
 {
     sceneBar.refresh();
+    activeButton.setToggleState (proc.getShowActiveOnly(), juce::dontSendNotification);
+    if (shownParts() != lastShown) resized();   // ukljucen / iskljucen part u ACTIVE prikazu
     if (keysButton.getToggleState() != proc.getShowKeyRows())
     {
         keysButton.setToggleState (proc.getShowKeyRows(), juce::dontSendNotification);
@@ -1405,6 +1428,7 @@ void PerformancePage::refresh()
         s->refresh();
     updateVectorButtons();
     if (vectorPad != nullptr) vectorPad->repaint();
+    const bool activeView = proc.getShowActiveOnly() && (int) lastShown.size() < kNumParts;
     for (int b = 0; b < 2; ++b)
     {
         // oznaci stranu na kojoj ima ukljucenih delova
@@ -1412,7 +1436,10 @@ void PerformancePage::refresh()
         for (int i = b * 8; i < b * 8 + 8; ++i)
             any = any || (proc.getPerformance().parts[(size_t) i].on && proc.getPerformance().parts[(size_t) i].user.isNotEmpty());
         pageButtons[b].setToggleState (b == page, juce::dontSendNotification);
-        pageButtons[b].setButtonText (juce::String (b == 0 ? "PARTS 1-8" : "PARTS 9-16") + (any ? juce::String::fromUTF8 (" \xe2\x97\x8f") : juce::String()));
+        if (activeView)
+            pageButtons[b].setButtonText (b == 0 ? T ("ACTIVE 1-8") : T ("ACTIVE 9-16"));
+        else
+            pageButtons[b].setButtonText (juce::String (b == 0 ? "PARTS 1-8" : "PARTS 9-16") + (any ? juce::String::fromUTF8 (" \xe2\x97\x8f") : juce::String()));
     }
     ranges.repaint();
 }
@@ -1424,12 +1451,13 @@ void PerformancePage::resized()
     auto r = getLocalBounds();
     auto top = r.removeFromTop (32);
     nameLabel.setBounds (top.removeFromLeft (140));
-    nameEdit.setBounds (top.removeFromLeft (300).reduced (0, 2));
+    nameEdit.setBounds (top.removeFromLeft (juce::jlimit (160, 300, top.getWidth() - 400 - 450)).reduced (0, 2));
     top.removeFromLeft (6);
     saveButton.setBounds (top.removeFromLeft (90).reduced (1, 2));
-    pageButtons[1].setBounds (top.removeFromRight (130).reduced (2, 2));
-    pageButtons[0].setBounds (top.removeFromRight (130).reduced (2, 2));
-    keysButton.setBounds (top.removeFromRight (110).reduced (2, 2));
+    pageButtons[1].setBounds (top.removeFromRight (110).reduced (2, 2));
+    pageButtons[0].setBounds (top.removeFromRight (110).reduced (2, 2));
+    keysButton.setBounds (top.removeFromRight (100).reduced (2, 2));
+    activeButton.setBounds (top.removeFromRight (80).reduced (2, 2));
     top.removeFromLeft (12);
     vectorOn.setBounds (top.removeFromLeft (70).reduced (1, 2));
     vectorEqual.setBounds (top.removeFromLeft (64).reduced (1, 2));
@@ -1441,22 +1469,26 @@ void PerformancePage::resized()
 
     // sirok ekran (ceo ekran): svih 16 delova odjednom
     const bool all16 = r.getWidth() >= 1440;
-    pageButtons[0].setVisible (! all16);
-    pageButtons[1].setVisible (! all16);
-    if (all16) page = 0;
+    const auto shown = shownParts();
+    lastShown = shown;
+    const bool fitsOne = all16 || (int) shown.size() <= 8;
+    pageButtons[0].setVisible (! fitsOne);
+    pageButtons[1].setVisible (! fitsOne);
+    if (fitsOne) page = 0;
 
     r.removeFromTop (4);
     ranges.setBounds (r.removeFromBottom (all16 ? 50 : 78));
     r.removeFromBottom (6);
 
+    // ACTIVE prikaz: samo ukljuceni partovi, jedan do drugog (do 8 na strani, ili 16 na sirokom ekranu)
     const int perPage = all16 ? 16 : 8, gap = all16 ? 4 : 6;
     const int w = (r.getWidth() - gap * (perPage - 1)) / perPage;
-    for (int i = 0; i < strips.size(); ++i)
+    for (auto* s : strips) s->setVisible (false);
+    for (size_t k = 0; k < shown.size(); ++k)
     {
-        auto* s = strips[i];
-        const bool shown = i / perPage == page;
-        s->setVisible (shown);
-        if (! shown) continue;
+        if ((int) k / perPage != page) continue;
+        auto* s = strips[shown[k]];
+        s->setVisible (true);
         s->setBounds (r.removeFromLeft (w));
         r.removeFromLeft (gap);
     }

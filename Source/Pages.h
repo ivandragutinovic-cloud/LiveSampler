@@ -258,8 +258,10 @@ private:
     juce::OwnedArray<PartStrip> strips;
     KeyRangeView ranges;
     SceneBar sceneBar { proc, false };
-    LearnButton pageButtons[2], keysButton;
-    int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16
+    LearnButton pageButtons[2], keysButton, activeButton;
+    int page = 0;   // 0 = delovi 1-8, 1 = delovi 9-16 (u ACTIVE prikazu: prvih / drugih 8 ukljucenih)
+    std::vector<int> shownParts() const;   // koji partovi se vide (svi, ili samo ukljuceni)
+    std::vector<int> lastShown;
     // vector joystick (kao na Kronosu): ukljuci, equal power, XY polje, CC za X i Y (LEARN)
     std::unique_ptr<juce::Component> vectorPad;
     LearnButton vectorOn, vectorEqual, vectorCcX, vectorCcY, saveButton;
