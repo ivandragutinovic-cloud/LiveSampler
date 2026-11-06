@@ -2978,6 +2978,11 @@ namespace
         { "Vib delay",  &Vl::Patch::vibDelay,   0, 2, 0.35, 1, "Vibrato starts after this time" },
         { "Attack",     &Vl::Patch::attack,  0.002, 0.5, 0.04, 1, "How fast the breath comes in" },
         { "Release",    &Vl::Patch::release, 0.01, 2.0, 0.12, 1, "How fast the breath goes out after the key" },
+        { "Dyn filter", &Vl::Patch::dynFilter,  0, 1, 0.6, 0, "How much the breath opens the tone: soft = dark, strong = bright (the main 'alive' effect)" },
+        { "Harmonics",  &Vl::Patch::harmonic,  -1, 1, 0.0, 4, "Harmonic enhancer: left = round, velvety; right = edgy, brassy" },
+        { "Body",       &Vl::Patch::body,       0, 1, 0.6, 0, "Resonance of the instrument body / bell" },
+        { "Size",       &Vl::Patch::size,       0, 1, 0.5, 0, "Instrument size: left = small (soprano), right = big (tenor, baritone)" },
+        { "Breath air", &Vl::Patch::breathNoise, 0, 1, 0.3, 0, "Audible air around the tone (follows the breath)" },
     };
 }
 
@@ -3003,7 +3008,8 @@ VlEditor::VlEditor (LiveSamplerProcessor& p, std::function<int()> ui) : proc (p)
 
     for (auto& d : vlKnobs)
     {
-        std::function<juce::String (double)> fmt = d.fmt == 1 ? UI::timeText : d.fmt == 2 ? UI::hzText : d.fmt == 3 ? UI::dbText : UI::pctText;
+        std::function<juce::String (double)> fmt = d.fmt == 1 ? UI::timeText : d.fmt == 2 ? UI::hzText : d.fmt == 3 ? UI::dbText
+            : d.fmt == 4 ? std::function<juce::String (double)> ([] (double v) { return (v > 0.005 ? "+" : "") + juce::String (juce::roundToInt (v * 100)); }) : UI::pctText;
         const double centre = d.fmt == 1 ? juce::jmin (d.hi, d.lo + (d.hi - d.lo) * 0.15) : (d.lo + d.hi) * 0.5;
         auto* k = knobs.add (new ValueKnob (d.name, Pal::accent, d.lo, d.hi, centre, fmt, d.def));
         k->slider.setTooltip (T (d.tip));
@@ -3068,14 +3074,14 @@ void VlEditor::resized()
     transLabel.setBounds (top.removeFromLeft (84));
     transpose.setBounds (top.removeFromLeft (120).reduced (0, 2));
     r.removeFromTop (8);
-    const int perRow = 8, kw = juce::jmin (96, r.getWidth() / perRow);
+    const int perRow = 9, kw = juce::jmin (96, r.getWidth() / perRow);
     for (int row = 0; row < 2; ++row)
     {
         auto line = r.removeFromTop (86);
         for (int i = row * perRow; i < juce::jmin (knobs.size(), (row + 1) * perRow); ++i)
             knobs[i]->setBounds (line.removeFromLeft (kw));
-        if (row == 1) hint.setBounds (line.reduced (12, 4));
     }
+    hint.setBounds (r.reduced (4, 2));
 }
 
 Fm::Patch FmEditor::current() const
@@ -3804,7 +3810,7 @@ void UserPage::resized()
     }
     if (userIndex >= 0 && userIndex < proc.getNumUsers() && proc.getUser (userIndex).isVl())
     {
-        vl.setBounds (r.removeFromTop (250));
+        vl.setBounds (r.removeFromTop (262));
         r.removeFromTop (6);
         sound.setBounds (r);
         return;

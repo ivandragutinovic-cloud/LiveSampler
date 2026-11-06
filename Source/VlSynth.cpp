@@ -10,7 +10,8 @@ juce::StringArray modelNames()   { return { "Clarinet (reed)", "Saxophone (reed,
 juce::StringArray sourceNames()  { return { "Velocity", "Velocity + aftertouch", "Breath controller (CC2)", "Expression (CC11)", "Mod wheel" }; }
 
 #define VL_FIELDS X(model) X(source) X(pressure) X(embouchure) X(throat) X(position) X(noise) X(growl) \
-                  X(vibDepth) X(vibRate) X(vibDelay) X(attack) X(release) X(brightness) X(levelDb) X(transpose)
+                  X(vibDepth) X(vibRate) X(vibDelay) X(attack) X(release) X(brightness) X(levelDb) X(transpose) \
+                  X(dynFilter) X(harmonic) X(body) X(size) X(breathNoise)
 
 juce::String Patch::toString() const
 {
@@ -41,11 +42,16 @@ Patch Patch::makeDefault (int model)
     p.model = juce::jlimit (0, NumModels - 1, model);
     switch (p.model)
     {
-        case Clarinet: p.pressure = 0.55f; p.embouchure = 0.5f; p.throat = 0.45f; p.noise = 0.08f; p.brightness = 0.55f; break;
-        case Sax:      p.pressure = 0.6f;  p.embouchure = 0.45f; p.throat = 0.55f; p.position = 0.25f; p.noise = 0.12f; p.brightness = 0.65f; break;
-        case Brass:    p.pressure = 0.7f;  p.embouchure = 0.5f; p.throat = 0.6f; p.noise = 0.02f; p.vibDepth = 0.08f; p.brightness = 0.7f; break;
-        case Flute:    p.pressure = 0.55f; p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.32f; p.noise = 0.25f; p.brightness = 0.6f; p.attack = 0.06f; break;
-        case Bowed:    p.pressure = 0.6f;  p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.13f; p.noise = 0.0f; p.vibDepth = 0.2f; p.attack = 0.08f; p.release = 0.25f; break;
+        case Clarinet: p.pressure = 0.55f; p.embouchure = 0.5f; p.throat = 0.45f; p.noise = 0.08f; p.brightness = 0.5f;
+                       p.dynFilter = 0.6f; p.harmonic = -0.2f; p.body = 0.5f; p.breathNoise = 0.25f; break;
+        case Sax:      p.pressure = 0.6f;  p.embouchure = 0.45f; p.throat = 0.55f; p.position = 0.25f; p.noise = 0.12f; p.brightness = 0.55f;
+                       p.dynFilter = 0.75f; p.harmonic = 0.25f; p.body = 0.7f; p.breathNoise = 0.35f; break;
+        case Brass:    p.pressure = 0.7f;  p.embouchure = 0.5f; p.throat = 0.6f; p.noise = 0.02f; p.vibDepth = 0.08f; p.brightness = 0.55f;
+                       p.dynFilter = 0.85f; p.harmonic = 0.4f; p.body = 0.6f; p.breathNoise = 0.12f; break;
+        case Flute:    p.pressure = 0.55f; p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.32f; p.noise = 0.25f; p.brightness = 0.55f; p.attack = 0.06f;
+                       p.dynFilter = 0.5f; p.harmonic = -0.3f; p.body = 0.3f; p.breathNoise = 0.6f; break;
+        case Bowed:    p.pressure = 0.6f;  p.embouchure = 0.5f; p.throat = 0.5f; p.position = 0.13f; p.noise = 0.0f; p.vibDepth = 0.2f; p.attack = 0.08f; p.release = 0.25f;
+                       p.brightness = 0.6f; p.dynFilter = 0.5f; p.harmonic = 0.0f; p.body = 0.8f; p.breathNoise = 0.15f; break;
         default: break;
     }
     return p;
@@ -120,6 +126,55 @@ void Voice::setPitch (const Patch& p, double hz)
     lastHz = hz;
 }
 
+// RBJ biquad (peak / highpass / lowpass)
+static void rbj (Voice::Bq& q, int type, double f, double Q, double gainDb, double sr)
+{
+    f = juce::jlimit (20.0, sr * 0.45, f);
+    const double w = juce::MathConstants<double>::twoPi * f / sr, cw = std::cos (w), sw = std::sin (w), al = sw / (2.0 * Q);
+    double b0, b1, b2, a0, a1, a2;
+    if (type == 0)   // peak
+    {
+        const double A = std::pow (10.0, gainDb / 40.0);
+        b0 = 1 + al * A; b1 = -2 * cw; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cw; a2 = 1 - al / A;
+    }
+    else if (type == 1)   // highpass
+    { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al; }
+    else                  // lowpass
+    { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = (1 - cw) / 2; a0 = 1 + al; a1 = -2 * cw; a2 = 1 - al; }
+    q.b0 = (float) (b0 / a0); q.b1 = (float) (b1 / a0); q.b2 = (float) (b2 / a0); q.a1 = (float) (a1 / a0); q.a2 = (float) (a2 / a0);
+}
+
+// telo instrumenta: dve rezonance po modelu (Hz za srednju velicinu)
+static void bodyFormants (int model, double& f1, double& f2)
+{
+    switch (model)
+    {
+        case Clarinet: f1 = 1500; f2 = 3100; break;
+        case Sax:      f1 = 560;  f2 = 1550; break;   // alt; size pomera ka sopranu / tenoru / baritonu
+        case Brass:    f1 = 1250; f2 = 2900; break;
+        case Flute:    f1 = 900;  f2 = 2300; break;
+        case Bowed:    f1 = 290;  f2 = 3000; break;   // vazdusna rezonanca tela + "most"
+        default:       f1 = 800;  f2 = 2500; break;
+    }
+}
+
+void Voice::updateModifiers (const Patch& p, double hz)
+{
+    // dinamicki filter: dah otvara (tiho tamno, jako svetlo), blago prati visinu
+    const float b = juce::jlimit (0.0f, 1.2f, env);
+    const double fc = juce::jlimit (150.0, sr * 0.45, 220.0 * std::exp2 (p.brightness * 5.0 + p.dynFilter * 3.5 * (b - 0.5))
+                                                     * std::pow (juce::jmax (30.0, hz) / 261.6, 0.4));
+    svfG = (float) std::tan (juce::MathConstants<double>::pi * fc / sr);
+    svfK = 1.2f;   // malo rezonance na ivici (Q ~0.83)
+    const double sz = std::exp2 ((0.5 - p.size) * 1.4);
+    double f1, f2;
+    bodyFormants (p.model, f1, f2);
+    rbj (body1, 0, f1 * sz, 1.6, p.body * 9.0, sr);
+    rbj (body2, 0, f2 * sz, 2.2, p.body * 6.0, sr);
+    rbj (nzHp, 1, 900.0, 0.7, 0.0, sr);
+    rbj (nzLp, 2, 6000.0 * sz, 0.7, 0.0, sr);
+}
+
 void Voice::start (const Patch& p, State* s, int note, float vel01, double sampleRate)
 {
     sr = sampleRate;
@@ -132,6 +187,9 @@ void Voice::start (const Patch& p, State* s, int note, float vel01, double sampl
     attackCoef  = 1.0f - std::exp (-1.0f / (juce::jmax (0.002f, p.attack)  * 0.3f * (float) sr));
     releaseCoef = 1.0f - std::exp (-1.0f / (juce::jmax (0.005f, p.release) * 0.3f * (float) sr));
     filt = filt2 = dcX = dcY = tone = lipY1 = lipY2 = outX = outY = 0.0f;
+    svfIc1 = svfIc2 = hDc = hDcY = softLp = 0.0f;
+    for (auto* b : { &body1, &body2, &nzHp, &nzLp }) { b->z1 = b->z2 = 0.0f; }
+    modCount = 0;
     time = 0.0; vibPhase = 0.0; growlPhase = 0.0;
     rng = 22222u + (juce::uint32) note * 7919u;
     quietSamples = 0;
@@ -260,12 +318,41 @@ float Voice::tick (const Patch& p, double hz, float breathCtl, float aftertouch)
     static constexpr float modelGain[NumModels] = { 0.75f, 1.25f, 1.2f, 0.58f, 0.75f };   // izjednacene jacine modela
     out *= modelGain[p.model];
 
-    // ton (svetlina) + meko zasicenje
     // DC blok na izlazu (jezicak i mlaz daju i jednosmernu komponentu)
     const float hp = out - outX + 0.997f * outY; outX = out; outY = hp; out = hp;
-    const float bc = juce::jlimit (0.02f, 0.98f, 0.15f + 0.8f * p.brightness);
-    tone += bc * (out - tone);
-    float y = std::tanh (tone * 1.2f) * juce::Decibels::decibelsToGain (p.levelDb) * (0.3f + 0.7f * juce::jmin (1.0f, env));
+
+    // --- modifikatori (VL1: Harmonic Enhancer, Dynamic Filter, Resonator) ---
+    if (--modCount <= 0) { modCount = 32; updateModifiers (p, hz); }
+    // Harmonic Enhancer: + dodaje parne / neparne alikvote (oštrije, "trubastije"), - zaobljava
+    if (p.harmonic > 0.0f)
+    {
+        const float h = p.harmonic;
+        float x = out * (1.0f + 1.5f * h);
+        x = x + h * (0.45f * x * x + 0.3f * x * x * x);
+        const float d = x - hDc + 0.995f * hDcY; hDc = x; hDcY = d;   // parni clan pravi DC
+        out = d / (1.0f + 1.2f * h);
+    }
+    else if (p.harmonic < 0.0f)
+    {
+        softLp += 0.25f * (out - softLp);
+        out = out * (1.0f + p.harmonic) - p.harmonic * softLp;
+    }
+    // sum daha koji se cuje (filtriran, prati dah)
+    out += p.breathNoise * 0.08f * juce::jmin (1.0f, env) * nzLp.process (nzHp.process (n));
+    // dinamicki filter (TPT state variable, lowpass)
+    {
+        const float g = svfG, k = svfK;
+        const float a1 = 1.0f / (1.0f + g * (g + k)), a2 = g * a1, a3 = g * a2;
+        const float v3 = out - svfIc2;
+        const float v1 = a1 * svfIc1 + a2 * v3;
+        const float v2 = svfIc2 + a2 * svfIc1 + a3 * v3;
+        svfIc1 = 2.0f * v1 - svfIc1;
+        svfIc2 = 2.0f * v2 - svfIc2;
+        out = v2;
+    }
+    // telo / zvono
+    out = body2.process (body1.process (out));
+    float y = std::tanh (out * 1.1f) * juce::Decibels::decibelsToGain (p.levelDb) * (0.3f + 0.7f * juce::jmin (1.0f, env));
     if (! std::isfinite (y)) { y = 0.0f; state->a.clear(); state->b.clear(); }
 
     // kraj glasa: pusten i utihnuo

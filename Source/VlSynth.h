@@ -32,6 +32,12 @@ namespace Vl
         float brightness = 0.6f;    // tonski filter na izlazu
         float levelDb = 0.0f;
         int transpose = 0;
+        // modifikatori (kao kod VL1): boja prati dah, alikvoti, telo instrumenta, sum daha koji se cuje
+        float dynFilter = 0.6f;     // koliko dah otvara filter (tiho = tamno, jako = svetlo)
+        float harmonic = 0.0f;      // -1 mekano / baršunasto .. +1 oštro / trubasto
+        float body = 0.6f;          // rezonanca tela / zvona
+        float size = 0.5f;          // velicina instrumenta (sopran .. bariton): pomera rezonance tela
+        float breathNoise = 0.3f;   // sum vazduha koji se cuje oko tona
 
         juce::String toString() const;
         static Patch fromString (const juce::String&);
@@ -76,6 +82,9 @@ namespace Vl
         float tick (const Patch& p, double hz, float breathCtl, float aftertouch) noexcept;
         bool isActive() const { return active; }
         State* state = nullptr;
+        struct Bq { float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+                    float process (float x) noexcept { const float y = b0 * x + z1; z1 = b1 * x - a1 * y + z2; z2 = b2 * x - a2 * y; return y; } };
+
 
     private:
         double sr = 44100.0;
@@ -83,6 +92,12 @@ namespace Vl
         float vel = 1.0f, env = 0.0f, attackCoef = 0.0f, releaseCoef = 0.0f;
         float filt = 0.0f, filt2 = 0.0f, dcX = 0.0f, dcY = 0.0f, tone = 0.0f;
         float lipY1 = 0.0f, lipY2 = 0.0f, outX = 0.0f, outY = 0.0f;
+        // modifikatori
+        Bq body1, body2, nzHp, nzLp;
+        float svfIc1 = 0.0f, svfIc2 = 0.0f, svfG = 0.5f, svfK = 1.4f;
+        float hDc = 0.0f, hDcY = 0.0f, softLp = 0.0f;
+        int modCount = 0;
+        void updateModifiers (const Patch& p, double hz);
         double time = 0.0, vibPhase = 0.0, growlPhase = 0.0;
         juce::uint32 rng = 22222u;
         int quietSamples = 0;
