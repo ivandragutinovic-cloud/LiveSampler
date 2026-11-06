@@ -1612,8 +1612,11 @@ private:
     // kronos-key.txt -> folder (kes, osvezava se na par sekundi)
     juce::File folderForKey (const juce::String& key) const
     {
+        // zove se i iz niti za snimanje i iz prozora (lista, info): bez zakljucavanja dve niti istovremeno
+        // menjaju isti std::map, sto kvari memoriju i program nestane bez poruke o gresci
+        const juce::ScopedLock sl (keyCacheLock);
         const auto now = juce::Time::getMillisecondCounter();
-        if (keyCacheFolder != outFolder || now - keyCacheTime > 3000)
+        if (keyCacheFolder != outFolder || keyCacheTime.load() == 0 || now - keyCacheTime.load() > 3000)
         {
             keyCache.clear();
             for (auto& d : outFolder.findChildFiles (juce::File::findDirectories, false))
@@ -1628,14 +1631,15 @@ private:
                 if (better) keyCache[k] = d;
             }
             keyCacheFolder = outFolder;
-            keyCacheTime = now;
+            keyCacheTime = juce::jmax ((juce::uint32) 1, now);
         }
         auto it = keyCache.find (key.trim().toLowerCase());
         return it != keyCache.end() ? it->second : juce::File();
     }
     mutable std::map<juce::String, juce::File> keyCache;
     mutable juce::File keyCacheFolder;
-    mutable juce::uint32 keyCacheTime = 0;
+    mutable std::atomic<juce::uint32> keyCacheTime { 0 };   // 0 = napravi kes ponovo
+    juce::CriticalSection keyCacheLock;
 
     // Spoji duplikate: isti zvuk snimljen u dva foldera (stari 24-bit i novi "... manual").
     // Ostaje ime starog foldera (na njega se pozivaju useri u Workstation-u), a u njega idu najnoviji semplovi.
@@ -2281,6 +2285,7 @@ private:
         const auto text = n.anText;
         juce::MessageManager::callAsync ([this, i, key, ok, loop, flat, hold, rel, text]
         {
+            const juce::ScopedLock sl (jobsLock);   // nit za snimanje istovremeno kopira needed[i]
             if (i < (int) needed.size() && needed[(size_t) i].romKey == key)
             {
                 auto& m = needed[(size_t) i];
