@@ -1945,16 +1945,25 @@ private:
         if (tries.empty() || number < 0 || number > 127) return false;
         const int ch = settings.channel;
         sysexCall ({ 0x42, sysexChannelByte(), 0x68, 0x4E, 0x02 }, 0x24, 800);   // PROGRAM mod
-        for (auto [msb, lsb] : tries)
+        int size0 = 0;
+        const auto origName = readCurrentProgram (size0);   // program pre prebacivanja
+        if (size0 > 0 && (size0 >= 4900) == wantExi && expectedName.isNotEmpty() && origName.equalsIgnoreCase (expectedName.trim()))
+            return true;   // vec je tu
+        for (size_t k = 0; k < tries.size(); ++k)
         {
+            const auto [msb, lsb] = tries[k];
+            juce::Logger::writeToLog ("select program: CC0=" + juce::String (msb) + " CC32=" + juce::String (lsb) + " PC=" + juce::String (number)
+                                      + "  (now: " + origName + ")");
             send (juce::MidiMessage::controllerEvent (ch, 0, msb));
             send (juce::MidiMessage::controllerEvent (ch, 32, lsb));
             send (juce::MidiMessage::programChange (ch, number));
-            // Kronos-u treba vremena da ucita program; prelaz EXi <-> HD-1 traje i nekoliko sekundi
+            // Kronos-u treba vremena da ucita program: prelaz EXi <-> HD-1 traje i nekoliko sekundi, a dok ucitava
+            // i dalje javlja STARI program. Zato se ne odustaje dok stoji stari program (to nije znak greske),
+            // nego tek kad se ustali neki treci program. Pita se na 1 s (svako pitanje Kronos prikaze kao "transmitting").
             juce::String lastName; int same = 0;
-            for (int t = 0; t < 16 && ! threadShouldExit(); ++t)
+            for (int t = 0; t < 20 && ! threadShouldExit(); ++t)
             {
-                wait (500);
+                wait (1000);
                 int size = 0;
                 const auto nm = readCurrentProgram (size);
                 const bool isExi = size >= 4900;
@@ -1962,12 +1971,16 @@ private:
                 {
                     if (hi == 2) userBankBase = lsb - lo;
                     bankMsb = msb;
+                    juce::Logger::writeToLog ("select program: OK " + nm);
                     return true;
                 }
                 same = (size > 0 && nm == lastName) ? same + 1 : 0;
                 lastName = nm;
-                if (same >= 5 && t >= 7) break;   // ~3 s stoji neki drugi program: probaj sledeci Bank Select
+                const bool stillOld = nm == origName;
+                if (! stillOld && same >= 3) break;   // ustalio se neki drugi program: probaj sledeci Bank Select
+                if (stillOld && t >= 14) break;       // ~15 s nista: Kronos ne prima ovaj Bank Select
             }
+            juce::Logger::writeToLog ("select program: not reached, Kronos is on " + lastName);
         }
         return false;
     }
