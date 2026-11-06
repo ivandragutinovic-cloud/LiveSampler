@@ -5475,40 +5475,61 @@ void ListsPage::paint (juce::Graphics& g)
         g.setColour (col);
         g.fillRoundedRectangle (cell, 3.0f);
         auto textArea = cell.reduced (5.0f, 0.0f);
+        // broj sitno levo, ime dobija sav ostali prostor; kategorija samo ako ime stane pored nje
+        const juce::Colour textCol = current ? juce::Colours::black : (s.used ? (dimmed ? Pal::dim.withAlpha (0.5f) : Pal::text) : Pal::dim.withAlpha (0.6f));
+        g.setFont (juce::FontOptions (10.0f));
+        g.setColour (current ? juce::Colours::black.withAlpha (0.55f) : Pal::dim.withAlpha (s.used ? 0.9f : 0.6f));
+        g.drawText (juce::String (i).paddedLeft ('0', 3), textArea.removeFromLeft (21.0f), juce::Justification::centredLeft, false);
+        textArea.removeFromLeft (3.0f);
         if (s.used)
         {
-            // kategorija desno (skraceno), ili narandzast okvir ako je nema
             const int ci = proc.categoryIndex (s);
             const bool missing = ci < 0;
-            const auto cat = missing ? T ("NO CAT.") : s.category;
             if (! missing)
             {
                 // boja kategorije (kao u Live Kontroleru): traka levo
                 g.setColour (proc.categoryColour (ci).withAlpha (dimmed ? 0.3f : 1.0f));
                 g.fillRoundedRectangle (cell.withWidth (5.0f), 2.0f);
             }
-            const float tw = juce::jmin (textArea.getWidth() * 0.4f, 80.0f);
-            auto catArea = textArea.removeFromRight (tw);
-            g.setFont (juce::FontOptions (10.5f, missing ? juce::Font::bold : juce::Font::plain));
-            g.setColour (missing ? juce::Colour (0xffff8a3d) : (current ? juce::Colours::black.withAlpha (0.6f) : Pal::dim));
-            if (dimmed) g.setColour (Pal::dim.withAlpha (0.4f));
-            g.drawText (cat, catArea, juce::Justification::centredRight, true);
-            if (missing && ! dimmed)
+            else if (! dimmed)
             {
+                // bez kategorije: samo narandzast okvir (tekst "NO CAT." je zauzimao mesto imenu)
                 g.setColour (juce::Colour (0xffff8a3d));
                 g.drawRoundedRectangle (cell.reduced (0.5f), 3.0f, 1.6f);
             }
-            g.setFont (juce::FontOptions (12.5f));
+            const juce::Font nameFont (juce::FontOptions (13.0f, juce::Font::bold));
+            const float nameW = juce::GlyphArrangement::getStringWidth (nameFont, s.name);
+            if (! missing)
+            {
+                const juce::Font catFont (juce::FontOptions (10.0f));
+                const float catW = juce::GlyphArrangement::getStringWidth (catFont, s.category) + 4.0f;
+                if (nameW + catW + 4.0f <= textArea.getWidth())
+                {
+                    g.setFont (catFont);
+                    g.setColour (current ? juce::Colours::black.withAlpha (0.6f) : Pal::dim.withAlpha (dimmed ? 0.4f : 1.0f));
+                    g.drawText (s.category, textArea.removeFromRight (catW), juce::Justification::centredRight, false);
+                }
+            }
+            g.setFont (nameFont);
+            g.setColour (textCol);
+            // malo suzi slova pre nego sto odsece ime
+            g.drawFittedText (s.name, textArea.toNearestInt(), juce::Justification::centredLeft, 1, 0.72f);
         }
-        g.setColour (current ? juce::Colours::black : (s.used ? (dimmed ? Pal::dim.withAlpha (0.5f) : Pal::text) : Pal::dim.withAlpha (0.6f)));
-        g.drawText (juce::String (i).paddedLeft ('0', 3) + "  " + (s.used ? s.name : juce::String()),
-                    textArea, juce::Justification::centredLeft, true);
         if (i == dropCell)
         {
             g.setColour (juce::Colours::white);
             g.drawRoundedRectangle (cell, 3.0f, 2.5f);
         }
     }
+}
+
+juce::String ListsPage::getTooltip()
+{
+    const int cell = cellAt (getMouseXYRelative());
+    if (cell < 0) return {};
+    const auto& s = proc.getSlot (proc.getCurrentBank() * kPerfPerBank + cell);
+    if (! s.used) return {};
+    return juce::String (cell).paddedLeft ('0', 3) + "  " + s.name + (proc.categoryIndex (s) >= 0 ? "   (" + s.category + ")" : juce::String ("   (" + T ("no category") + ")"));
 }
 
 juce::Rectangle<float> ListsPage::cellRect (int i) const

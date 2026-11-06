@@ -620,10 +620,11 @@ private:
 //==============================================================================
 //  LISTE: 16 lista po 128 performansa (kao Kronos banke kombija)
 //==============================================================================
-class ListsPage : public juce::Component, public juce::DragAndDropTarget
+class ListsPage : public juce::Component, public juce::DragAndDropTarget, public juce::TooltipClient
 {
 public:
     ListsPage (LiveSamplerProcessor&, LiveSamplerEditor&);
+    juce::String getTooltip() override;   // puno ime performansa ispod misa
     void refresh();
     void resized() override;
     void paint (juce::Graphics&) override;
