@@ -3,6 +3,7 @@
 #include "Text.h"
 #include "MidiLearn.h"
 #include "KronosNames.h"
+#include "Cleanup.h"
 #include <optional>
 
 static juce::String semis (double v)
@@ -4397,6 +4398,10 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
                 startTimerHz (4);
             });
     };
+    cleanupButton.setButtonText (T ("CLEANUP..."));
+    cleanupButton.setTooltip (T ("Find resampled ROM / EXi sounds that no user uses (delete to Recycle Bin, with listening) and users that are in no performance"));
+    cleanupButton.onClick = [this] { CleanupPanel::show (proc); };
+    addAndMakeVisible (cleanupButton);
     restoreButton.setButtonText (T ("RESTORE BACKUP..."));
     restoreButton.setTooltip (T ("On another computer: choose the folder \"Pikaso backup ...\""));
     restoreButton.onClick = [this]
@@ -4540,6 +4545,8 @@ void SettingsPage::resized()
         backupButton.setBounds (row.removeFromLeft (240));
         row.removeFromLeft (8);
         restoreButton.setBounds (row.removeFromLeft (170));
+        row.removeFromLeft (8);
+        cleanupButton.setBounds (row.removeFromLeft (130));
         row.removeFromLeft (12);
         backupStatus.setBounds (row);
     }
@@ -4868,8 +4875,8 @@ namespace
     // spisak zvukova koji fale: kucicom se bira sta da se presempluje
     struct MissingPanel : public juce::Component
     {
-        MissingPanel (const juce::String& message, const std::vector<LiveSamplerProcessor::KronosMissing>& m, const juce::String& pcg)
-            : items (m), pcgPath (pcg)
+        MissingPanel (LiveSamplerProcessor& pr, const juce::String& message, const std::vector<LiveSamplerProcessor::KronosMissing>& m, const juce::String& pcg)
+            : proc (pr), items (m), pcgPath (pcg)
         {
             text.setText (message, juce::dontSendNotification);
             text.setJustificationType (juce::Justification::topLeft);
@@ -4882,6 +4889,22 @@ namespace
                 t->setEnabled (it.canResample);
                 if (! it.canResample) t->setTooltip ("Its samples are your own (KSC) and are missing in the library: they cannot be resampled from ROM.");
                 holder.addAndMakeVisible (t);
+                // REMOVE PART: ovaj zvuk ne treba ni da se ucita ni da se presempluje (npr. drum kit)
+                auto* rb = removeButtons.add (new juce::TextButton (T ("REMOVE PART")));
+                rb->setColour (juce::TextButton::buttonColourId, Pal::red.withAlpha (0.7f));
+                rb->setTooltip (T ("Do not use this sound: its part is removed from the imported performance(s) and it is not resampled"));
+                const int idx = removeButtons.size() - 1;
+                rb->onClick = [this, idx]
+                {
+                    const int n = proc.removeMissingParts (items[(size_t) idx]);
+                    auto* t2 = toggles[idx];
+                    t2->setToggleState (false, juce::dontSendNotification);
+                    t2->setEnabled (false);
+                    t2->setButtonText (items[(size_t) idx].label + T ("   — part removed") + (n > 1 ? " (" + juce::String (n) + "x)" : juce::String()));
+                    removeButtons[idx]->setEnabled (false);
+                    removeButtons[idx]->setButtonText (T ("REMOVED"));
+                };
+                holder.addAndMakeVisible (rb);
             }
             view.setViewedComponent (&holder, false);
             addAndMakeVisible (view);
@@ -4902,7 +4925,7 @@ namespace
                 dismiss();
             };
             close.onClick = [this] { dismiss(); };
-            setSize (720, juce::jlimit (260, 640, 170 + 28 * (int) items.size()));
+            setSize (840, juce::jlimit (260, 640, 170 + 28 * (int) items.size()));
         }
         void dismiss() { if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState (0); }
         void resized() override
@@ -4919,10 +4942,16 @@ namespace
             r.removeFromBottom (8);
             view.setBounds (r);
             holder.setSize (r.getWidth() - 14, 28 * toggles.size());
-            for (int i = 0; i < toggles.size(); ++i) toggles[i]->setBounds (0, i * 28, holder.getWidth(), 26);
+            for (int i = 0; i < toggles.size(); ++i)
+            {
+                toggles[i]->setBounds (0, i * 28, holder.getWidth() - 124, 26);
+                removeButtons[i]->setBounds (holder.getWidth() - 118, i * 28 + 1, 114, 24);
+            }
         }
+        LiveSamplerProcessor& proc;
         std::vector<LiveSamplerProcessor::KronosMissing> items;
         juce::String pcgPath;
+        juce::OwnedArray<juce::TextButton> removeButtons;
         juce::Label text;
         juce::Viewport view;
         juce::Component holder;
@@ -4935,7 +4964,7 @@ void KronosPage::offerMissing (const juce::String& message, const std::vector<Li
 {
     if (missing.empty()) { if (message.isNotEmpty()) juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Kronos", message); return; }
     juce::DialogWindow::LaunchOptions o;
-    o.content.setOwned (new MissingPanel (message, missing, pcgPath));
+    o.content.setOwned (new MissingPanel (proc, message, missing, pcgPath));
     o.dialogTitle = "Sounds that are not resampled yet";
     o.dialogBackgroundColour = Pal::panel;
     o.escapeKeyTriggersCloseButton = true;

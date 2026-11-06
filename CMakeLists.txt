@@ -46,6 +46,7 @@ target_sources(LiveSampler PRIVATE
     Source/MasterEffects.cpp
     Source/Model.cpp
     Source/Pages.cpp
+    Source/Cleanup.cpp
     Source/MidiLearn.cpp
     Source/RemoteServer.cpp
     Source/FmSynth.cpp

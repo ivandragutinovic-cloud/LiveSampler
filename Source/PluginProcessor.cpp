@@ -1329,6 +1329,40 @@ int LiveSamplerProcessor::createUserFromKronosDrum (const Kronos::Program& prog)
     return idx;
 }
 
+int LiveSamplerProcessor::removeMissingParts (const KronosMissing& m)
+{
+    const auto source = juce::String (m.bank) + ":" + juce::String (m.number);
+    int removed = 0;
+    auto clearIn = [&] (Performance& p, int partIndex)
+    {
+        if (partIndex < 0 || partIndex >= kNumParts) return false;
+        auto& pp = p.parts[(size_t) partIndex];
+        if (! pp.isMissing() || pp.missingSource != source) return false;
+        pp = PerfPart();
+        ++removed;
+        return true;
+    };
+    bool perfChanged = false;
+    for (auto& w : juce::StringArray::fromTokens (m.where, ",", ""))
+    {
+        const auto e = w.trim();
+        const auto name = e.upToLastOccurrenceOf (" T", false, false);
+        const int part = e.fromLastOccurrenceOf (" T", false, false).getIntValue() - 1;
+        if (name.isEmpty() || part < 0) continue;
+        for (auto& s : slots)
+            if (s.used && s.name == name) clearIn (s, part);
+        if (perf.name == name && clearIn (perf, part)) perfChanged = true;
+    }
+    if (removed > 0)
+    {
+        if (perfChanged) rebuildConfig();
+        markSave();
+        sendChangeMessage();
+        kontrolerChanged();
+    }
+    return removed;
+}
+
 int LiveSamplerProcessor::fillMissingParts()
 {
     // PCG fajlovi se citaju samo jednom po pozivu

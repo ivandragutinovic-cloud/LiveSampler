@@ -48,6 +48,7 @@ public:
     void removeLibraryFolder (int index);
     void rescanLibrary();
     const juce::StringArray& getInstrumentList() const { return instrumentList; }
+    juce::File getInstrumentFile (const juce::String& name) const { return library.instrumentFile (name); }   // folder / fajl na disku
     bool isScanning() const { return scanning; }
     bool getC3Is60() const { return c3Is60; }
     void setC3Is60 (bool shouldBe);
@@ -185,6 +186,9 @@ public:
     struct KronosMissing { juce::uint32 bank = 0; int number = 0; juce::String label, where; bool canResample = false; };
     // posle osvezavanja biblioteke: partovi koji cekaju presemplovan Kronos program dobijaju usera sami
     int fillMissingParts();
+    // import iz Kronosa: part koji ceka nepresemplovan zvuk se brise (part postaje prazan i iskljucen).
+    // where = "Ime kombija T3, Drugi kombi T1" iz KronosMissing; vraca koliko partova je obrisano
+    int removeMissingParts (const KronosMissing& m);
     // velocity slojevi presemplovanog zvuka (iz imena fajlova "060 v127.wav"): jacine od najjace
     std::vector<int> velocityLayersOf (const juce::String& instrument) const;
     // brise jedan velocity sloj sa diska; susedni sloj preuzima njegov opseg (i u mapi i u MS-ovima usera)
