@@ -368,7 +368,7 @@ void SamplerPart::startVoices (int id, int pitch, int velocity, double startPitc
         if (v.stream >= 0) { DiskStreamer::get().release (v.stream, v.streamToken); v.stream = -1; }
         v.instrument = inst;
         v.sample = smp;
-        if (smp != nullptr && smp->streamed)
+        if (smp != nullptr && smp->streamed && ! offline)
             v.stream = DiskStreamer::get().acquire (inst->samples[(size_t) zone->sample], v.streamToken);
         v.fmOn = fmOsc;
         v.block = oscBlock;
@@ -996,7 +996,7 @@ void SamplerPart::renderVoices (int start, int num)
             if (idx < 0) idx = 0;
             if (idx >= endPos) { l = r = 0.0f; return; }
             if (idx < resident) { l = (float) L[idx] * pcmScale; r = (float) R[idx] * pcmScale; return; }
-            if (v.stream < 0 || ! disk.fetch (v.stream, v.streamToken, idx, l, r)) { l = r = 0.0f; disk.countUnderrun(); }
+            if (v.stream < 0 || ! disk.fetch (v.stream, v.streamToken, idx, l, r)) { l = r = 0.0f; if (! offline) disk.countUnderrun(); }
         };
 
         for (int i = 0; i < num; ++i)
@@ -1150,12 +1150,17 @@ void SamplerPart::endBlock (juce::AudioBuffer<float>& mainOut, juce::AudioBuffer
     auto* dl = delaySend.getWritePointer (0);
     auto* dr = delaySend.getWritePointer (1);
 
+    float pkL = 0.0f, pkR = 0.0f;
     for (int i = 0; i < n; ++i)
     {
         const float l = pl[i] * gainL.getNextValue();
         const float r = pr[i] * gainR.getNextValue();
+        pkL = juce::jmax (pkL, std::abs (l));
+        pkR = juce::jmax (pkR, std::abs (r));
         ml[i] += l;  mr[i] += r;
         rl[i] += l * rev;  rr[i] += r * rev;
         dl[i] += l * dly;  dr[i] += r * dly;
     }
+    if (pkL > peak[0].load (std::memory_order_relaxed)) peak[0].store (pkL, std::memory_order_relaxed);
+    if (pkR > peak[1].load (std::memory_order_relaxed)) peak[1].store (pkR, std::memory_order_relaxed);
 }

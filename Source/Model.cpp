@@ -62,6 +62,7 @@ std::unique_ptr<juce::XmlElement> UserProgram::toXml() const
     e->setAttribute ("portamento", (double) portamento);
     e->setAttribute ("eqLow", (double) eqLowDb);
     if (std::abs (levelDb) > 0.01f) e->setAttribute ("level", (double) levelDb);
+    if (levelLock) e->setAttribute ("levelLock", true);
     e->setAttribute ("send1", (double) send1);
     e->setAttribute ("send2", (double) send2);
     e->setAttribute ("eqMid", (double) eqMidDb);
@@ -148,6 +149,7 @@ UserProgram UserProgram::fromXml (const juce::XmlElement& e)
     u.fxMix = f ("fxMix", u.fxMix);
     u.eqLowDb = f ("eqLow", 0.0f);
     u.levelDb = juce::jlimit (-40.0f, 12.0f, f ("level", 0.0f));
+    u.levelLock = e.getBoolAttribute ("levelLock", false);
     u.send1 = f ("send1", 1.0f);
     u.send2 = f ("send2", 1.0f);
     u.eqMidDb = f ("eqMid", 0.0f);

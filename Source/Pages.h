@@ -6,6 +6,85 @@ class LiveSamplerEditor;
 //==============================================================================
 //  PERFORMANS: 8 delova kao kanali miksete + pregled raspona tastera
 //==============================================================================
+// VU metar (vrh, dBFS): zeleno do -12, zuto do -3, crveno iznad; linija = najveci vrh zadnje 1.5 s; CLIP svetli 2 s
+class VuMeter : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    explicit VuMeter (std::function<float (int ch)> takePeak, bool stereo = true, bool vertical = true)
+        : take (std::move (takePeak)), channels (stereo ? 2 : 1), vert (vertical)
+    {
+        setInterceptsMouseClicks (true, false);
+        startTimerHz (30);
+    }
+    void mouseDown (const juce::MouseEvent&) override { for (auto& h : hold) h = -60.0f; clip = 0; repaint(); }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colour (0xff0d0f12));
+        g.fillRoundedRectangle (r, 2.0f);
+        r = r.reduced (1.0f);
+        const float lo = -48.0f, hi = 3.0f;
+        auto pos = [lo, hi] (float db) { return juce::jlimit (0.0f, 1.0f, (db - lo) / (hi - lo)); };
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            auto lane = vert ? r.withWidth (r.getWidth() / (float) channels).translated (r.getWidth() / (float) channels * (float) ch, 0.0f).reduced (0.5f, 0.0f)
+                             : r.withHeight (r.getHeight() / (float) channels).translated (0.0f, r.getHeight() / (float) channels * (float) ch).reduced (0.0f, 0.5f);
+            const float f = pos (level[ch]);
+            juce::ColourGradient grad = vert ? juce::ColourGradient (juce::Colour (0xffe53935), lane.getX(), lane.getY(), juce::Colour (0xff2fbf5a), lane.getX(), lane.getBottom(), false)
+                                             : juce::ColourGradient (juce::Colour (0xff2fbf5a), lane.getX(), lane.getY(), juce::Colour (0xffe53935), lane.getRight(), lane.getY(), false);
+            grad.addColour (pos (-12.0f), juce::Colour (0xff2fbf5a));
+            grad.addColour (pos (-3.0f), juce::Colour (0xffe0c020));
+            g.setGradientFill (grad);
+            if (vert) g.fillRect (lane.withTop (lane.getBottom() - lane.getHeight() * f));
+            else g.fillRect (lane.withWidth (lane.getWidth() * f));
+            const float hp = pos (hold[ch]);
+            g.setColour (hold[ch] > -3.0f ? juce::Colour (0xffff6060) : juce::Colours::white.withAlpha (0.8f));
+            if (hold[ch] > lo)
+            {
+                if (vert) g.fillRect (lane.getX(), lane.getBottom() - lane.getHeight() * hp - 1.0f, lane.getWidth(), 2.0f);
+                else g.fillRect (lane.getX() + lane.getWidth() * hp - 1.0f, lane.getY(), 2.0f, lane.getHeight());
+            }
+        }
+        // skala: 0 dB i -12 dB
+        g.setColour (juce::Colours::white.withAlpha (0.25f));
+        for (float db : { 0.0f, -12.0f, -24.0f })
+        {
+            const float p = pos (db);
+            if (vert) g.drawHorizontalLine ((int) (r.getBottom() - r.getHeight() * p), r.getX(), r.getRight());
+            else g.drawVerticalLine ((int) (r.getX() + r.getWidth() * p), r.getY(), r.getBottom());
+        }
+        if (clip > 0)
+        {
+            g.setColour (juce::Colour (0xffff2020));
+            if (vert) g.fillRect (r.withHeight (4.0f)); else g.fillRect (r.withLeft (r.getRight() - 4.0f));
+        }
+    }
+private:
+    void timerCallback() override
+    {
+        if (! isShowing()) return;
+        const auto now = juce::Time::getMillisecondCounter();
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            float pk = take (ch);
+            if (channels == 1) pk = juce::jmax (pk, take (1));
+            const float db = juce::Decibels::gainToDecibels (pk, -60.0f);
+            level[ch] = db >= level[ch] ? db : juce::jmax (db, level[ch] - 24.0f / 30.0f);   // pada 24 dB/s
+            if (db >= hold[ch]) { hold[ch] = db; holdTime[ch] = now; }
+            else if (now - holdTime[ch] > 1500) hold[ch] = juce::jmax (-60.0f, hold[ch] - 1.0f);
+            if (pk >= 0.999f) clip = 60;
+        }
+        if (clip > 0) --clip;
+        repaint();
+    }
+    std::function<float (int)> take;
+    const int channels;
+    const bool vert;
+    float level[2] { -60.0f, -60.0f }, hold[2] { -60.0f, -60.0f };
+    juce::uint32 holdTime[2] {};
+    int clip = 0;
+};
+
 // tackica: svetli kad part svira (jako na udarac, slabije dok zvuk traje)
 class ActivityDot : public juce::Component, private juce::Timer
 {
@@ -68,6 +147,7 @@ private:
     void showHarmLevel();
     void showPartMenu();
     std::unique_ptr<ActivityDot> dot;
+    std::unique_ptr<VuMeter> meter;
     LearnButton onButton, soloButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
     void stepUser (int dir);
     ValueKnob volume, pan, reverb, delay;
@@ -156,7 +236,9 @@ private:
         LearnButton on;
         juce::Label name;
         std::unique_ptr<ActivityDot> dot;
+        std::unique_ptr<VuMeter> meter;
     };
+    std::unique_ptr<VuMeter> masterMeter;
     Fader faders[kNumParts];
     juce::Rectangle<int> lcd, transArea;
 };
@@ -314,7 +396,8 @@ private:
     juce::Label filterLabel;
     // zajednicko
     LearnCombo voiceMode, priority;
-    LearnButton portaOn, portaFingered, portaConstRate;
+    LearnButton portaOn, portaFingered, portaConstRate, levelLockButton, autoLevelButton;
+    std::unique_ptr<VuMeter> commonMeter;
     std::unique_ptr<ValueKnob> portaTime, legatoXfade, legatoStart, userLevel;
     LearnSlider bendUp, bendDown;
     juce::Label commonLabels[4];
@@ -341,7 +424,9 @@ public:
 private:
     bool audition = false, pageActive = false;
     void applyAudition();
-    LearnButton auditionButton, originalButton;
+    LearnButton auditionButton, originalButton, autoAllButton;
+    juce::Label autoLevelInfo;
+    void showAutoLevelMenu();
     void listBoxItemClicked (int row, const juce::MouseEvent&) override;
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int w, int h, bool selected) override;
@@ -437,6 +522,7 @@ private:
     LiveSamplerProcessor& proc;
     juce::OwnedArray<ValueKnob> knobs;
     std::unique_ptr<ValueKnob> globalVolume;
+    std::unique_ptr<VuMeter> masterMeter;
     juce::OwnedArray<ValueKnob> geq;          // MASTER EQ (ceo Workstation): parametric
     juce::StringArray geqKeys;
     juce::OwnedArray<juce::Slider> gband;     // graphic 15

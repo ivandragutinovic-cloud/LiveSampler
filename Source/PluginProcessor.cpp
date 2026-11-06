@@ -46,6 +46,7 @@ LiveSamplerProcessor::LiveSamplerProcessor()
 LiveSamplerProcessor::~LiveSamplerProcessor()
 {
     alive->store (false);
+    if (autoLevelThread != nullptr) autoLevelThread->stopThread (3000);
     MidiLearn::get().isLatching = nullptr;
     stopTimer();
     remote.reset();
@@ -82,6 +83,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("version", 3);
     root.setAttribute ("c3Is60", c3Is60);
     root.setAttribute ("globalDb", (double) globalDb);
+    root.setAttribute ("autoLevelTarget", (double) autoLevelTarget);
     {
         auto* rp = root.createNewChildElement ("ReverbPresets");
         for (auto& x : userReverbPresets) rp->addChildElement (x.toXml().release());
@@ -198,6 +200,7 @@ void LiveSamplerProcessor::loadData()
 
     c3Is60 = xml->getBoolAttribute ("c3Is60", true);
     globalDb = (float) xml->getDoubleAttribute ("globalDb", 0.0);
+    autoLevelTarget = juce::jlimit (-30.0f, -6.0f, (float) xml->getDoubleAttribute ("autoLevelTarget", -18.0));
     userReverbPresets.clear();
     if (auto* rp = xml->getChildByName ("ReverbPresets"))
         for (auto* x : rp->getChildWithTagNameIterator ("ReverbPreset")) userReverbPresets.push_back (ReverbPreset::fromXml (*x));
@@ -3348,6 +3351,20 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         auto ms = c.master;
         ms.masterDb += c.globalDb;
         master.process (mainBuf, reverbBuf, delayBuf, len, ms, c.globalEq);
+        {
+            // VU master: vrh + RMS (posle master efekata i EQ-a)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float* d = mainBuf.getReadPointer (ch);
+                float pk = 0.0f; double sq = 0.0;
+                for (int i = 0; i < len; ++i) { pk = juce::jmax (pk, std::abs (d[i])); sq += (double) d[i] * d[i]; }
+                if (pk > masterPeak[ch].load (std::memory_order_relaxed)) masterPeak[ch].store (pk, std::memory_order_relaxed);
+                const float rms = (float) std::sqrt (sq / juce::jmax (1, len));
+                const float prev = masterRms[ch].load (std::memory_order_relaxed);
+                const float a = (float) juce::jlimit (0.0, 1.0, (double) len / (0.3 * getSampleRate()));   // ~300 ms
+                masterRms[ch].store (prev + a * (rms - prev), std::memory_order_relaxed);
+            }
+        }
 
         if (buffer.getNumChannels() >= 2)
         {
@@ -3401,6 +3418,157 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     for (auto& p : tails)
         voicesNow += p.getNumActiveVoices();
     activeVoices = voicesNow;
+}
+
+//==============================================================================
+//  AUTO LEVEL: svaki user se odsvira sam (bez performansa) na velocity 127, meri se RMS izlaza
+//==============================================================================
+namespace
+{
+    struct AutoLevelJob
+    {
+        juce::String name;
+        PartRuntime rt;
+        juce::StringArray missing;   // instrumenti koji nisu u memoriji (ucitavaju se samo za merenje)
+    };
+
+    class AutoLevelThread : public juce::Thread
+    {
+    public:
+        AutoLevelThread (std::vector<AutoLevelJob> j, SampleLibrary& lib, bool c3, double sr, float target,
+                         std::function<void (const juce::String&)> status,
+                         std::function<void (std::vector<std::pair<juce::String, float>>, juce::StringArray)> done)
+            : juce::Thread ("Pikaso auto level"), jobs (std::move (j)), library (lib), c3Is60 (c3),
+              sampleRate (sr > 1000.0 ? sr : 48000.0), targetDb (target), onStatus (std::move (status)), onDone (std::move (done)) {}
+
+        void run() override
+        {
+            std::vector<std::pair<juce::String, float>> results;   // ime, novi Level (dB)
+            juce::StringArray skipped;
+            constexpr int block = 256;
+            juce::AudioBuffer<float> mainBuf (2, block), revBuf (2, block), dlyBuf (2, block);
+            for (size_t k = 0; k < jobs.size() && ! threadShouldExit(); ++k)
+            {
+                auto& job = jobs[k];
+                onStatus ("AUTO LEVEL " + juce::String ((int) k + 1) + "/" + juce::String ((int) jobs.size()) + ": " + job.name);
+                for (int o = 0; o < kNumOsc; ++o)
+                {
+                    const auto& os = job.rt.user.osc[(size_t) o];
+                    if (job.rt.inst[(size_t) o] == nullptr && os.on && job.missing.contains (os.instrument))
+                        job.rt.inst[(size_t) o] = library.loadInstrument (os.instrument, c3Is60, false);
+                }
+                auto part = std::make_unique<SamplerPart>();
+                part->offline = true;
+                part->prepare (sampleRate, block);
+                double bestDb = -200.0;
+                for (int note : { 48, 60, 72 })
+                {
+                    if (threadShouldExit()) break;
+                    double sq = 0.0; int count = 0;
+                    const int total = (int) (0.6 * sampleRate), skip = (int) (0.02 * sampleRate);
+                    part->beginBlock (&job.rt, block);   // noteOn trazi podesavanja (cfg)
+                    part->noteOn (note, note, 127);
+                    for (int pos = 0; pos < total; pos += block)
+                    {
+                        const int n = juce::jmin (block, total - pos);
+                        mainBuf.clear(); revBuf.clear(); dlyBuf.clear();
+                        part->beginBlock (&job.rt, n);
+                        part->renderVoices (0, n);
+                        part->endBlock (mainBuf, revBuf, dlyBuf, n);
+                        for (int i = 0; i < n; ++i)
+                        {
+                            if (pos + i < skip) continue;
+                            const float l = mainBuf.getSample (0, i), r = mainBuf.getSample (1, i);
+                            sq += 0.5 * ((double) l * l + (double) r * r);
+                            ++count;
+                        }
+                    }
+                    part->allNotesOff (true);
+                    for (int i = 0; i < 8; ++i) { mainBuf.clear(); part->beginBlock (&job.rt, block); part->renderVoices (0, block); part->endBlock (mainBuf, revBuf, dlyBuf, block); }
+                    if (count > 0 && sq > 0.0)
+                        bestDb = juce::jmax (bestDb, 10.0 * std::log10 (sq / count));
+                }
+                job.rt.inst = {};   // instrumenti ucitani samo za merenje se oslobadjaju
+                if (bestDb < -90.0) { skipped.add (job.name); continue; }
+                results.push_back ({ job.name, (float) juce::jlimit (-30.0, 12.0, (double) targetDb - bestDb) });
+            }
+            onDone (std::move (results), skipped);
+        }
+
+    private:
+        std::vector<AutoLevelJob> jobs;
+        SampleLibrary& library;
+        const bool c3Is60;
+        const double sampleRate;
+        const float targetDb;
+        std::function<void (const juce::String&)> onStatus;
+        std::function<void (std::vector<std::pair<juce::String, float>>, juce::StringArray)> onDone;
+    };
+}
+
+void LiveSamplerProcessor::startAutoLevel (float targetDb, int userIndex)
+{
+    if (autoLevelRunning.load()) return;
+    if (autoLevelThread != nullptr) { autoLevelThread->stopThread (2000); autoLevelThread.reset(); }
+    setAutoLevelTarget (targetDb);
+    std::vector<AutoLevelJob> jobs;
+    for (int i = 0; i < (int) users.size(); ++i)
+    {
+        if (userIndex >= 0 && i != userIndex) continue;
+        const auto& u = users[(size_t) i];
+        if (u.levelLock && userIndex < 0) continue;
+        AutoLevelJob j;
+        j.name = u.name;
+        j.rt.user = u;
+        j.rt.user.levelDb = 0.0f;
+        j.rt.part = PerfPart();
+        j.rt.part.on = true;
+        j.rt.part.user = u.name;
+        j.rt.part.volumeDb = 0.0f;
+        j.rt.part.pan = 0.0f;
+        j.rt.active = true;
+        j.rt.maxVoices = 64;
+        for (int o = 0; o < kNumOsc; ++o)
+        {
+            const auto& os = u.osc[(size_t) o];
+            if (! os.on || os.instrument == Fm::instrumentName) continue;
+            j.rt.inst[(size_t) o] = getLoadedInstrument (os.instrument);
+            if (j.rt.inst[(size_t) o] == nullptr) j.missing.addIfNotAlreadyThere (os.instrument);
+        }
+        if (u.isFm()) j.rt.fm = fmPatchFor (u);
+        jobs.push_back (std::move (j));
+    }
+    if (jobs.empty()) { const juce::ScopedLock sl (autoLevelLock); autoLevelStatus = T ("AUTO LEVEL: nothing to measure (all users locked)"); sendChangeMessage(); return; }
+    autoLevelRunning = true;
+    auto aliveFlag = alive;
+    auto status = [this, aliveFlag] (const juce::String& t)
+    {
+        if (! aliveFlag->load()) return;
+        { const juce::ScopedLock sl (autoLevelLock); autoLevelStatus = t; }
+        juce::MessageManager::callAsync ([this, aliveFlag] { if (aliveFlag->load()) sendChangeMessage(); });
+    };
+    auto done = [this, aliveFlag] (std::vector<std::pair<juce::String, float>> res, juce::StringArray skipped)
+    {
+        juce::MessageManager::callAsync ([this, aliveFlag, res = std::move (res), skipped]
+        {
+            if (! aliveFlag->load()) return;
+            for (auto& [name, db] : res)
+            {
+                const int u = findUser (name);
+                if (u < 0) continue;
+                users[(size_t) u].levelDb = db;
+            }
+            rebuildConfig();
+            markSave();
+            juce::String t = T ("AUTO LEVEL done: ") + juce::String ((int) res.size()) + T (" users leveled");
+            if (! skipped.isEmpty()) t << T (", no sound: ") << skipped.joinIntoString (", ");
+            { const juce::ScopedLock sl (autoLevelLock); autoLevelStatus = t; }
+            autoLevelRunning = false;
+            sendChangeMessage();
+        });
+    };
+    autoLevelThread = std::make_unique<AutoLevelThread> (std::move (jobs), library, c3Is60, getSampleRate(), autoLevelTarget, status, done);
+    autoLevelThread->startThread (juce::Thread::Priority::low);
 }
 
 void LiveSamplerProcessor::previewSample (SamplePtr s)

@@ -158,6 +158,7 @@ struct UserProgram
     float eqLowDb = 0.0f, eqMidDb = 0.0f, eqMidFreq = 1000.0f, eqHighDb = 0.0f;
 
     float levelDb = 0.0f;               // jacina celog usera (COMMON > Level), vazi u svim performansima
+    bool levelLock = false;             // AUTO LEVEL ne dira ovog usera
     float send1 = 1.0f, send2 = 1.0f;   // koliko ovaj zvuk salje u reverb / delay (mnozi send dela)
     juce::String category;                  // kategorija usera (lista USER)
     juce::String kronosPcg, kronosSource;   // napravljen od Kronos programa: ime PCG fajla i "bankId:broj"

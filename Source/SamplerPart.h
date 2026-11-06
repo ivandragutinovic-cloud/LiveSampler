@@ -100,10 +100,14 @@ public:
                    juce::AudioBuffer<float>& delaySend, int numSamples);
 
     int getNumActiveVoices() const;
+    // VU: najveci vrh izlaza ovog dela od poslednjeg citanja (UI cita i brise)
+    float takePeak (int ch) { return peak[ch & 1].exchange (0.0f); }
+    bool offline = false;   // merenje van audio niti (AUTO LEVEL): bez citanja sa diska, samo pocetak sempla iz RAM-a
     static constexpr int numIds = 384;
     static constexpr int controlRate = 16;   // modulacija se racuna na svakih 16 semplova
 
 private:
+    std::atomic<float> peak[2] { 0.0f, 0.0f };
     struct Voice
     {
         bool active = false;

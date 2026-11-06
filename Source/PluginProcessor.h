@@ -300,6 +300,17 @@ public:
     juce::String getStatusText() const;
     int getActiveVoices() const { return activeVoices.load(); }
     // aktivnost partova (tackice) i jacina pritisnutih dirki (virtuelna klavijatura)
+    // VU metri: vrh izlaza parta / mastera od poslednjeg citanja (UI cita ~30 puta u sekundi)
+    float takePartPeak (int p, int ch) { return p >= 0 && p < kNumParts ? parts[p].takePeak (ch) : 0.0f; }
+    float takeMasterPeak (int ch) { return masterPeak[ch & 1].exchange (0.0f); }
+    float getMasterRms (int ch) const { return masterRms[ch & 1].load(); }
+    // AUTO LEVEL: svaki user se odsvira sam na najjacoj dinamici, izmeri se izlaz i podesi COMMON Level
+    // da svi budu iste jacine (zakljucani se ne diraju). userIndex = -1: svi
+    void startAutoLevel (float targetDb, int userIndex = -1);
+    bool isAutoLevelRunning() const { return autoLevelRunning.load(); }
+    juce::String getAutoLevelStatus() const { const juce::ScopedLock sl (autoLevelLock); return autoLevelStatus; }
+    float getAutoLevelTarget() const { return autoLevelTarget; }
+    void setAutoLevelTarget (float db) { autoLevelTarget = juce::jlimit (-30.0f, -6.0f, db); markSave(); }
     int getPartVoices (int p) const { return p >= 0 && p < 16 ? partVoices[(size_t) p].load() : 0; }
     juce::uint32 getPartHits (int p) const { return p >= 0 && p < 16 ? partHits[(size_t) p].load() : 0; }
     int getKeyVelocity (int note) const { return note >= 0 && note < 128 ? keyVel[(size_t) note].load() : 0; }
@@ -400,6 +411,12 @@ private:
     std::atomic<int> learnedType { 0 }, learnedChannel { 0 }, learnedNumber { 0 };
     std::atomic<bool> tercaChanged { false };
     std::atomic<int> activeVoices { 0 };
+    std::atomic<float> masterPeak[2] { 0.0f, 0.0f }, masterRms[2] { 0.0f, 0.0f };
+    std::atomic<bool> autoLevelRunning { false };
+    juce::CriticalSection autoLevelLock;
+    juce::String autoLevelStatus;
+    float autoLevelTarget = -18.0f;
+    std::unique_ptr<juce::Thread> autoLevelThread;
     std::array<std::atomic<int>, 16> partVoices {};
     std::array<std::atomic<juce::uint32>, 16> partHits {};
     std::array<std::atomic<int>, 128> keyVel {};

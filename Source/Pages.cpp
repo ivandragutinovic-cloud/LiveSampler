@@ -158,6 +158,9 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     addAndMakeVisible (onButton);
     dot = std::make_unique<ActivityDot> (proc, index, colour);
     addAndMakeVisible (*dot);
+    meter = std::make_unique<VuMeter> ([this] (int ch) { return proc.takePartPeak (index, ch); }, true, false);
+    meter->setTooltip (T ("Output level of this part (after volume, EQ and effect). Red line = 0 dBFS. Click to reset"));
+    addAndMakeVisible (*meter);
     soloButton.setButtonText ("S");
     soloButton.setClickingTogglesState (true);
     soloButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd9a400));
@@ -667,7 +670,9 @@ void PartStrip::resized()
         row.removeFromLeft (2);
         onButton.setBounds (row);
     }
-    r.removeFromTop (4);
+    r.removeFromTop (2);
+    meter->setBounds (r.removeFromTop (7));
+    r.removeFromTop (2);
     {
         auto row = r.removeFromTop (40);
         userPrev.setBounds (row.removeFromLeft (19).reduced (0, 4));
@@ -1037,6 +1042,8 @@ LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), e
     {
         auto& f = faders[i];
         f.dot = std::make_unique<ActivityDot> (proc, i, Pal::part[i]);
+        f.meter = std::make_unique<VuMeter> ([this, i] (int ch) { return proc.takePartPeak (i, ch); }, false, true);
+        f.meter->setTooltip (T ("Output level of this part. Click to reset"));
         f.volume.setSliderStyle (juce::Slider::LinearBarVertical);
         f.volume.setRange (-60.0, 6.0, 0.1);
         f.volume.setSkewFactorFromMidPoint (-12.0);
@@ -1068,7 +1075,11 @@ LivePage::LivePage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), e
         for (juce::Component* c : { (juce::Component*) &f.volume, (juce::Component*) &f.on, (juce::Component*) &f.name })
             addAndMakeVisible (c);
         addAndMakeVisible (*f.dot);   // iznad imena
+        addAndMakeVisible (*f.meter);
     }
+    masterMeter = std::make_unique<VuMeter> ([this] (int ch) { return proc.takeMasterPeak (ch); }, true, true);
+    masterMeter->setTooltip (T ("MASTER output (after master EQ / effects). Keep peaks under the red 0 dB line. Click to reset"));
+    addAndMakeVisible (*masterMeter);
 }
 
 void LivePage::refresh()
@@ -1169,9 +1180,12 @@ void LivePage::resized()
     harmButton.setBounds (side.removeFromTop (juce::jmin (90, sh * 28 / 100)).reduced (4));
     gigButton.setBounds (side.removeFromTop (juce::jmin (54, sh * 17 / 100)).reduced (4));
     cpuLabel.setBounds (side.removeFromTop (36).reduced (4, 0));
+
     lockButton.setBounds (side.removeFromBottom (juce::jmin (70, sh * 20 / 100)).reduced (4));
     panicButton.setBounds (side.removeFromBottom (juce::jmin (70, sh * 20 / 100)).reduced (4));
-    r.removeFromRight (8);
+    r.removeFromRight (6);
+    masterMeter->setBounds (r.removeFromRight (24).withTrimmedTop (34).withTrimmedBottom (38));
+    r.removeFromRight (6);
     const int w = r.getWidth() / kNumParts;
     for (int i = 0; i < kNumParts; ++i)
     {
@@ -1182,7 +1196,9 @@ void LivePage::resized()
             if (faders[i].dot != nullptr) faders[i].dot->setBounds (top.getX(), top.getY() + 1, 11, 11);
         }
         faders[i].on.setBounds (col.removeFromBottom (36).reduced (0, 2));
-        faders[i].volume.setBounds (col.reduced (4, 2));
+        auto vb = col.reduced (2, 2);
+        if (faders[i].meter != nullptr) faders[i].meter->setBounds (vb.removeFromRight (6));
+        faders[i].volume.setBounds (vb.reduced (2, 0));
     }
 }
 
@@ -2197,9 +2213,19 @@ SoundEditor::SoundEditor (LiveSamplerProcessor& p, std::function<int()> ui)
         commonLabels[i].setFont (juce::FontOptions (12.0f, juce::Font::bold));
         commonLabels[i].setColour (juce::Label::textColourId, Pal::dim);
     }
+    levelLockButton.setButtonText (T ("LOCK"));
+    levelLockButton.setClickingTogglesState (true);
+    levelLockButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffc0392b));
+    levelLockButton.setTooltip (T ("Locked: AUTO LEVEL never changes the Level of this user"));
+    levelLockButton.onClick = [this] { edit ([this] (UserProgram& u) { u.levelLock = levelLockButton.getToggleState(); }); };
+    autoLevelButton.setButtonText (T ("AUTO"));
+    autoLevelButton.setTooltip (T ("Measure this user alone at the strongest velocity (127) and set Level so it is as loud as the AUTO LEVEL target"));
+    autoLevelButton.onClick = [this] { const int u = userIndex(); if (u >= 0) proc.startAutoLevel (proc.getAutoLevelTarget(), u); };
+    commonMeter = std::make_unique<VuMeter> ([this] (int ch) { return proc.takeMasterPeak (ch); }, true, true);
+    commonMeter->setTooltip (T ("MASTER output. Play the user at full velocity and set Level so peaks stay under 0 dB"));
     for (auto* c : std::initializer_list<juce::Component*> { &voiceMode, &priority, &portaOn, &portaFingered, &portaConstRate,
                                                              portaTime.get(), userLevel.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
-                                                             &commonLabels[2], &commonLabels[3] })
+                                                             &commonLabels[2], &commonLabels[3], &levelLockButton, &autoLevelButton, commonMeter.get() })
         addChildComponent (c);
 
     fxType.addItemList (InsertFx::getTypeNames(), 1);
@@ -2390,7 +2416,7 @@ void SoundEditor::rebuildKnobs()
     filterLabel.setVisible (section == Filter);
     for (auto* c : std::initializer_list<juce::Component*> { &voiceMode, &priority, &portaOn, &portaFingered, &portaConstRate,
                                                              portaTime.get(), userLevel.get(), &bendUp, &bendDown, &commonLabels[0], &commonLabels[1],
-                                                             &commonLabels[2], &commonLabels[3] })
+                                                             &commonLabels[2], &commonLabels[3], &levelLockButton, &autoLevelButton, commonMeter.get() })
         c->setVisible (section == Common);
     refreshLegatoKnobs();
     fxType.setVisible (section == Effect);
@@ -2466,6 +2492,8 @@ void SoundEditor::refresh()
     legatoXfade->setValue (u.legatoXfade);
     legatoStart->setValue (u.legatoStart);
     userLevel->setValue (u.levelDb);
+    levelLockButton.setToggleState (u.levelLock, juce::dontSendNotification);
+    autoLevelButton.setEnabled (! proc.isAutoLevelRunning());
     refreshLegatoKnobs();
     setSliderValue (bendUp, u.bendUp);
     setSliderValue (bendDown, u.bendDown);
@@ -2609,8 +2637,15 @@ void SoundEditor::resized()
         for (auto* s : { &bendUp, &bendDown })
             s->setTextBoxStyle (juce::Slider::TextBoxLeft, false, 50, 26);
         auto row2 = r.removeFromTop (100).reduced (0, 4);
+        commonMeter->setBounds (row2.removeFromLeft (22));
+        row2.removeFromLeft (4);
         userLevel->setBounds (row2.removeFromLeft (100));
-        row2.removeFromLeft (20);
+        {
+            auto b = row2.removeFromLeft (64).reduced (2, 8);
+            levelLockButton.setBounds (b.removeFromTop (b.getHeight() / 2).reduced (0, 2));
+            autoLevelButton.setBounds (b.reduced (0, 2));
+        }
+        row2.removeFromLeft (16);
         legatoXfade->setBounds (row2.removeFromLeft (100));
         row2.removeFromLeft (8);
         legatoStart->setBounds (row2.removeFromLeft (100));
@@ -3113,6 +3148,15 @@ UserPage::UserPage (LiveSamplerProcessor& p, LiveSamplerEditor& e)
     };
     addAndMakeVisible (originalButton);
 
+    autoAllButton.setButtonText (T ("AUTO LEVEL"));
+    autoAllButton.setTooltip (T ("Make all users equally loud: each user is played alone at velocity 127, its output is measured "
+                                 "and COMMON Level is set to the target. Locked users (LOCK in COMMON) are not changed."));
+    autoAllButton.onClick = [this] { showAutoLevelMenu(); };
+    addAndMakeVisible (autoAllButton);
+    autoLevelInfo.setFont (juce::FontOptions (12.0f));
+    autoLevelInfo.setColour (juce::Label::textColourId, Pal::dim);
+    addAndMakeVisible (autoLevelInfo);
+
     const char* headers[] = { "Multisample", "", "", "Level dB", "Pan", "Transp", "Fine c", "Low", "High", "Vel lo / hi" };
     for (int i = 0; i < 10; ++i)
     {
@@ -3234,6 +3278,33 @@ void UserPage::selectedRowsChanged (int lastRowSelected)
     }
 }
 
+void UserPage::showAutoLevelMenu()
+{
+    juce::PopupMenu m, tgt;
+    const float cur = proc.getAutoLevelTarget();
+    for (int db : { -12, -14, -16, -18, -20, -22, -24 })
+        tgt.addItem (200 + (-db), juce::String (db) + " dBFS RMS" + (db == -18 ? T (" (recommended)") : juce::String()), true, std::abs (cur - (float) db) < 0.5f);
+    m.addSectionHeader (T ("Target loudness: ") + juce::String ((int) cur) + " dBFS RMS");
+    m.addItem (1, T ("Level ALL users (locked are skipped)"));
+    m.addItem (2, T ("Level only this user"), userIndex >= 0 && userIndex < proc.getNumUsers());
+    m.addSubMenu (T ("Target loudness"), tgt);
+    juce::Component::SafePointer<UserPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&autoAllButton), [safe] (int r)
+    {
+        if (safe == nullptr || r == 0) return;
+        auto& p = safe->proc;
+        if (r >= 200) { p.setAutoLevelTarget (-(float) (r - 200)); return; }
+        if (r == 1)
+        {
+            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, T ("AUTO LEVEL"),
+                T ("All unlocked users are measured (this takes a few seconds per user) and their COMMON Level is changed. Continue?"),
+                T ("Start"), T ("Cancel"), nullptr,
+                juce::ModalCallbackFunction::create ([safe] (int ok) { if (safe != nullptr && ok != 0) safe->proc.startAutoLevel (safe->proc.getAutoLevelTarget(), -1); }));
+        }
+        else if (r == 2) p.startAutoLevel (p.getAutoLevelTarget(), safe->userIndex);
+    });
+}
+
 void UserPage::listBoxItemClicked (int row, const juce::MouseEvent&)
 {
     if (row >= 0 && row < (int) visible.size())
@@ -3349,6 +3420,8 @@ void UserPage::refresh()
     if (! nameEdit.isBeingEdited())
         nameEdit.setText (proc.getUser (userIndex).name, juce::dontSendNotification);
     originalButton.setEnabled (proc.canRestoreUserOriginal (userIndex));
+    autoAllButton.setEnabled (! proc.isAutoLevelRunning());
+    autoLevelInfo.setText (proc.getAutoLevelStatus(), juce::dontSendNotification);
 }
 
 void UserPage::paint (juce::Graphics& g)
@@ -3397,6 +3470,10 @@ void UserPage::resized()
         auditionButton.setBounds (top.removeFromLeft (110).reduced (0, 2));
         top.removeFromLeft (8);
         originalButton.setBounds (top.removeFromLeft (100).reduced (0, 2));
+        top.removeFromLeft (8);
+        autoAllButton.setBounds (top.removeFromLeft (110).reduced (0, 2));
+        top.removeFromLeft (8);
+        autoLevelInfo.setBounds (top);
     }
     r.removeFromTop (4);
 
@@ -3984,6 +4061,9 @@ EffectsPage::EffectsPage (LiveSamplerProcessor& p) : proc (p)
     globalVolume = std::make_unique<ValueKnob> ("MASTER", juce::Colours::white, -60.0, 6.0, -12.0, UI::dbText, 0.0);
     globalVolume->slider.setTooltip (T ("Master volume for the whole Workstation, all performances"));
     globalVolume->onChange = [this] (double v) { proc.setGlobalVolume ((float) v); };
+    masterMeter = std::make_unique<VuMeter> ([this] (int ch) { return proc.takeMasterPeak (ch); }, true, true);
+    masterMeter->setTooltip (T ("MASTER output (after reverb, delay and master EQ). Click to reset"));
+    addAndMakeVisible (*masterMeter);
     addAndMakeVisible (*globalVolume);
 
     // MIDI Learn
@@ -4132,7 +4212,8 @@ void EffectsPage::resized()
             for (int k = 0; k < s.count; ++k, x += kw) knobs[s.first + k]->setBounds (x, y, kw, kh);
             x += gap;
         }
-        globalVolume->setBounds (x + 10, y, juce::jmin (130, r.getRight() - x - 10), kh);
+        globalVolume->setBounds (x + 10, y, juce::jmin (110, r.getRight() - x - 40), kh);
+        masterMeter->setBounds (globalVolume->getRight() + 4, y, 22, kh);
     }
     // MASTER EQ (ceo Workstation)
     auto row = juce::Rectangle<int> (r.getX(), r.getY() + 2 * rowH + 34, r.getWidth(), 2 * rowH - 34);
