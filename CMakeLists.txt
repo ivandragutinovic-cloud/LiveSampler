@@ -87,6 +87,7 @@ juce_generate_juce_header(KronosAutosampler)
 
 target_sources(KronosAutosampler PRIVATE
     Autosampler/Main.cpp
+    Autosampler/CrashLog.cpp
     Source/KronosPcg.cpp)
 
 target_include_directories(KronosAutosampler PRIVATE Source)
@@ -98,7 +99,9 @@ target_compile_definitions(KronosAutosampler PRIVATE
     JUCE_DISPLAY_SPLASH_SCREEN=0)
 
 if(MSVC)
-    target_compile_options(KronosAutosampler PRIVATE /utf-8)
+    target_compile_options(KronosAutosampler PRIVATE /utf-8 /Zi)
+    # .pdb iz istog builda (CI artifact) prevodi adrese iz autosampler-crash.txt u funkcije
+    target_link_options(KronosAutosampler PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 endif()
 
 target_link_libraries(KronosAutosampler

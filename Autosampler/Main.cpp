@@ -93,15 +93,23 @@ namespace
 }
 
 //==============================================================================
+void installCrashLog (const wchar_t* path);
+void crashLogThreadStart();
+void crashLogNote (const char* text);
+
 class Recorder : public juce::AudioIODeviceCallback
 {
 public:
     void audioDeviceAboutToStart (juce::AudioIODevice* dev) override
     {
         sampleRate = dev->getCurrentSampleRate();
+        juce::Logger::writeToLog ("audio start: " + dev->getName() + "  " + juce::String (sampleRate) + " Hz, " + juce::String (dev->getCurrentBufferSizeSamples()) + " samples"
+                                  + (recording.load() ? "  (WHILE RECORDING)" : ""));
+        recording = false;
+        writePos = 0;
         buffer.setSize (2, (int) (sampleRate * 90.0));
     }
-    void audioDeviceStopped() override {}
+    void audioDeviceStopped() override { juce::Logger::writeToLog ("audio stopped"); }
     void audioDeviceIOCallbackWithContext (const float* const* in, int numIn, float* const* out, int numOut, int n,
                                            const juce::AudioIODeviceCallbackContext&) override
     {
@@ -2054,6 +2062,14 @@ private:
 
     void run() override
     {
+        crashLogThreadStart();
+        try { runJobs(); }
+        catch (const std::exception& e) { juce::Logger::writeToLog (juce::String ("CRASH (exception): ") + e.what()); setStatus (juce::String ("Error: ") + e.what()); }
+        catch (...) { juce::Logger::writeToLog ("CRASH (unknown exception)"); setStatus ("Error (unknown exception)"); }
+    }
+
+    void runJobs()
+    {
         const int total = (int) needed.size();
         lastKind = 0;
         if (analyzeOnly)
@@ -2295,7 +2311,10 @@ private:
         }
         wait (100);
         recorder.recording = false;
-        return recorder.writePos.load();
+        const int len = recorder.writePos.load();
+        juce::Logger::writeToLog ("  captured note " + juce::String (note) + " vel " + juce::String (vel) + ": " + juce::String (len) + " samples, off at " + juce::String (offPos)
+                                  + ", level " + juce::String (recorder.level.load(), 4));
+        return len;
     }
 
     struct Zone { int lo, hi, root; };
@@ -2895,6 +2914,8 @@ public:
     void initialise (const juce::String& commandLine) override
     {
         juce::SystemStats::setApplicationCrashHandler (crashHandler);
+        installCrashLog (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                             .getChildFile ("LiveSampler").getChildFile ("autosampler-crash.txt").getFullPathName().toWideCharPointer());
         logger.reset (juce::FileLogger::createDefaultAppLogger ("LiveSampler", "autosampler-log.txt", "Pikaso Autosampler"));
         juce::Logger::setCurrentLogger (logger.get());
         juce::Logger::writeToLog ("start: " + commandLine);

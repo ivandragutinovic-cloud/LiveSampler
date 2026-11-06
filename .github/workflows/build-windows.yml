@@ -31,7 +31,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PikasoAutosampler-Windows
-          path: build/KronosAutosampler_artefacts/Release/*.exe
+          path: |
+            build/KronosAutosampler_artefacts/Release/*.exe
+            build/KronosAutosampler_artefacts/Release/*.pdb
 
       # Najnovija verzija uvek na istoj adresi (Release "latest"), za automatsko skidanje na racunar
       - name: Zip
