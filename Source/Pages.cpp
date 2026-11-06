@@ -209,6 +209,9 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
     auto c3 = [this] { return proc.getC3Is60(); };
     UI::setupIncDec (transpose, -24, 24, 1, semis);
     UI::setupIncDec (octave, -3, 3, 1, semis);
+    UI::setupIncDec (tune, -100, 100, 1, [] (double v) { const int c = juce::roundToInt (v); return (c > 0 ? "+" : "") + juce::String (c) + " c"; });
+    tune.setDoubleClickReturnValue (true, 0.0);
+    tune.setTooltip (T ("Tune / detune of this part in cents (double-click = 0)"));
     UI::setupNoteBox (keyLow, c3);
     UI::setupNoteBox (keyHigh, c3);
     UI::setupIncDec (velLow, 1, 127, 1);
@@ -217,15 +220,16 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
 
     transpose.onValueChange = [this] { edit ([this] (PerfPart& pp) { pp.transpose = (int) transpose.getValue(); }); };
     octave.onValueChange    = [this] { edit ([this] (PerfPart& pp) { pp.octave = (int) octave.getValue(); }); };
+    tune.onValueChange      = [this] { edit ([this] (PerfPart& pp) { pp.detuneCents = (float) tune.getValue(); }); };
     keyLow.onValueChange    = [this] { edit ([this] (PerfPart& pp) { pp.keyLow = (int) keyLow.getValue(); pp.keyHigh = juce::jmax (pp.keyHigh, pp.keyLow); }); };
     keyHigh.onValueChange   = [this] { edit ([this] (PerfPart& pp) { pp.keyHigh = (int) keyHigh.getValue(); pp.keyLow = juce::jmin (pp.keyLow, pp.keyHigh); }); };
     velLow.onValueChange    = [this] { edit ([this] (PerfPart& pp) { pp.velLow = (int) velLow.getValue(); pp.velHigh = juce::jmax (pp.velHigh, pp.velLow); }); };
     velHigh.onValueChange   = [this] { edit ([this] (PerfPart& pp) { pp.velHigh = (int) velHigh.getValue(); pp.velLow = juce::jmin (pp.velLow, pp.velHigh); }); };
     channel.onValueChange   = [this] { edit ([this] (PerfPart& pp) { pp.midiChannel = (int) channel.getValue(); }); };
 
-    const char* names[] = { "Transp", "Octave", "Low", "High", "Vel lo", "Vel hi", "Channel" };
-    juce::Slider* boxes[] = { &transpose, &octave, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
-    for (int k = 0; k < 7; ++k)
+    const char* names[] = { "Transp", "Octave", "Tune", "Low", "High", "Vel lo", "Vel hi", "Channel" };
+    juce::Slider* boxes[] = { &transpose, &octave, &tune, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
+    for (int k = 0; k < 8; ++k)
     {
         styleLabel (labels[k], T (names[k]), 11.5f);
         addAndMakeVisible (labels[k]);
@@ -278,6 +282,7 @@ PartStrip::PartStrip (LiveSamplerProcessor& p, LiveSamplerEditor& e, int i)
         ml.bindSlider (reverb.slider, id + "reverb");
         ml.bindSlider (delay.slider, id + "delay");
         ml.bindSlider (transpose, id + "transpose");
+        ml.bindSlider (tune, id + "tune");
         ml.bindSlider (octave, id + "octave");
         ml.bindButton (tercaButton, id + "terca");
         ml.bindButton (sustainButton, id + "sustain");
@@ -603,6 +608,7 @@ void PartStrip::refresh()
     reverb.setValue (p.reverbSend);
     delay.setValue (p.delaySend);
     setSliderValue (transpose, p.transpose);
+    setSliderValue (tune, p.detuneCents);
     setSliderValue (octave, p.octave);
     setSliderValue (keyLow, p.keyLow);
     setSliderValue (keyHigh, p.keyHigh);
@@ -697,7 +703,7 @@ void PartStrip::resized()
     else
     {
         // slobodan prostor (bez KEYS redova) ide na vece dugmice
-        const int need = 120 + 4 + (proc.getShowKeyRows() ? 7 : 2) * 25 + 4 + 24;
+        const int need = 120 + 4 + (proc.getShowKeyRows() ? 8 : 3) * 25 + 4 + 24;
         const int kh = 60 + juce::jlimit (0, 30, (r.getHeight() - need) / 2);
         auto knobs1 = r.removeFromTop (kh);
         volume.setBounds (knobs1.removeFromLeft (knobs1.getWidth() / 2));
@@ -708,11 +714,11 @@ void PartStrip::resized()
     }
     r.removeFromTop (4);
 
-    juce::Slider* boxes[] = { &transpose, &octave, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
+    juce::Slider* boxes[] = { &transpose, &octave, &tune, &keyLow, &keyHigh, &velLow, &velHigh, &channel };
     const bool keyRows = proc.getShowKeyRows();
-    for (int k = 0; k < 7; ++k)
+    for (int k = 0; k < 8; ++k)
     {
-        const bool vis = k < 2 || keyRows;   // Transp / Octave uvek; tasteri, jacine i kanal na dugme KEYS (ili prevlacenje dole)
+        const bool vis = k < 3 || keyRows;   // Transp / Octave uvek; tasteri, jacine i kanal na dugme KEYS (ili prevlacenje dole)
         labels[k].setVisible (vis);
         boxes[k]->setVisible (vis);
         if (! vis) continue;

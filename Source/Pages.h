@@ -151,8 +151,8 @@ private:
     LearnButton onButton, soloButton, partMenu, userButton, editButton, eqButton, tercaButton, sustainButton, exprButton, userPrev, userNext;
     void stepUser (int dir);
     ValueKnob volume, pan, reverb, delay;
-    LearnSlider transpose, octave, keyLow, keyHigh, velLow, velHigh, channel;
-    juce::Label labels[7];
+    LearnSlider transpose, octave, tune, keyLow, keyHigh, velLow, velHigh, channel;
+    juce::Label labels[8];
 };
 
 class KeyRangeView : public juce::Component
