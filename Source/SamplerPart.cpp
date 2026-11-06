@@ -243,6 +243,26 @@ void SamplerPart::prepare (double newSampleRate, int maxBlock)
     polyHeld = 0;
 }
 
+int SamplerPart::shedVoices (int maxCount, bool includePedal)
+{
+    int done = 0;
+    while (done < maxCount)
+    {
+        Voice* pick = nullptr;
+        for (auto& v : voices)
+        {
+            if (! v.active || v.fadingOut || v.keyDown) continue;
+            if (v.held && ! includePedal) continue;
+            if (pick == nullptr || v.age < pick->age) pick = &v;
+        }
+        if (pick == nullptr) break;
+        pick->fadingOut = true;
+        pick->fadeOutStep = 0.0f;   // standardnih 6 ms
+        ++done;
+    }
+    return done;
+}
+
 int SamplerPart::getNumActiveVoices() const
 {
     int n = 0;
@@ -298,6 +318,7 @@ SamplerPart::Voice* SamplerPart::findFreeVoice()
     }
     if (freeOne != nullptr && busy < limit)
         return freeOne;
+    stolenVoices.fetch_add (1, std::memory_order_relaxed);   // limit polifonije: uzima se glas koji vec svira
     if (oldestReleased != nullptr) return oldestReleased;
     return oldest != nullptr ? oldest : freeOne;
 }

@@ -247,7 +247,12 @@ public:
     void setTuneCents (int pitchClass, float cents);
     // LIVE alati: opterecenje zvuka, polifonija, GIG rezim, split / opseg sviranjem tastera
     float getAudioLoad() const { return audioLoad.load(); }          // 0..1 (deo vremena bloka koji trosi zvuk), vrh sa padom
-    int getDropouts() const { return dropouts.load(); }              // blokovi koji su zakasnili (pucketanje)
+    int getDropouts() const { return dropouts.load(); }
+    // VOICE GUARD: kad zvuk trosi > ~80% vremena bloka, gase se najstariji pusteni glasovi (pre krckanja).
+    // Svaki dogadjaj (gasenje, limit polifonije, prekid zvuka) se upisuje u voice-guard-log.txt sa imenom performansa.
+    bool getVoiceGuard() const { return voiceGuard.load(); }
+    void setVoiceGuard (bool b) { voiceGuard = b; markSave(); }
+    static juce::File getGuardLogFile();              // blokovi koji su zakasnili (pucketanje)
     void resetDropouts() { dropouts = 0; }
     // zvucna kartica (samostalni program): drajver, bafer, ukupna latencija; warn = nije ASIO / velika latencija / pucketanje
     struct AudioInfo { juce::String driver, device; int buffer = 0; double rate = 0, latencyMs = 0; bool warn = false; juce::String advice; };
@@ -520,6 +525,13 @@ private:          // -1 = nema; inace vrednost sa iPada koju pravi kontroler mor
     std::atomic<int> qtMask { 0 };
     std::atomic<float> audioLoad { 0.0f };
     std::atomic<int> dropouts { 0 };
+    std::atomic<bool> voiceGuard { true };
+    std::atomic<float> lastBlockLoad { 0.0f };
+    std::atomic<int> guardShed { 0 }, guardDropouts { 0 };
+    std::atomic<float> guardPeakLoad { 0.0f };
+    // zapis dogadjaja (message nit, iz timerCallback): jedan red na najvise 5 s po performansu
+    struct GuardEpisode { int shed = 0, stolen = 0, drops = 0, maxVoices = 0; float peak = 0.0f; juce::String perfLabel; juce::uint32 lastWrite = 0; bool any = false; } guardEp;
+    void guardTick();
     int maxPolyphony = 128;
     bool showKeyRows = false;
     bool showActiveOnly = false;

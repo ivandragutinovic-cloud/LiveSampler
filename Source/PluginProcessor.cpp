@@ -93,6 +93,7 @@ void LiveSamplerProcessor::saveNow()
     root.setAttribute ("globalTranspose", globalTranspose);
     root.setAttribute ("liveLock", liveLock);
     root.setAttribute ("maxPolyphony", maxPolyphony);
+    root.setAttribute ("voiceGuard", voiceGuard.load());
     root.setAttribute ("gigMode", gigMode);
     root.setAttribute ("showKeyRows", showKeyRows);
     root.setAttribute ("showActiveOnly", showActiveOnly);
@@ -225,6 +226,7 @@ void LiveSamplerProcessor::loadData()
     globalTranspose = juce::jlimit (-24, 24, xml->getIntAttribute ("globalTranspose", 0));
     liveLock = xml->getBoolAttribute ("liveLock", false);
     maxPolyphony = juce::jlimit (8, 128, xml->getIntAttribute ("maxPolyphony", 128));
+    voiceGuard = xml->getBoolAttribute ("voiceGuard", true);
     gigMode = xml->getBoolAttribute ("gigMode", false);
     showKeyRows = xml->getBoolAttribute ("showKeyRows", false);
     showActiveOnly = xml->getBoolAttribute ("showActiveOnly", false);
@@ -920,8 +922,58 @@ void LiveSamplerProcessor::applyGigMode()
     juce::Process::setPriority (gigMode ? juce::Process::HighPriority : juce::Process::NormalPriority);
 }
 
+juce::File LiveSamplerProcessor::getGuardLogFile()
+{
+    return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("LiveSampler").getChildFile ("voice-guard-log.txt");
+}
+
+void LiveSamplerProcessor::guardTick()
+{
+    const auto perfLabel = (currentSlot >= 0 ? juce::String (currentSlot / kPerfPerBank + 1) + "-" + juce::String (currentSlot % kPerfPerBank).paddedLeft ('0', 3) + "  " : juce::String ("(not saved)  "))
+                         + perf.name;
+    int stolen = 0;
+    for (auto& bank : partBanks)
+        for (auto& p : bank) stolen += p.stolenVoices.exchange (0);
+    const int shed = guardShed.exchange (0), drops = guardDropouts.exchange (0);
+    const float peak = guardPeakLoad.exchange (0.0f);
+    int voices = 0;
+    for (int i = 0; i < kNumParts; ++i) voices += getPartVoices (i);
+
+    auto flush = [this]
+    {
+        if (! guardEp.any) return;
+        juce::String line;
+        line << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M:%S") << "  |  " << guardEp.perfLabel
+             << "  |  CPU max " << juce::roundToInt (guardEp.peak * 100.0f) << "%";
+        if (guardEp.shed > 0)   line << "  |  released notes cut: " << guardEp.shed;
+        if (guardEp.stolen > 0) line << "  |  polyphony limit: " << guardEp.stolen << " notes taken";
+        if (guardEp.drops > 0)  line << "  |  DROPOUTS (crackle): " << guardEp.drops;
+        line << "  |  voices up to " << guardEp.maxVoices;
+        juce::StringArray users;
+        for (auto& pp : perf.parts) if (pp.on && pp.user.isNotEmpty()) users.add (pp.user);
+        line << "  |  parts: " << users.size() << " (" << users.joinIntoString (", ") << ")\n";
+        auto f = getGuardLogFile();
+        f.getParentDirectory().createDirectory();
+        f.appendText (line);
+        guardEp = GuardEpisode();
+        guardEp.lastWrite = juce::Time::getMillisecondCounter();
+    };
+
+    if (guardEp.any && guardEp.perfLabel != perfLabel) flush();   // drugi performans: zapisi prethodni
+    if (shed > 0 || stolen > 0 || drops > 0)
+    {
+        guardEp.any = true;
+        guardEp.perfLabel = perfLabel;
+        guardEp.shed += shed; guardEp.stolen += stolen; guardEp.drops += drops;
+        guardEp.peak = juce::jmax (guardEp.peak, peak);
+        guardEp.maxVoices = juce::jmax (guardEp.maxVoices, voices);
+    }
+    if (guardEp.any && juce::Time::getMillisecondCounter() - guardEp.lastWrite >= 5000) flush();
+}
+
 void LiveSamplerProcessor::timerCallback()
 {
+    guardTick();
     if (const int kn = keyLearnNote.exchange (-1); kn >= 0 && keyLearnMode.load() != 0)
     {
         const int pi = juce::jlimit (0, kNumParts - 1, keyLearnPart.load());
@@ -3322,7 +3374,9 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             if (sr <= 0 || n <= 0) return;
             const double used = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
             const float load = (float) (used / (n / sr));
-            if (load > 1.0f) p.dropouts.fetch_add (1);   // blok nije stigao na vreme = stvarno pucketanje
+            if (load > 1.0f) { p.dropouts.fetch_add (1); p.guardDropouts.fetch_add (1); }   // blok nije stigao na vreme = stvarno pucketanje
+            p.lastBlockLoad = load;
+            if (load > p.guardPeakLoad.load()) p.guardPeakLoad = load;
             const float prev = p.audioLoad.load();
             p.audioLoad = load > prev ? load : prev * 0.995f + load * 0.005f;
         }
@@ -3354,6 +3408,22 @@ void LiveSamplerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     if (audioConfig == nullptr)
         return;
     const auto& c = *audioConfig;
+
+    // VOICE GUARD: prethodni blok je bio blizu granice -> prvo repovi prethodnog performansa, pa pusteni tonovi
+    if (voiceGuard.load())
+    {
+        const float L = lastBlockLoad.load();
+        if (L > 0.80f)
+        {
+            int want = L > 0.95f ? 8 : 3;
+            const bool pedal = L > 0.92f;
+            int shed = 0;
+            for (auto& p : tails) { if (shed >= want) break; shed += p.shedVoices (want - shed, true); }
+            for (auto& p : parts) { if (shed >= want) break; shed += p.shedVoices (want - shed, false); }
+            if (pedal) for (auto& p : parts) { if (shed >= want) break; shed += p.shedVoices (want - shed, true); }
+            if (shed > 0) guardShed.fetch_add (shed);
+        }
+    }
 
     keyboardState.processNextMidiBuffer (midi, 0, n, true);
     for (const auto meta : midi)   // jacina dirki za prikaz na virtuelnoj klavijaturi

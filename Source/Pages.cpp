@@ -4469,6 +4469,23 @@ SettingsPage::SettingsPage (LiveSamplerProcessor& p) : proc (p)
     streamToggle.setTooltip (T ("For big libraries (pianos, long strings): much less RAM. Needs a fast disk (SSD). Samples are loaded again when you change this."));
     streamToggle.onClick = [this] { proc.setDiskStreaming (streamToggle.getToggleState()); };
     addAndMakeVisible (streamToggle);
+    guardToggle.setButtonText (T ("VOICE GUARD: near the CPU limit, cut the oldest released notes first (instead of crackling)"));
+    guardToggle.setTooltip (T ("Keys you hold are never cut. Every time it acts (or polyphony runs out, or there is a dropout) a line with the performance name is written to the log."));
+    guardToggle.onClick = [this] { proc.setVoiceGuard (guardToggle.getToggleState()); };
+    addAndMakeVisible (guardToggle);
+    guardLogButton.setButtonText (T ("Open log"));
+    guardLogButton.setTooltip (T ("Which performances hit the limit: voice-guard-log.txt"));
+    guardLogButton.onClick = []
+    {
+        const auto f = LiveSamplerProcessor::getGuardLogFile();
+        if (! f.existsAsFile())
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Voice guard", T ("No events yet: no performance has hit the limit."));
+            return;
+        }
+        f.startAsProcess();
+    };
+    addAndMakeVisible (guardLogButton);
     resetDrops.setButtonText (T ("Reset dropouts"));
     resetDrops.onClick = [this] { proc.resetDropouts(); refresh(); };
     addAndMakeVisible (resetDrops);
@@ -4508,6 +4525,7 @@ void SettingsPage::refresh()
     if (polyBox.getSelectedId() == 0) polyBox.setText (juce::String (proc.getMaxPolyphony()), juce::dontSendNotification);
     gigToggle.setToggleState (proc.isGigMode(), juce::dontSendNotification);
     streamToggle.setToggleState (proc.isDiskStreaming(), juce::dontSendNotification);
+    guardToggle.setToggleState (proc.getVoiceGuard(), juce::dontSendNotification);
     {
         const auto a = proc.getAudioInfo();
         audioLabel.setText (T ("Audio: ") + (a.driver.isNotEmpty() ? a.driver : juce::String ("-")) + "  " + a.device + "   |   "
@@ -4578,6 +4596,11 @@ void SettingsPage::resized()
     r.removeFromTop (6);
     gigToggle.setBounds (r.removeFromTop (28));
     streamToggle.setBounds (r.removeFromTop (28));
+    {
+        auto row = r.removeFromTop (28);
+        guardLogButton.setBounds (row.removeFromRight (140).reduced (0, 2));
+        guardToggle.setBounds (row);
+    }
     r.removeFromTop (6);
     {
         auto row = r.removeFromTop (44);

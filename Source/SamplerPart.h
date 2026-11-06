@@ -100,6 +100,10 @@ public:
                    juce::AudioBuffer<float>& delaySend, int numSamples);
 
     int getNumActiveVoices() const;
+    // VOICE GUARD (audio nit): kratko (6 ms) utisa do maxCount najstarijih glasova ciji je taster pusten;
+    // includePedal = i one koje drzi samo sustain pedala. Tasteri koji su pritisnuti se nikad ne diraju.
+    int shedVoices (int maxCount, bool includePedal);
+    std::atomic<int> stolenVoices { 0 };   // glasovi uzeti zbog limita polifonije (UI cita i brise)
     // VU: najveci vrh izlaza ovog dela od poslednjeg citanja (UI cita i brise)
     float takePeak (int ch) { return peak[ch & 1].exchange (0.0f); }
     bool offline = false;   // merenje van audio niti (AUTO LEVEL): bez citanja sa diska, samo pocetak sempla iz RAM-a
