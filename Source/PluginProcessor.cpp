@@ -997,7 +997,15 @@ void LiveSamplerProcessor::timerCallback()
     {
         const int pi = juce::jlimit (0, kNumParts - 1, keyLearnPart.load());
         auto p = perf;
-        if (keyLearnMode.load() == 2)
+        if (keyLearnMode.load() == 3)
+        {
+            // HIGH (Pikaso Stage, drzano dugme): poslednji odsviran taster je gornja granica parta; vazi i za zakljucan part
+            auto& pp = p.parts[(size_t) pi];
+            pp.keyHigh = kn;
+            if (pp.keyLow > kn) pp.keyLow = 0;
+            updatePerformance (p);
+        }
+        else if (keyLearnMode.load() == 2)
         {
             // SPLIT: ovaj part od tastera navise, ostali ukljuceni partovi koji su prelazili preko tastera se skracuju ispod njega
             p.parts[(size_t) pi].keyLow = kn;
@@ -3327,6 +3335,18 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
                 });
                 return;
             }
+            if (d[2] == 0x06 && m.getSysExDataSize() >= 5)
+            {
+                // F0 7D 50 06 pp vv F7: drzano dugme HIGH (pp = part): 1 = tasteri ne sviraju, odsviran taster je gornja granica; 0 = kraj
+                const int pp = d[3] & 15, on = d[4];
+                juce::MessageManager::callAsync ([this, pp, on, a = alive]
+                {
+                    if (! a->load()) return;
+                    if (on) armKeyLearn (pp, 3);
+                    else if (keyLearnMode.load() == 3) cancelKeyLearn();
+                });
+                return;
+            }
             if (d[2] == 0x05)
             {
                 // F0 7D 50 05 vv F7: dugme AKORD iz Pikaso Stage = drzano dugme TERCA u Workstationu
@@ -3949,6 +3969,8 @@ void LiveSamplerProcessor::panic()
 
 juce::String LiveSamplerProcessor::getStatusText() const
 {
+    if (keyLearnMode.load() == 3)
+        return T ("HIGH: press the HIGHEST key of part ") + juce::String (keyLearnPart.load() + 1);
     if (keyLearnMode.load() == 2)
         return T ("SPLIT: press the key where part ") + juce::String (keyLearnPart.load() + 1) + T (" starts");
     if (keyLearnMode.load() == 1)
