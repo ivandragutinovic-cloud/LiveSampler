@@ -45,6 +45,7 @@ button:active{filter:brightness(1.25)}
 .step b{flex:1 1 20px;min-width:20px;text-align:center;background:var(--bg);border-radius:6px;padding:7px 0;font-size:13px}
 .step button{flex:0 0 26px;padding:0;min-height:34px;min-width:0}
 .step{min-width:0}
+.phd{display:flex;gap:3px}.phd button{min-height:36px}.phd button:not(:first-child){flex:0 0 40px;padding:0}
 .tg3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
 .tg3 button{font-size:11px;padding:0;min-height:36px}
 .small{font-size:11px;min-height:32px}
@@ -507,20 +508,24 @@ function buildPerf(m) {
   pad.addEventListener("dblclick", () => api({ op: "vector", x: 0, y: 0 }));
   const padUpd = () => { dot.style.left = ((+S.status.vx || 0) + 1) * 50 + "%"; dot.style.top = (1 - (+S.status.vy || 0)) * 50 + "%"; };
   ctrls.push(() => { if (padHold < Date.now()) padUpd(); }); padUpd();
-  // LOCK PART 16 (kao u Workstation meniju parta): part 16 ostaje kad se menjaju performansi, njegova zona svira samo on
-  const lk = el("button", "", "LOCK 16", top);
-  lk.style.minWidth = "120px"; lk.style.alignSelf = "stretch"; lk.style.fontWeight = "700";
-  lk.title = "Lock part 16: it stays the same when you change performances, and only it plays in its key zone";
-  lk.onclick = () => api({ op: "partLock", part: 15, on: !((+S.status.partLocks || 0) & (1 << 15)) });
-  ctrls.push(() => { const on = !!((+S.status.partLocks || 0) & (1 << 15)); lk.classList.toggle("on", on); lk.textContent = on ? "LOCKED 16" : "LOCK 16"; lk.style.background = on ? "#b8343f" : ""; });
-
   sceneBar(m, false);
   const grid = el("div", "parts", "", m);
   for (let i = partPage * 8; i < partPage * 8 + 8; i++) {
     const col = PCOL[i], P = "Part[" + i + "]";
     const c = el("div", "part", "", grid);
     const bar = el("div", "bar", "", c); bar.style.background = col;
-    toggle(c, { label: "PART " + (i + 1), target: "perf", path: P + "@on", onCol: col });
+    const hd = el("div", "phd", "", c);
+    const onB = toggle(hd, { label: "PART " + (i + 1), target: "perf", path: P + "@on", onCol: col }); onB.style.flex = "1";
+    const so = el("button", "", "S", hd); so.title = "SOLO: only soloed parts play";
+    so.onclick = () => api({ op: "partSolo", part: i, on: !((+S.status.solo || 0) & (1 << i)) });
+    const mo = el("button", "", "⋯", hd); mo.title = "More: lock, copy / paste, vector, harmony level, key range...";
+    mo.onclick = () => partMenu(i);
+    ctrls.push(() => {
+      const sOn = !!((+S.status.solo || 0) & (1 << i)), lk = !!((+S.status.partLocks || 0) & (1 << i));
+      so.style.background = sOn ? "#d9a400" : ""; so.style.color = sOn ? "#111" : "";
+      onB.textContent = lk ? "🔒 " + (i + 1) : "PART " + (i + 1);
+      mo.style.background = lk ? "#b8343f" : "";
+    });
     const u = el("div", "usr", "", c);
     const mi = el("button", "st", "-", u), nm = el("button", "nm", "", u), pl = el("button", "st", "+", u);
     const step = d => {
@@ -558,6 +563,58 @@ function buildPerf(m) {
   zoneStrip(m);
 }
 
+
+// sve sto je u Workstation-u na desni klik parta (PART meni, HARM meni): jedan pregledan prozor
+let partClip = null;
+function partMenu(i) {
+  const P = "Part[" + i + "]", col = PCOL[i];
+  modal("Part " + (i + 1) + (partOf(i).user ? ": " + partOf(i).user : ""), (g, close) => {
+    const sec = t => { const h = el("div", "lab", t, g); h.style.margin = "12px 0 4px"; return el("div", "row", "", g); };
+    let r = sec("PART");
+    const lk = el("button", "", "", r); lk.style.flex = "2";
+    lk.onclick = () => api({ op: "partLock", part: i, on: !((+S.status.partLocks || 0) & (1 << i)) });
+    const so = el("button", "", "", r); so.style.flex = "1";
+    so.onclick = () => api({ op: "partSolo", part: i, on: !((+S.status.solo || 0) & (1 << i)) });
+    ctrls.push(() => {
+      const on = !!((+S.status.partLocks || 0) & (1 << i)), sOn = !!((+S.status.solo || 0) & (1 << i));
+      lk.textContent = on ? "🔒 LOCKED (tap to unlock)" : "LOCK PART: stays when you change performances";
+      lk.style.background = on ? "#b8343f" : ""; so.textContent = sOn ? "SOLO ON" : "SOLO"; so.style.background = sOn ? "#d9a400" : ""; so.style.color = sOn ? "#111" : "";
+    });
+    r = sec("COPY / PASTE");
+    el("button", "", "Copy part", r).onclick = () => { const a = Object.assign({}, partOf(i)); delete a.index; partClip = a; close(); };
+    const pb = el("button", "", "Paste part", r); pb.disabled = !partClip;
+    pb.onclick = () => { if (partClip) api({ op: "partReplace", part: i, attrs: partClip }); close(); };
+    const cl = el("button", "", "Clear part", r); cl.style.background = "#5a2230";
+    cl.onclick = () => { if (confirm("Clear part " + (i + 1) + "?")) { api({ op: "partReplace", part: i, attrs: null }); close(); } };
+    if (partOf(i).missingName) {
+      r = sec("MISSING SOUND: " + partOf(i).missingName);
+      el("button", "", "Resample from Kronos (Pikaso Autosampler on the PC)", r).onclick = () => { api({ op: "partResample", part: i }); close(); };
+    }
+    r = sec("KEY RANGE");
+    const kb = [["Range by playing (low, high)", 1], ["SPLIT at the key I press", 2], ["HIGH key by playing", 3]].map(([t, md]) => {
+      const b = el("button", "", t, r); b.onclick = () => api({ op: "keyLearn", part: i, mode: +S.status.keyLearn === md ? 0 : md }); return [b, t, md];
+    });
+    el("button", "", "Keys, velocity, channel...", r).onclick = () => { close(); partKeys(i); };
+    ctrls.push(() => { const m = +S.status.keyLearn; kb.forEach(([b, t, md]) => { b.style.background = m === md ? "#e5484d" : ""; b.textContent = m === md ? "Play the key(s) now..." : t; }); });
+    r = sec("HARMONY LEVEL (this part)");
+    const hv = () => { const v = partOf(i).tercaVel; return v === undefined || v === null || v === "" ? -1 : +v; };
+    const gb = el("button", "", "General (HARMONY page)", r);
+    gb.onclick = () => setP("perf", P + "@tercaVel", null);
+    [25, 50, 75, 100, 125, 150].forEach(pc => { const b = el("button", "", pc + "%", r); b.onclick = () => setP("perf", P + "@tercaVel", pc / 100); b.dataset.pc = pc; });
+    ctrls.push(() => { const v = hv(); r.querySelectorAll("button").forEach(b => { const on = b.dataset.pc ? Math.abs(v * 100 - +b.dataset.pc) < 1 : v < 0; b.classList.toggle("on", on); }); });
+    if (partOf(i).fixedHarm) {
+      const r2 = el("div", "row", "", g); r2.style.marginTop = "4px";
+      el("button", "", "Turn off built-in harmony (Kronos scale): play the plain transpose", r2).onclick = () => { setP("perf", P + "@fixedHarm", null); close(); };
+    }
+    r = sec("VECTOR JOYSTICK");
+    seg(r, { items: ["Off", "+X", "-X", "+Y", "-Y"], target: "perf", path: P + "@vjs" });
+    const r3 = sec("Level at center");
+    const cb = [0, 25, 50, 75, 100].map(c => { const b = el("button", "", c + "%", r3); b.onclick = () => setP("perf", P + "@vjsCenter", c / 100); return [b, c]; });
+    ctrls.push(() => { const on = +(partOf(i).vjs || 0) > 0, v = partOf(i).vjsCenter === undefined ? 1 : +partOf(i).vjsCenter; cb.forEach(([b, c]) => { b.disabled = !on; b.classList.toggle("on", Math.abs(v * 100 - c) < 1); }); });
+    r = sec("TUNING");
+    toggle(r, { label: "Follows the oriental tuning (TUNING)", target: "perf", path: P + "@scaleTune", def: true });
+  });
+}
 
 // raspon tastera svih delova: povuci ivicu (donji / gornji taster) ili sredinu (cela zona)
 function zoneStrip(m) {
@@ -805,10 +862,12 @@ function buildUser(m) {
   mi.onclick = () => go(ui - 1); pl.onclick = () => go(ui + 1);
   nm.onclick = () => picker("Edit user", userItems(), ui >= 0 && S.users.list[ui] ? S.users.list[ui][0] : "", [], (a, v) => go(userIndexOf(v)), S.users.cats);
   nm.textContent = ui >= 0 && S.users.list[ui] ? String(ui + 1).padStart(3, "0") + "  " + S.users.list[ui][0] + (S.users.list[ui][1] ? "   [" + S.users.list[ui][1] + "]" : "") : "— choose user —";
-  el("button", "", "+ NEW", top).onclick = () => picker("New user", [], "", ["From a multisample...", "Empty user (samples)", "New FM user (FM synthesis)"], a => {
+  el("button", "", "+ NEW", top).onclick = () => picker("New user", [], "", ["From a multisample...", "Empty user (samples)", "New FM user (FM synthesis)", "New VL user (physical model: winds, bowed)...", "New VST3 plugin user (e.g. SWAM)..."], a => {
     if (a === 0) pickInstrument("New user from multisample", "", inst => { if (inst) api({ op: "newUser", instrument: inst, part: -1 }); });
     else if (a === 1) api({ op: "newUser", instrument: "", part: -1 });
-    else api({ op: "newFmUser" });
+    else if (a === 2) api({ op: "newFmUser" });
+    else if (a === 3) picker("New VL user", (S.users.vl || []).map((n, k) => ({ label: n, value: k })), -1, [], (x, k) => api({ op: "newVlUser", model: k }));
+    else { const pl = S.users.plugins || []; if (!pl.length) return alert("No VST3 instruments known yet. Scan them on the PC: USER > New > VST3 > Scan."); picker("New VST3 user", pl.map((n, k) => ({ label: n, value: k })), -1, [], (x, k) => api({ op: "newPluginUser", i: k })); }
   });
   if (!d) { el("div", "hint", "Choose a user to edit.", m); return; }
   const mg = el("div", "row", "", m); mg.style.marginTop = "6px";
@@ -965,7 +1024,7 @@ function buildLists(m) {
   if (listSub === "set") return buildSetList(m);
   const L = S.lists; if (!L) { el("div", "hint", "Loading...", m); return; }
   const bk = el("div", "hs", "", m); bk.style.marginTop = "6px";
-  L.banks.forEach((n, b) => { const x = el("button", b === L.bank ? "on" : "", (b + 1) + "  " + esc(n), bk); x.onclick = () => api({ op: "bank", bank: b }); });
+  L.banks.forEach((n, b) => { const x = el("button", b === L.bank ? "on" : "", (b + 1) + "  " + esc(n), bk); x.onclick = () => api({ op: "bank", bank: b }); longPress(x, () => bankMenu(b)); });
   const tools = el("div", "row", "", m); tools.style.marginTop = "6px";
   [["recall", "TAP = RECALL"], ["store", "TAP = STORE HERE"], ["cat", "TAP = CATEGORY"], ["clear", "TAP = CLEAR"]].forEach(([k, t]) => {
     const b = el("button", listMode === k ? "on" : "", t, tools); b.onclick = () => { listMode = k; built = ""; render(); };
@@ -973,6 +1032,7 @@ function buildLists(m) {
   });
   el("span", "", "", tools).style.flex = "1";
   el("button", "", "RENAME LIST", tools).onclick = () => { const n = prompt("List name", L.banks[L.bank]); if (n && n.trim()) api({ op: "bankName", bank: L.bank, name: n.trim() }); };
+  el("div", "hint", "Hold a performance (or a list button) for all options.", m).style.fontSize = "11px";
   const g = el("div", "grid8", "", m);
   for (let i = 0; i < 128; i++) {
     const s = L.bank * 128 + i, v = L.slots[s];
@@ -980,13 +1040,49 @@ function buildLists(m) {
     const cat = v && v[1] >= 0 && L.cats[v[1]];
     if (cat) b.style.borderLeftColor = cat[1];
     b.innerHTML = `<small>${String(i).padStart(3, "0")}${cat ? " · " + esc(cat[0]) : ""}</small>${v ? esc(v[0]) : "—"}`;
+    longPress(b, () => slotMenu(s));
     b.onclick = () => {
+      if (b._lp) { b._lp = false; return; }
       if (listMode === "recall") { if (v) api({ op: "recall", slot: s }); return; }
       if (listMode === "store") { if (!v || confirm("Overwrite \"" + v[0] + "\" with \"" + S.status.name + "\"?")) api({ op: "storeTo", slot: s }); return; }
       if (listMode === "clear") { if (!v) return; if (s === L.cur) return alert("The current performance cannot be cleared."); if (confirm("Clear \"" + v[0] + "\"?")) api({ op: "clearSlot", slot: s }); return; }
       if (listMode === "cat" && v) picker("Category: " + v[0], L.cats.map((x, k) => ({ label: x[0], value: k })), v[1], ["(no category)"], (a, k) => api({ op: "slotCat", slot: s, cat: a === 0 ? -1 : k }));
     };
   }
+}
+
+// dugi pritisak (kao desni klik u Workstation-u)
+function longPress(b, fn) {
+  let t = 0;
+  b.addEventListener("pointerdown", () => { b._lp = false; clearTimeout(t); t = setTimeout(() => { b._lp = true; fn(); }, 550); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => b.addEventListener(ev, () => clearTimeout(t)));
+  b.addEventListener("contextmenu", e => { e.preventDefault(); clearTimeout(t); b._lp = true; fn(); });
+}
+function slotMenu(s) {
+  const L = S.lists, v = L.slots[s], nm = v ? v[0] : "(empty)";
+  modal(L.banks[Math.floor(s / 128)] + "  " + String(s % 128).padStart(3, "0") + "  " + nm, (g, close) => {
+    const r = el("div", "row", "", g);
+    const b1 = el("button", "", "Load", r); b1.disabled = !v; b1.onclick = () => { api({ op: "recall", slot: s }); close(); };
+    el("button", "", "Write the current performance here", r).onclick = () => { if (!v || confirm("Overwrite \"" + v[0] + "\" with \"" + S.status.name + "\"?")) { api({ op: "storeTo", slot: s }); close(); } };
+    el("button", "", "New empty performance here", r).onclick = () => { if (!v || confirm("Replace \"" + v[0] + "\" with an empty performance?")) { api({ op: "slotInit", slot: s }); close(); } };
+    const r2 = el("div", "row", "", g); r2.style.marginTop = "8px";
+    const c = el("button", "", "Category: " + (v && v[1] >= 0 && L.cats[v[1]] ? L.cats[v[1]][0] : "—"), r2); c.disabled = !v;
+    c.onclick = () => picker("Category: " + nm, L.cats.map((x, k) => ({ label: x[0], value: k })), v[1], ["(no category)"], (a, k) => api({ op: "slotCat", slot: s, cat: a === 0 ? -1 : k }));
+    const a = el("button", "", "Add to set list (first empty button)", r2); a.disabled = !v; a.onclick = () => { api({ op: "slotToSetList", slot: s }); close(); };
+    const d = el("button", "", "Delete", r2); d.style.background = "#5a2230"; d.disabled = !v || s === L.cur;
+    d.onclick = () => { if (confirm("Delete \"" + nm + "\"?")) { api({ op: "clearSlot", slot: s }); close(); } };
+  });
+}
+function bankMenu(b) {
+  const L = S.lists;
+  modal("List " + (b + 1) + "  " + L.banks[b], (g, close) => {
+    const r = el("div", "row", "", g);
+    el("button", "", "Rename list...", r).onclick = () => { const n = prompt("List name", L.banks[b]); if (n && n.trim()) { api({ op: "bankName", bank: b, name: n.trim() }); close(); } };
+    el("div", "lab", "CATEGORY FOR ALL PERFORMANCES IN THIS LIST", g).style.margin = "12px 0 4px";
+    const r2 = el("div", "row", "", g); r2.style.flexWrap = "wrap";
+    L.cats.forEach((x, k) => { const c = el("button", "", esc(x[0]), r2); c.style.borderLeft = "5px solid " + x[1]; c.onclick = () => { if (confirm("Put all performances of list " + (b + 1) + " in category " + x[0] + "?")) { api({ op: "bankCat", bank: b, cat: k }); close(); } }; });
+    el("button", "", "No category", r2).onclick = () => { if (confirm("Remove the category from all performances of list " + (b + 1) + "?")) { api({ op: "bankCat", bank: b, cat: -1 }); close(); } };
+  });
 }
 
 function buildSetList(m) {

@@ -2,6 +2,8 @@
 #include "PluginProcessor.h"
 #include "SamplerPart.h"
 #include "BinaryData.h"
+#include "Pages.h"
+#include "VlSynth.h"
 #include <thread>
 #include <set>
 #if ! JUCE_WINDOWS
@@ -66,7 +68,8 @@ namespace
             }
             e = next;
         }
-        if (value.isBool()) e->setAttribute (attr, (bool) value);
+        if (value.isVoid() || value.isUndefined()) e->removeAttribute (attr);   // null = vrati na podrazumevano
+        else if (value.isBool()) e->setAttribute (attr, (bool) value);
         else if (value.isInt() || value.isInt64()) e->setAttribute (attr, (int) value);
         else if (value.isDouble()) e->setAttribute (attr, (double) value);
         else e->setAttribute (attr, value.toString());
@@ -484,6 +487,65 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "step")       proc.stepPerformance ((int) v["dir"]);
     else if (op == "harmony")    proc.setTercaOn ((bool) v["on"]);
     else if (op == "vector")     proc.setVectorXY ((float) (double) v["x"], (float) (double) v["y"]);
+    else if (op == "partReplace")
+    {
+        // ceo part odjednom (iPad: Paste / Clear part); attrs = atributi parta, null = prazan part
+        const int pi = (int) v["part"];
+        if (pi < 0 || pi >= kNumParts) return;
+        auto xml = proc.getPerformance().toXml();
+        juce::XmlElement* pe = nullptr;
+        for (auto* c : xml->getChildWithTagNameIterator ("Part"))
+            if (c->getIntAttribute ("index", -1) == pi) { pe = c; break; }
+        if (pe == nullptr) { pe = xml->createNewChildElement ("Part"); }
+        pe->removeAllAttributes();
+        pe->setAttribute ("index", pi);
+        if (auto* o = v["attrs"].getDynamicObject())
+            for (auto& nv : o->getProperties())
+                if (nv.name.toString() != "index") setPath (*pe, "@" + nv.name.toString(), nv.value);
+        proc.updatePerformance (Performance::fromXml (*xml));
+        dirty = true;
+    }
+    else if (op == "partSolo")   { const int p = (int) v["part"]; if (p >= 0 && p < kNumParts) proc.setSolo (p, (bool) v["on"]); }
+    else if (op == "partResample")
+    {
+        const int pi = (int) v["part"];
+        if (pi < 0 || pi >= kNumParts) return;
+        const auto& pp = proc.getPerformance().parts[(size_t) pi];
+        if (pp.isMissing()) KronosPage::startAutosampler ("--pcg \"" + pp.missingPcg + "\" --program " + pp.missingSource);
+    }
+    else if (op == "slotInit")
+    {
+        const int s = (int) v["slot"];
+        if (s < 0 || s >= kNumPerfSlots) return;
+        proc.initPerformanceSlot (s);
+        proc.recallPerformance (s);
+        dirty = true;
+    }
+    else if (op == "slotToSetList")
+    {
+        const int s = (int) v["slot"];
+        if (s < 0 || s >= kNumPerfSlots || ! proc.getSlot (s).used) return;
+        auto sl = proc.getSetList (proc.getCurrentSetList());
+        for (auto& x : sl.slots)
+            if (x.perf < 0) { x.perf = s; break; }
+        proc.updateSetList (proc.getCurrentSetList(), sl);
+        dirty = true;
+    }
+    else if (op == "bankCat")
+    {
+        // kategorija za sve performanse u listi
+        const int b = juce::jlimit (0, kNumPerfBanks - 1, (int) v["bank"]), c = (int) v["cat"];
+        for (int i = 0; i < kPerfPerBank; ++i)
+            if (proc.getSlot (b * kPerfPerBank + i).used) proc.setSlotCategory (b * kPerfPerBank + i, c);
+        dirty = true;
+    }
+    else if (op == "newVlUser")  { remoteUser = proc.createVlUser (juce::jlimit (0, Vl::NumModels - 1, (int) v["model"])); dirty = true; }
+    else if (op == "newPluginUser")
+    {
+        const auto plugs = proc.getPluginHost().instruments();
+        const int i = (int) v["i"];
+        if (i >= 0 && i < plugs.size()) { remoteUser = proc.createPluginUser (plugs[i]); dirty = true; }
+    }
     else if (op == "partLock")   { const int p = (int) v["part"]; if (p >= 0 && p < kNumParts) proc.setPartLock (p, (bool) v["on"]); dirty = true; }
     else if (op == "gvol")       proc.setGlobalVolume ((float) (double) v["db"]);
     else if (op == "revPreset")
@@ -759,6 +821,9 @@ juce::StringPairArray RemoteServer::buildSections()
             int lockMask = 0;
             for (int i = 0; i < kNumParts; ++i) if (proc.isPartLocked (i)) lockMask |= 1 << i;
             st->setProperty ("partLocks", lockMask);
+            int soloMask = 0;
+            for (int i = 0; i < kNumParts; ++i) if (proc.isSolo (i)) soloMask |= 1 << i;
+            st->setProperty ("solo", soloMask);
         }
         st->setProperty ("vy", std::round (proc.getVectorY() * 100.0f) / 100.0f);
         st->setProperty ("c3", proc.getC3Is60());
@@ -818,6 +883,13 @@ juce::StringPairArray RemoteServer::buildSections()
         auto* us = new juce::DynamicObject();
         us->setProperty ("list", list);
         us->setProperty ("cats", cats);
+        {
+            juce::Array<juce::var> vl, pl;
+            for (auto& n : Vl::modelNames()) vl.add (n);
+            for (auto& d : proc.getPluginHost().instruments()) pl.add (d.name + (d.manufacturerName.isNotEmpty() ? "  (" + d.manufacturerName + ")" : juce::String()));
+            us->setProperty ("vl", vl);
+            us->setProperty ("plugins", pl);
+        }
         out.set ("users", json (juce::var (us)));
 
         int ru = remoteUser;
