@@ -43,10 +43,72 @@ namespace Picker
     struct Panel : public juce::Component, private juce::ListBoxModel
     {
         // actions: stavke koje su uvek gore (npr. "+ New user"); onPick (actionIndex ili -1, vrednost)
-        Panel (juce::StringArray labelsIn, juce::StringArray valuesIn, juce::StringArray actionsIn, const juce::String& current,
-               std::function<void (int, const juce::String&)> pick)
-            : labels (std::move (labelsIn)), values (std::move (valuesIn)), actions (std::move (actionsIn)), onPick (std::move (pick))
+        // kategorije (levo): spisak kategorija sa brojem stavki; klik bira kategoriju, pretraga trazi kroz sve
+        struct CatModel : public juce::ListBoxModel
         {
+            Panel* owner = nullptr;
+            int getNumRows() override { return owner->catNames.size(); }
+            void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool) override
+            {
+                if (row < 0 || row >= owner->catNames.size()) return;
+                const bool sel = owner->catNames[row] == owner->selCat;
+                if (sel) g.fillAll (Pal::accent.withAlpha (0.45f));
+                g.setFont (juce::FontOptions (14.0f, sel ? juce::Font::bold : juce::Font::plain));
+                g.setColour (sel ? Pal::text : Pal::dim.brighter (0.3f));
+                auto cn = owner->catNames[row];
+                if (owner->folders)   // putanja foldera: prikazi kraj (poslednja 2 nivoa), dubina uvlacenjem
+                {
+                    const auto parts = juce::StringArray::fromTokens (cn, "/", "");
+                    if (parts.size() > 2) cn = juce::String::fromUTF8 ("\xe2\x80\xa6/") + parts[parts.size() - 2] + "/" + parts[parts.size() - 1];
+                }
+                g.drawText (cn, 8, 0, w - 44, h, juce::Justification::centredLeft, true);
+                g.setFont (juce::FontOptions (12.0f));
+                g.setColour (Pal::dim);
+                g.drawText (juce::String (owner->catCounts[(size_t) row]), w - 40, 0, 34, h, juce::Justification::centredRight);
+            }
+            void listBoxItemClicked (int row, const juce::MouseEvent&) override
+            {
+                if (row < 0 || row >= owner->catNames.size()) return;
+                owner->selCat = owner->catNames[row];
+                lastCat()[owner->kind] = owner->selCat;
+                owner->search.setText ({}, false);
+                owner->filter();
+                owner->catList.repaint();
+            }
+        };
+        static std::map<juce::String, juce::String>& lastCat() { static std::map<juce::String, juce::String> c; return c; }
+
+        Panel (juce::StringArray labelsIn, juce::StringArray valuesIn, juce::StringArray actionsIn, const juce::String& current,
+               std::function<void (int, const juce::String&)> pick, juce::StringArray catsIn = {}, juce::String kindIn = "user")
+            : labels (std::move (labelsIn)), values (std::move (valuesIn)), actions (std::move (actionsIn)), cats (std::move (catsIn)), kind (std::move (kindIn)), onPick (std::move (pick))
+        {
+            folders = kind == "folder";
+            if (! cats.isEmpty())
+            {
+                // "All", kategorije po abecedi, "(no category)"
+                juce::StringArray uniq;
+                bool none = false;
+                for (auto& c : cats) { if (c.isEmpty()) none = true; else uniq.addIfNotAlreadyThere (c); }
+                uniq.sortNatural();
+                catNames.add ("All");
+                catNames.addArray (uniq);
+                if (none) catNames.add ("(no category)");
+                for (auto& cn : catNames)
+                {
+                    int n = 0;
+                    for (auto& c : cats) n += (cn == "All" || (cn == "(no category)" ? c.isEmpty() : c == cn)) ? 1 : 0;
+                    catCounts.push_back (n);
+                }
+                // otvori u kategoriji trenutnog usera (ili poslednjoj izabranoj)
+                const int ci = values.indexOf (current);
+                selCat = ci >= 0 ? (cats[ci].isEmpty() ? juce::String ("(no category)") : cats[ci]) : lastCat()[kind];
+                if (! catNames.contains (selCat)) selCat = "All";
+                catModel.owner = this;
+                catList.setModel (&catModel);
+                catList.setRowHeight (26);
+                catList.setColour (juce::ListBox::backgroundColourId, Pal::panel);
+                addAndMakeVisible (catList);
+            }
             search.setTextToShowWhenEmpty ("Search...", Pal::dim);
             search.setFont (juce::FontOptions (15.0f));
             search.onTextChange = [this] { filter(); };
@@ -61,7 +123,7 @@ namespace Picker
             const int cur = values.indexOf (current);
             for (size_t r = 0; r < shown.size(); ++r)
                 if (shown[r] == cur && cur >= 0) { list.selectRow ((int) r); list.scrollToEnsureRowIsOnscreen ((int) r); }
-            setSize (420, 460);
+            setSize (cats.isEmpty() ? 420 : folders ? 820 : 600, cats.isEmpty() ? 460 : folders ? 580 : 520);
         }
         void visibilityChanged() override
         {
@@ -73,6 +135,7 @@ namespace Picker
             auto r = getLocalBounds().reduced (4);
             search.setBounds (r.removeFromTop (30));
             r.removeFromTop (4);
+            if (! cats.isEmpty()) { catList.setBounds (r.removeFromLeft (folders ? 300 : 170)); r.removeFromLeft (4); }
             list.setBounds (r);
         }
         bool keyPressed (const juce::KeyPress& k) override
@@ -91,8 +154,10 @@ namespace Picker
             const auto words = juce::StringArray::fromTokens (search.getText().trim(), " ", "");
             if (search.getText().trim().isEmpty())
                 for (int a = 0; a < actions.size(); ++a) shown.push_back (-1 - a);
+            const bool byCat = ! cats.isEmpty() && words.isEmpty() && selCat != "All";
             for (int i = 0; i < labels.size(); ++i)
             {
+                if (byCat && (selCat == "(no category)" ? cats[i].isNotEmpty() : cats[i] != selCat)) continue;
                 bool ok = true;
                 for (auto& w : words) if (w.isNotEmpty() && ! labels[i].containsIgnoreCase (w)) { ok = false; break; }
                 if (ok) shown.push_back (i);
@@ -108,7 +173,11 @@ namespace Picker
             if (selected) g.fillAll (Pal::accent.withAlpha (0.35f));
             g.setFont (juce::FontOptions (14.0f));
             g.setColour (i < 0 ? Pal::lcdText : Pal::text);
-            g.drawText (i < 0 ? actions[-1 - i] : labels[i], 8, 0, w - 10, h, juce::Justification::centredLeft, true);
+            auto txt = i < 0 ? actions[-1 - i] : labels[i];
+            // u izabranom folderu samo ime (bez cele putanje)
+            if (i >= 0 && folders && selCat != "All" && search.getText().trim().isEmpty() && cats[i].isNotEmpty() && txt.startsWith (cats[i] + "/"))
+                txt = txt.substring (cats[i].length() + 1);
+            g.drawText (txt, 8, 0, w - 10, h, juce::Justification::centredLeft, true);
         }
         void listBoxItemClicked (int row, const juce::MouseEvent&) override { choose (row); }
         void returnKeyPressed (int row) override { choose (row); }
@@ -126,7 +195,13 @@ namespace Picker
             if (auto* cb = findParentComponentOfClass<juce::CallOutBox>()) cb->dismiss();
         }
 
-        juce::StringArray labels, values, actions;
+        juce::StringArray labels, values, actions, cats, catNames;
+        juce::String kind;
+        bool folders = false;
+        std::vector<int> catCounts;
+        juce::String selCat = "All";
+        CatModel catModel;
+        juce::ListBox catList;
         std::function<void (int, const juce::String&)> onPick;
         juce::TextEditor search;
         juce::ListBox list;
@@ -134,10 +209,10 @@ namespace Picker
     };
 
     void show (juce::Component& target, juce::StringArray labels, juce::StringArray values, juce::StringArray actions,
-               const juce::String& current, std::function<void (int, const juce::String&)> onPick)
+               const juce::String& current, std::function<void (int, const juce::String&)> onPick, juce::StringArray cats = {}, juce::String kind = "user")
     {
         auto* top = target.getTopLevelComponent();
-        juce::CallOutBox::launchAsynchronously (std::make_unique<Panel> (std::move (labels), std::move (values), std::move (actions), current, std::move (onPick)),
+        juce::CallOutBox::launchAsynchronously (std::make_unique<Panel> (std::move (labels), std::move (values), std::move (actions), current, std::move (onPick), std::move (cats), std::move (kind)),
                                                 top->getLocalArea (&target, target.getLocalBounds()), top);
     }
 }
@@ -558,12 +633,13 @@ void PartStrip::stepUser (int dir)
 void PartStrip::showUserMenu()
 {
     const auto& part = proc.getPerformance().parts[(size_t) index];
-    juce::StringArray labels, values;
+    juce::StringArray labels, values, cats;
     for (int i = 0; i < proc.getNumUsers(); ++i)
     {
         const auto& u = proc.getUser (i);
         labels.add (juce::String (i + 1).paddedLeft ('0', 3) + "  " + u.name + (u.category.isNotEmpty() ? "   [" + u.category + "]" : juce::String()));
         values.add (u.name);
+        cats.add (u.category.trim());
     }
     juce::Component::SafePointer<PartStrip> safe (this);
     Picker::show (userButton, labels, values, { "+ New user from instrument...", "+ Empty new user", "(no user)" }, part.user,
@@ -593,7 +669,7 @@ void PartStrip::showUserMenu()
                 self.edit ([] (PerfPart& pp) { pp.user = {}; pp.on = false; });
             else if (name.isNotEmpty())
                 self.edit ([name] (PerfPart& pp) { pp.user = name; pp.on = true; });
-        });
+        }, cats);
 }
 
 void PartStrip::refresh()
@@ -1614,6 +1690,12 @@ void OscRow::pickInstrument()
     const auto names = proc.getInstrumentList();
     const auto current = proc.getUser (ui).osc[(size_t) oscIndex()].instrument;
     juce::Component::SafePointer<OscRow> safe (this);
+    juce::StringArray folders;   // levo: folder u kome je multisempl
+    for (auto& n : names)
+    {
+        const int k = n.replaceCharacter ('\\', '/').lastIndexOfChar ('/');
+        folders.add (k > 0 ? n.substring (0, k) : juce::String());
+    }
     Picker::show (instButton, names, names, { "Browse folders...", "(empty)" }, current, [safe, names, current] (int action, const juce::String& name)
     {
         if (safe == nullptr) return;
@@ -1627,7 +1709,7 @@ void OscRow::pickInstrument()
         }
         const auto n = action == 1 ? juce::String() : name;
         safe->edit ([n] (OscSettings& s) { s.instrument = n; s.on = n.isNotEmpty(); });
-    });
+    }, folders, "folder");
 }
 
 void OscRow::stepInstrument (int dir)
@@ -5705,6 +5787,28 @@ void KronosPage::resized()
 //==============================================================================
 //  ListsPage
 //==============================================================================
+void ListsPage::bankCategoryMenu (int b)
+{
+    juce::PopupMenu m, cm;
+    const auto& cats = proc.getCategories();
+    for (int c = 0; c < cats.size(); ++c) cm.addItem (1000 + c, cats[c]);
+    cm.addSeparator();
+    cm.addItem (999, T ("No category"));
+    m.addSectionHeader (proc.getBankName (b));
+    m.addSubMenu (T ("Category for ALL performances in this list"), cm);
+    juce::Component::SafePointer<ListsPage> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&bankButtons[b]), [safe, b] (int r)
+    {
+        if (safe == nullptr || r < 999) return;
+        for (int i = 0; i < kPerfPerBank; ++i)
+        {
+            const int slot = b * kPerfPerBank + i;
+            if (safe->proc.getSlot (slot).used) safe->proc.setSlotCategory (slot, r == 999 ? -1 : r - 1000);
+        }
+        safe->refresh();
+    });
+}
+
 ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p), editor (e)
 {
     for (int b = 0; b < kNumPerfBanks; ++b)
@@ -5712,6 +5816,16 @@ ListsPage::ListsPage (LiveSamplerProcessor& p, LiveSamplerEditor& e) : proc (p),
         bankButtons[b].setButtonText (juce::String (b + 1));
         bankButtons[b].setColour (juce::TextButton::buttonOnColourId, Pal::lcdText);
         bankButtons[b].onClick = [this, b] { proc.setCurrentBank (b); };
+        // desni klik: svim performansima u ovoj listi odjednom postavi kategoriju
+        struct RightClick : public juce::MouseListener
+        {
+            std::function<void()> fn;
+            void mouseDown (const juce::MouseEvent& e) override { if (e.mods.isPopupMenu() && fn) fn(); }
+        };
+        auto rc = std::make_unique<RightClick>();
+        rc->fn = [this, b] { bankCategoryMenu (b); };
+        bankButtons[b].addMouseListener (rc.get(), false);
+        bankRight.push_back (std::move (rc));
         addAndMakeVisible (bankButtons[b]);
     }
     writeButton.setButtonText ("WRITE");

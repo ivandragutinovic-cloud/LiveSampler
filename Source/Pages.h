@@ -696,6 +696,8 @@ private:
     LiveSamplerProcessor& proc;
     LiveSamplerEditor& editor;
     LearnButton bankButtons[kNumPerfBanks], writeButton, categoriesButton;
+    std::vector<std::unique_ptr<juce::MouseListener>> bankRight;   // desni klik na dugme liste
+    void bankCategoryMenu (int bank);
     juce::Label nameLabel, nameEdit, help, filterLabel, missingLabel;
     LearnCombo catFilter;
 };

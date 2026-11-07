@@ -484,6 +484,7 @@ void RemoteServer::applyOnMessageThread (const juce::var& v)
     else if (op == "step")       proc.stepPerformance ((int) v["dir"]);
     else if (op == "harmony")    proc.setTercaOn ((bool) v["on"]);
     else if (op == "vector")     proc.setVectorXY ((float) (double) v["x"], (float) (double) v["y"]);
+    else if (op == "partLock")   { const int p = (int) v["part"]; if (p >= 0 && p < kNumParts) proc.setPartLock (p, (bool) v["on"]); dirty = true; }
     else if (op == "gvol")       proc.setGlobalVolume ((float) (double) v["db"]);
     else if (op == "revPreset")
     {
@@ -754,6 +755,11 @@ juce::StringPairArray RemoteServer::buildSections()
             st->setProperty ("geq", juce::var (e));
         }
         st->setProperty ("vx", std::round (proc.getVectorX() * 100.0f) / 100.0f);
+        {
+            int lockMask = 0;
+            for (int i = 0; i < kNumParts; ++i) if (proc.isPartLocked (i)) lockMask |= 1 << i;
+            st->setProperty ("partLocks", lockMask);
+        }
         st->setProperty ("vy", std::round (proc.getVectorY() * 100.0f) / 100.0f);
         st->setProperty ("c3", proc.getC3Is60());
         st->setProperty ("gtrans", proc.getGlobalTranspose());

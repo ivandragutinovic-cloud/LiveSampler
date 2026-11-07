@@ -507,6 +507,12 @@ function buildPerf(m) {
   pad.addEventListener("dblclick", () => api({ op: "vector", x: 0, y: 0 }));
   const padUpd = () => { dot.style.left = ((+S.status.vx || 0) + 1) * 50 + "%"; dot.style.top = (1 - (+S.status.vy || 0)) * 50 + "%"; };
   ctrls.push(() => { if (padHold < Date.now()) padUpd(); }); padUpd();
+  // LOCK PART 16 (kao u Workstation meniju parta): part 16 ostaje kad se menjaju performansi, njegova zona svira samo on
+  const lk = el("button", "", "LOCK 16", top);
+  lk.style.minWidth = "120px"; lk.style.alignSelf = "stretch"; lk.style.fontWeight = "700";
+  lk.title = "Lock part 16: it stays the same when you change performances, and only it plays in its key zone";
+  lk.onclick = () => api({ op: "partLock", part: 15, on: !((+S.status.partLocks || 0) & (1 << 15)) });
+  ctrls.push(() => { const on = !!((+S.status.partLocks || 0) & (1 << 15)); lk.classList.toggle("on", on); lk.textContent = on ? "LOCKED 16" : "LOCK 16"; lk.style.background = on ? "#b8343f" : ""; });
 
   sceneBar(m, false);
   const grid = el("div", "parts", "", m);
