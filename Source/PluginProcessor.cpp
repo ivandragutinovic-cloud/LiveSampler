@@ -3315,6 +3315,25 @@ void LiveSamplerProcessor::handleMidi (const juce::MidiMessage& m, const EngineC
                 juce::MessageManager::callAsync ([this, st, a = alive] { if (a->load()) setGlobalTranspose (st); });
                 return;
             }
+            if (d[2] == 0x04 && m.getSysExDataSize() >= 5)
+            {
+                // F0 7D 50 04 pp vv F7: LOCK PART (pp = part 0-15, vv 0 otkljucaj, 1 zakljucaj, 2 prebaci)
+                const int pp = d[3] & 15, vv = d[4];
+                juce::MessageManager::callAsync ([this, pp, vv, a = alive]
+                {
+                    if (! a->load()) return;
+                    setPartLock (pp, vv == 2 ? ! isPartLocked (pp) : vv != 0);
+                    sendChangeMessage();
+                });
+                return;
+            }
+            if (d[2] == 0x05)
+            {
+                // F0 7D 50 05 vv F7: dugme AKORD iz Pikaso Stage = drzano dugme TERCA u Workstationu
+                // (1 pritisnuto: tonovi se ne cuju, akord se prepoznaje; 0 pusteno; kratak pritisak pali / gasi harmoniju)
+                tercaTrigger (d[3] != 0, c);
+                return;
+            }
             if (d[2] == 0x01) tercaRoot = d[3] % 12;
             else if (d[2] == 0x02)
             {
